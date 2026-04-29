@@ -10,6 +10,9 @@ import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.layout.Box
 import androidx.compose.foundation.layout.Column
 import androidx.compose.foundation.layout.Arrangement
+import androidx.compose.foundation.layout.fillMaxWidth
+import androidx.compose.foundation.layout.height
+import androidx.compose.foundation.layout.PaddingValues
 import androidx.compose.ui.Alignment
 import androidx.compose.material3.*
 import androidx.compose.material.icons.Icons
@@ -27,6 +30,10 @@ class MainActivity : ComponentActivity() {
     override fun onCreate(savedInstanceState: Bundle?) {
         super.onCreate(savedInstanceState)
         enableEdgeToEdge()
+        
+        // eval/nn.bin という構造でコピーする
+        copyAssetsToFileDir("nn.bin", "eval")
+
         setContent {
             ShogiGUITheme {
                 // 初期配置の状態管理
@@ -39,6 +46,76 @@ class MainActivity : ComponentActivity() {
                 var currentPlayer by remember { mutableStateOf(Player.SENTE) }
                 
                 var showMenu by remember { mutableStateOf(false) }
+                var isAnalysisMode by remember { mutableStateOf(false) }
+                var isEngineReady by remember { mutableStateOf(false) }
+                
+                // エンジンのインスタンスを保持
+                // エンジンからの出力を表示するための状態
+                var engineOutput by remember { mutableStateOf("エンジン待機中...") }
+                var engineLog by remember { mutableStateOf(listOf<String>()) }
+                
+                // エンジンのインスタンスを保持
+                val engine = remember { 
+                    UsiEngine().apply {
+                        onOutputReceived = { rawLine ->
+                            val line = rawLine.trim()
+                            
+                            // 不要な option 出力をログに含めないようにして、肝心な情報を残す
+                            if (!line.startsWith("option")) {
+                                engineLog = (engineLog + line).takeLast(20)
+                            }
+                            
+                            when {
+                                line == "usiok" -> {
+                                    engineOutput = "初期化完了 (usiok)... 準備中"
+                                    // 本気を出すためのオプション設定
+                                    sendCommand("setoption name Threads value 4")
+                                    sendCommand("setoption name USI_Hash value 256")
+                                    sendCommand("setoption name BookFile value no_book") // 定跡エラーを回避
+                                    sendCommand("isready")
+                                }
+                                line == "readyok" -> {
+                                    isEngineReady = true
+                                    if (engineOutput.contains("準備中") || engineOutput.startsWith("初期化")) {
+                                        engineOutput = "準備完了。解析を待機しています..."
+                                    }
+                                }
+                                line.startsWith("info") -> {
+                                    val parsed = parseInfo(line, boardState)
+                                    // 深さや評価値が含まれている場合のみ更新する
+                                    if (parsed.contains("深さ") || parsed.contains("評価")) {
+                                        engineOutput = parsed
+                                    }
+                                }
+                                line.startsWith("bestmove") -> {
+                                    val move = line.substringAfter("bestmove ").substringBefore(" ")
+                                    if (move != "ponder" && move != "(none)") {
+                                        val playerLabel = if (currentPlayer == Player.SENTE) "先手" else "後手"
+                                        val formattedMove = formatUsiMove(move, boardState)
+                                        // 現在の解析情報（深さ・評価値）を維持しつつ、最善手を追記
+                                        engineOutput = engineOutput + "\n最善手: $playerLabel $formattedMove"
+                                    }
+                                }
+                                else -> {
+                                    // 起動直後のみ、その他の出力を表示する
+                                    if (engineOutput == "エンジン待機中...") {
+                                        engineOutput = line
+                                    }
+                                }
+                            }
+                        }
+                    }
+                }
+
+                // 盤面変化を監視してエンジンに通知（自動追従）
+                LaunchedEffect(isAnalysisMode, isEngineReady, boardState, currentPlayer, senteHand, goteHand) {
+                    if (isAnalysisMode && isEngineReady) {
+                        engine.sendCommand("stop")
+                        val sfen = boardToSfen(boardState, currentPlayer, senteHand, goteHand)
+                        engine.sendCommand("position sfen $sfen")
+                        engine.sendCommand("go movetime 2000") // 2秒思考に変更
+                    }
+                }
 
                 Scaffold(
                     modifier = Modifier.fillMaxSize(),
@@ -78,11 +155,69 @@ class MainActivity : ComponentActivity() {
                                     )
                                     DropdownMenuItem(
                                         text = { Text("解析開始") },
-                                        onClick = { showMenu = false }
+                                        onClick = { 
+                                            try {
+                                                isAnalysisMode = true
+                                                // 評価関数ファイルを探すディレクトリを指定して起動
+                                                engine.start(filesDir.absolutePath)
+                                                engine.sendCommand("usi")
+                                            } catch (e: Exception) {
+                                                engineOutput = "起動失敗: ${e.message}"
+                                            }
+                                            showMenu = false 
+                                        }
+                                    )
+                                    DropdownMenuItem(
+                                        text = { Text("解析停止") },
+                                        onClick = {
+                                            isAnalysisMode = false
+                                            engine.sendCommand("stop")
+                                            showMenu = false
+                                        }
                                     )
                                 }
                             }
                         )
+                    },
+                    bottomBar = {
+                        BottomAppBar(
+                            containerColor = MaterialTheme.colorScheme.surfaceContainer,
+                            contentPadding = PaddingValues(horizontal = 16.dp, vertical = 8.dp)
+                        ) {
+                            Button(
+                                onClick = {
+                                    if (isAnalysisMode) {
+                                        isAnalysisMode = false
+                                        engine.sendCommand("stop")
+                                    } else {
+                                        try {
+                                            isAnalysisMode = true
+                                            engine.start(filesDir.absolutePath)
+                                            engine.sendCommand("usi")
+                                        } catch (e: Exception) {
+                                            engineOutput = "起動失敗: ${e.message}"
+                                        }
+                                    }
+                                },
+                                modifier = Modifier
+                                    .fillMaxWidth()
+                                    .height(64.dp),
+                                shape = MaterialTheme.shapes.extraLarge,
+                                colors = ButtonDefaults.buttonColors(
+                                    containerColor = if (isAnalysisMode) 
+                                        MaterialTheme.colorScheme.tertiaryContainer 
+                                    else MaterialTheme.colorScheme.primary
+                                )
+                            ) {
+                                Text(
+                                    text = if (isAnalysisMode) "解析を停止" else "解析を開始",
+                                    style = MaterialTheme.typography.titleMedium,
+                                    color = if (isAnalysisMode) 
+                                        MaterialTheme.colorScheme.onTertiaryContainer 
+                                    else MaterialTheme.colorScheme.onPrimary
+                                )
+                            }
+                        }
                     }
                 ) { innerPadding ->
                     Column(
@@ -92,6 +227,25 @@ class MainActivity : ComponentActivity() {
                         horizontalAlignment = Alignment.CenterHorizontally,
                         verticalArrangement = Arrangement.Center
                     ) {
+                        // エンジンの解析情報を表示
+                        Card(
+                            modifier = Modifier
+                                .fillMaxWidth()
+                                .padding(8.dp),
+                            colors = CardDefaults.cardColors(
+                                containerColor = MaterialTheme.colorScheme.secondaryContainer
+                            )
+                        ) {
+                            // 最新の整形された出力を表示
+                            Text(
+                                text = engineOutput,
+                                modifier = Modifier.padding(8.dp),
+                                style = MaterialTheme.typography.bodySmall,
+                                minLines = 8,
+                                maxLines = 10
+                            )
+                        }
+
                         // 後手情報
                         Card(
                             colors = CardDefaults.cardColors(
@@ -294,6 +448,189 @@ class MainActivity : ComponentActivity() {
                 }
             }
         }
+    }
+
+    // USIのinfo行を解析して読みやすい文字列にする
+    private fun parseInfo(line: String, currentBoard: Map<Pair<Int, Int>, Piece>): String {
+        // 正規表現や複数の空白に対応するために正規化
+        val parts = line.split(Regex("\\s+"))
+        var depth = ""
+        var score = ""
+        var pv = ""
+
+        var i = 0
+        while (i < parts.size) {
+            when (parts[i]) {
+                "depth" -> if (i + 1 < parts.size) depth = parts[++i]
+                "score" -> {
+                    if (i + 2 < parts.size) {
+                        val type = parts[++i]
+                        val value = parts[++i]
+                        score = when (type) {
+                            "cp" -> {
+                                val v = value.toIntOrNull() ?: 0
+                                val sign = if (v > 0) "+" else ""
+                                "評価: $sign$v"
+                            }
+                            "mate" -> "詰み: $value"
+                            else -> ""
+                        }
+                    }
+                }
+                "pv" -> {
+                    val pvMoves = parts.drop(i + 1)
+                    if (pvMoves.isNotEmpty()) {
+                        // 読み筋の最初の1手だけ駒名を入れて分かりやすくする
+                        val firstMove = formatUsiMove(pvMoves[0], currentBoard)
+                        val restMoves = pvMoves.drop(1).take(4).joinToString(" ") { formatUsiMove(it) }
+                        pv = "読み筋: $firstMove $restMoves"
+                    }
+                    break
+                }
+            }
+            i++
+        }
+
+        val result = mutableListOf<String>()
+        if (depth.isNotEmpty()) result.add("深さ: $depth")
+        if (score.isNotEmpty()) result.add(score)
+        if (pv.isNotEmpty()) result.add(pv)
+
+        return result.joinToString("\n")
+    }
+
+    // USI形式の指し手(7g7f)を日本語座標(7七銀)に変換
+    private fun formatUsiMove(usiMove: String, board: Map<Pair<Int, Int>, Piece>? = null): String {
+        if (usiMove.length < 4) return usiMove
+        
+        fun rowToKanji(c: Char) = when(c) {
+            'a' -> "一"; 'b' -> "二"; 'c' -> "三"; 'd' -> "四"; 'e' -> "五"
+            'f' -> "六"; 'g' -> "七"; 'h' -> "八"; 'i' -> "九"
+            else -> c.toString()
+        }
+
+        return try {
+            if (usiMove[1] == '*') {
+                // 持ち駒を打つ (P*5e -> 5五歩打)
+                val piece = when(usiMove[0]) {
+                    'P' -> "歩"; 'L' -> "香"; 'N' -> "桂"; 'S' -> "銀"; 'G' -> "金"; 'B' -> "角"; 'R' -> "飛"
+                    else -> usiMove[0].toString()
+                }
+                "${usiMove[2]}${rowToKanji(usiMove[3])}${piece}打"
+            } else {
+                // 通常の移動 (7g7f -> 7六歩)
+                val fromCol = usiMove[0] - '0'
+                val fromRow = usiMove[1] - 'a'
+                // 元のマスにある駒を特定
+                val piece = board?.get(Pair(fromRow, 9 - fromCol))
+                val pieceLabel = piece?.let { 
+                    if (it.isPromoted) it.type.promotedLabel ?: it.type.label else it.type.label 
+                } ?: ""
+                
+                val toCol = usiMove[2]
+                val toRow = rowToKanji(usiMove[3])
+                val prom = if (usiMove.endsWith("+")) "成" else ""
+                
+                "$toCol$toRow$pieceLabel$prom"
+            }
+        } catch (e: Exception) {
+            usiMove
+        }
+    }
+
+    // Assetsから評価関数をコピー
+    private fun copyAssetsToFileDir(filename: String, subDir: String = "") {
+        val targetDir = if (subDir.isNotEmpty()) {
+            val dir = java.io.File(filesDir, subDir)
+            if (!dir.exists()) dir.mkdirs()
+            dir
+        } else {
+            filesDir
+        }
+        
+        val file = java.io.File(targetDir, filename)
+        if (file.exists()) return
+
+        try {
+            assets.open(filename).use { inputStream ->
+                file.outputStream().use { outputStream ->
+                    inputStream.copyTo(outputStream)
+                }
+            }
+        } catch (e: Exception) {
+            e.printStackTrace()
+        }
+    }
+
+    // 盤面状態をSFEN形式に変換
+    private fun boardToSfen(
+        board: Map<Pair<Int, Int>, Piece>,
+        turn: Player,
+        senteHand: Map<PieceType, Int>,
+        goteHand: Map<PieceType, Int>
+    ): String {
+        val sfen = StringBuilder()
+        
+        // 1. 盤面
+        for (row in 0 until 9) {
+            var emptyCount = 0
+            for (col in 0 until 9) {
+                val piece = board[Pair(row, col)]
+                if (piece == null) {
+                    emptyCount++
+                } else {
+                    if (emptyCount > 0) {
+                        sfen.append(emptyCount)
+                        emptyCount = 0
+                    }
+                    val char = when (piece.type) {
+                        PieceType.KING -> 'k'
+                        PieceType.ROOK -> 'r'
+                        PieceType.BISHOP -> 'b'
+                        PieceType.GOLD -> 'g'
+                        PieceType.SILVER -> 's'
+                        PieceType.KNIGHT -> 'n'
+                        PieceType.LANCE -> 'l'
+                        PieceType.PAWN -> 'p'
+                    }
+                    val sfenChar = if (piece.owner == Player.SENTE) char.uppercaseChar() else char
+                    if (piece.isPromoted) sfen.append('+')
+                    sfen.append(sfenChar)
+                }
+            }
+            if (emptyCount > 0) sfen.append(emptyCount)
+            if (row < 8) sfen.append('/')
+        }
+        
+        // 2. 手番
+        sfen.append(if (turn == Player.SENTE) " b " else " w ")
+        
+        // 3. 持ち駒
+        if (senteHand.isEmpty() && goteHand.isEmpty()) {
+            sfen.append("-")
+        } else {
+            fun appendHand(hand: Map<PieceType, Int>, isSente: Boolean) {
+                val types = listOf(
+                    PieceType.KING to 'K', PieceType.ROOK to 'R', PieceType.BISHOP to 'B',
+                    PieceType.GOLD to 'G', PieceType.SILVER to 'S', PieceType.KNIGHT to 'N',
+                    PieceType.LANCE to 'L', PieceType.PAWN to 'P'
+                )
+                for ((type, char) in types) {
+                    val count = hand[type] ?: 0
+                    if (count > 0) {
+                        if (count > 1) sfen.append(count)
+                        sfen.append(if (isSente) char else char.lowercaseChar())
+                    }
+                }
+            }
+            appendHand(senteHand, true)
+            appendHand(goteHand, false)
+        }
+        
+        // 4. 手数（ここでは1固定）
+        sfen.append(" 1")
+        
+        return sfen.toString()
     }
 
     // 初期配置を作成

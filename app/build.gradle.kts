@@ -37,6 +37,27 @@ android {
     buildFeatures {
         compose = true
     }
+    packaging { jniLibs { useLegacyPackaging = true } }
+    externalNativeBuild {
+        cmake {
+            path = file("src/main/cpp/CMakeLists.txt")
+            version = "3.22.1"
+        }
+    }
+
+    defaultConfig {
+        // ...
+        externalNativeBuild {
+            cmake {
+                cppFlags("-std=c++17")
+                arguments("-DNO_ASSUME_VLA=ON")
+            }
+        }
+        ndk {
+            // ストア公開に必要な 64bit 版とエミュレータ用
+            abiFilters.addAll(listOf("arm64-v8a", "x86_64"))
+        }
+    }
 }
 
 dependencies {

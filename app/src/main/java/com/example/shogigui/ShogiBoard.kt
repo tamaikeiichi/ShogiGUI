@@ -41,7 +41,7 @@ fun ShogiBoard(
     Column(
         modifier = modifier
             .background(boardColor)
-            .padding(8.dp)
+            .padding(4.dp)
     ) {
         // 上側の数字ラベル (筋: 9から1) - 右側の段ラベル分(24dp)を空ける
         Row(modifier = Modifier.fillMaxWidth().padding(end = 24.dp)) {
