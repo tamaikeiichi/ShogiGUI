@@ -34,8 +34,10 @@ class MainActivity : ComponentActivity() {
         super.onCreate(savedInstanceState)
         enableEdgeToEdge()
         
-        // eval/nn.bin という構造でコピーする
-        copyAssetsToFileDir("nn.bin", "eval")
+        // 開発中は毎回上書きコピーするようにして、確実に最新のファイルを届ける（バックグラウンド推奨だが一旦ここでも最小化）
+        java.util.concurrent.Executors.newSingleThreadExecutor().execute {
+            copyAssetsToFileDir("nn.bin", "eval")
+        }
 
         setContent {
             ShogiGUITheme {
@@ -85,8 +87,8 @@ class MainActivity : ComponentActivity() {
                                 }
                                 line.startsWith("info") -> {
                                     val parsed = parseInfo(line, boardState, currentPlayer)
-                                    // 深さや評価値が含まれている場合のみ更新する
-                                    if (parsed.contains("深さ") || parsed.contains("評価")) {
+                                    // 深さや評価値が含まれている場合、または準備完了前なら更新する
+                                    if (parsed.contains("深さ") || parsed.contains("評価") || !isEngineReady) {
                                         engineOutput = parsed
                                     }
                                 }
@@ -135,7 +137,7 @@ class MainActivity : ComponentActivity() {
                     modifier = Modifier.fillMaxSize(),
                     topBar = {
                         TopAppBar(
-                            title = { Text("将棋GUI") },
+                            title = { Text("") },
                             actions = {
                                 IconButton(onClick = { showMenu = true }) {
                                     Icon(

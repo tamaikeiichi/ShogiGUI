@@ -68,9 +68,18 @@ Java_com_example_shogigui_UsiEngine_nativeStart(JNIEnv* env, jobject thiz) {
         g_mid = env->GetMethodID(clazz, "onOutput", "(Ljava/lang/String;)V");
     }
 
-    // Redirect cout
-    UsiBuf buf;
-    std::streambuf* old_cout = std::cout.rdbuf(&buf);
+    // デバッグメッセージを強制送信
+    {
+        JNIEnv* myEnv;
+        g_vm->AttachCurrentThread(&myEnv, nullptr);
+        jstring msg = myEnv->NewStringUTF("info string JNI: Engine thread started");
+        myEnv->CallVoidMethod(g_obj, g_mid, msg);
+        myEnv->DeleteLocalRef(msg);
+    }
+
+    // Redirect cout (ここを一旦コメントアウトして、純粋な起動を試す)
+    // UsiBuf buf;
+    // std::streambuf* old_cout = std::cout.rdbuf(&buf);
 
     // Initialize YaneuraOu
     static bool initialized = false;
@@ -94,7 +103,7 @@ Java_com_example_shogigui_UsiEngine_nativeStart(JNIEnv* env, jobject thiz) {
 
     // Cleanup
     Threads.set(0);
-    std::cout.rdbuf(old_cout);
+    // std::cout.rdbuf(old_cout);
 
     {
         std::lock_guard<std::mutex> lock(g_mutex);

@@ -23,22 +23,30 @@ class UsiEngine(private val dummyPath: String = "") {
     private external fun nativeSetWorkDir(path: String)
 
     fun start(workDir: String = "") {
-        // エンジン本体は専用の独立したスレッドで動かす
-        Thread {
+        // 完全に新しいスレッドで起動し、UIスレッドを絶対に邪魔しない
+        Thread({
             try {
                 if (workDir.isNotEmpty()) {
                     nativeSetWorkDir(workDir)
                 }
                 nativeStart()
             } catch (e: Exception) {
-                onOutput("Error: " + e.message)
+                mainHandler.post {
+                    onOutputReceived?.invoke("Error: " + e.message)
+                }
             }
-        }.start()
+        }, "USI-Engine-Thread").start()
     }
 
     fun sendCommand(command: String) {
-        // コマンド送信は即座に行う（エンジンがループしていても割り込めるようにする）
-        nativeSendCommand(command)
+        // コマンド送信も別スレッドで行う
+        Thread({
+            try {
+                nativeSendCommand(command)
+            } catch (e: Exception) {
+                // エラー時はログのみ
+            }
+        }, "USI-Command-Thread").start()
     }
 
     fun stop() {
