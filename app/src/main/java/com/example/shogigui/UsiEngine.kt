@@ -47,7 +47,14 @@ class UsiEngine(private val dummyPath: String = "") {
 
     // C++側から呼び出されるコールバック関数
     fun onOutput(line: String) {
-        mainHandler.post {
+        // 全ての出力をメインスレッドに送るのではなく、
+        // 必要な通知だけをメインスレッドで行う（負荷軽減）
+        if (line.startsWith("info") || line == "usiok" || line == "readyok" || line.startsWith("bestmove")) {
+            mainHandler.post {
+                onOutputReceived?.invoke(line)
+            }
+        } else {
+            // それ以外はバックグラウンドでコールバックを呼ぶ
             onOutputReceived?.invoke(line)
         }
     }

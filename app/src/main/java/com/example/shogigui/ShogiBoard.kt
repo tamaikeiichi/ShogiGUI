@@ -41,10 +41,10 @@ fun ShogiBoard(
     Column(
         modifier = modifier
             .background(boardColor)
-            .padding(4.dp)
+            .padding(2.dp)
     ) {
         // 上側の数字ラベル (筋: 9から1) - 右側の段ラベル分(24dp)を空ける
-        Row(modifier = Modifier.fillMaxWidth().padding(end = 24.dp)) {
+        Row(modifier = Modifier.fillMaxWidth().padding(end = 18.dp)) {
             for (col in 0 until 9) {
                 Box(modifier = Modifier.weight(1f), contentAlignment = Alignment.Center) {
                     Text(text = (9 - col).toString(), fontSize = 10.sp, color = Color.DarkGray)
@@ -89,7 +89,7 @@ fun ShogiBoard(
             // 右側の段ラベル (一から九) - 盤面の高さに完全に追従
             Column(
                 modifier = Modifier
-                    .width(24.dp)
+                    .width(18.dp)
                     .fillMaxHeight()
             ) {
                 for (row in 0 until 9) {
@@ -120,7 +120,7 @@ fun HandView(
     Row(
         modifier = modifier
             .fillMaxWidth()
-            .padding(8.dp)
+            .padding(4.dp)
             .rotate(rotation),
         horizontalArrangement = Arrangement.End
     ) {

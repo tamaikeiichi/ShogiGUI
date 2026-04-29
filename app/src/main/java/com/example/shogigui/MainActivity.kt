@@ -4,6 +4,7 @@ import android.os.Bundle
 import androidx.activity.ComponentActivity
 import androidx.activity.compose.setContent
 import androidx.activity.enableEdgeToEdge
+import androidx.compose.animation.core.*
 import androidx.compose.foundation.background
 import androidx.compose.foundation.layout.fillMaxSize
 import androidx.compose.foundation.layout.padding
@@ -13,7 +14,9 @@ import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.fillMaxWidth
 import androidx.compose.foundation.layout.height
 import androidx.compose.foundation.layout.PaddingValues
+import androidx.compose.foundation.layout.size
 import androidx.compose.ui.Alignment
+import androidx.compose.ui.graphics.graphicsLayer
 import androidx.compose.material3.*
 import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.filled.Menu
@@ -81,7 +84,7 @@ class MainActivity : ComponentActivity() {
                                     }
                                 }
                                 line.startsWith("info") -> {
-                                    val parsed = parseInfo(line, boardState)
+                                    val parsed = parseInfo(line, boardState, currentPlayer)
                                     // 深さや評価値が含まれている場合のみ更新する
                                     if (parsed.contains("深さ") || parsed.contains("評価")) {
                                         engineOutput = parsed
@@ -114,6 +117,17 @@ class MainActivity : ComponentActivity() {
                         val sfen = boardToSfen(boardState, currentPlayer, senteHand, goteHand)
                         engine.sendCommand("position sfen $sfen")
                         engine.sendCommand("go movetime 2000") // 2秒思考に変更
+                    }
+                }
+
+                // アプリ起動時にエンジンを自動的に準備
+                LaunchedEffect(Unit) {
+                    kotlinx.coroutines.delay(500)
+                    try {
+                        engine.start(filesDir.absolutePath)
+                        engine.sendCommand("usi")
+                    } catch (e: Exception) {
+                        engineOutput = "エンジン起動失敗: ${e.message}"
                     }
                 }
 
@@ -154,20 +168,6 @@ class MainActivity : ComponentActivity() {
                                         onClick = { showMenu = false }
                                     )
                                     DropdownMenuItem(
-                                        text = { Text("解析開始") },
-                                        onClick = { 
-                                            try {
-                                                isAnalysisMode = true
-                                                // 評価関数ファイルを探すディレクトリを指定して起動
-                                                engine.start(filesDir.absolutePath)
-                                                engine.sendCommand("usi")
-                                            } catch (e: Exception) {
-                                                engineOutput = "起動失敗: ${e.message}"
-                                            }
-                                            showMenu = false 
-                                        }
-                                    )
-                                    DropdownMenuItem(
                                         text = { Text("解析停止") },
                                         onClick = {
                                             isAnalysisMode = false
@@ -184,38 +184,65 @@ class MainActivity : ComponentActivity() {
                             containerColor = MaterialTheme.colorScheme.surfaceContainer,
                             contentPadding = PaddingValues(horizontal = 16.dp, vertical = 8.dp)
                         ) {
+                            val infiniteTransition = rememberInfiniteTransition(label = "preparing")
+                            val alpha by infiniteTransition.animateFloat(
+                                initialValue = 0.6f,
+                                targetValue = 1.0f,
+                                animationSpec = infiniteRepeatable(
+                                    animation = tween(800, easing = LinearEasing),
+                                    repeatMode = RepeatMode.Reverse
+                                ),
+                                label = "alpha"
+                            )
+
                             Button(
                                 onClick = {
+                                    if (!isEngineReady) return@Button
+                                    
                                     if (isAnalysisMode) {
                                         isAnalysisMode = false
                                         engine.sendCommand("stop")
                                     } else {
-                                        try {
-                                            isAnalysisMode = true
-                                            engine.start(filesDir.absolutePath)
-                                            engine.sendCommand("usi")
-                                        } catch (e: Exception) {
-                                            engineOutput = "起動失敗: ${e.message}"
-                                        }
+                                        isAnalysisMode = true
                                     }
                                 },
                                 modifier = Modifier
                                     .fillMaxWidth()
-                                    .height(64.dp),
+                                    .height(72.dp)
+                                    .graphicsLayer {
+                                        if (!isEngineReady) {
+                                            this.alpha = alpha
+                                        }
+                                    },
                                 shape = MaterialTheme.shapes.extraLarge,
                                 colors = ButtonDefaults.buttonColors(
-                                    containerColor = if (isAnalysisMode) 
-                                        MaterialTheme.colorScheme.tertiaryContainer 
-                                    else MaterialTheme.colorScheme.primary
+                                    containerColor = when {
+                                        !isEngineReady -> MaterialTheme.colorScheme.surfaceVariant
+                                        isAnalysisMode -> MaterialTheme.colorScheme.tertiaryContainer 
+                                        else -> MaterialTheme.colorScheme.primary
+                                    }
                                 )
                             ) {
-                                Text(
-                                    text = if (isAnalysisMode) "解析を停止" else "解析を開始",
-                                    style = MaterialTheme.typography.titleMedium,
-                                    color = if (isAnalysisMode) 
-                                        MaterialTheme.colorScheme.onTertiaryContainer 
-                                    else MaterialTheme.colorScheme.onPrimary
-                                )
+                                if (!isEngineReady) {
+                                    // 正式な M3 Expressive LoadingIndicator
+                                    LoadingIndicator(
+                                        modifier = Modifier.padding(end = 16.dp),
+                                        color = MaterialTheme.colorScheme.primary
+                                    )
+                                    Text(
+                                        text = "エンジン準備中",
+                                        style = MaterialTheme.typography.titleMedium,
+                                        color = MaterialTheme.colorScheme.onSurfaceVariant
+                                    )
+                                } else {
+                                    Text(
+                                        text = if (isAnalysisMode) "解析を停止" else "局面を解析",
+                                        style = MaterialTheme.typography.titleLarge,
+                                        color = if (isAnalysisMode) 
+                                            MaterialTheme.colorScheme.onTertiaryContainer 
+                                        else MaterialTheme.colorScheme.onPrimary
+                                    )
+                                }
                             }
                         }
                     }
@@ -451,7 +478,7 @@ class MainActivity : ComponentActivity() {
     }
 
     // USIのinfo行を解析して読みやすい文字列にする
-    private fun parseInfo(line: String, currentBoard: Map<Pair<Int, Int>, Piece>): String {
+    private fun parseInfo(line: String, currentBoard: Map<Pair<Int, Int>, Piece>, turn: Player): String {
         // 正規表現や複数の空白に対応するために正規化
         val parts = line.split(Regex("\\s+"))
         var depth = ""
@@ -480,10 +507,20 @@ class MainActivity : ComponentActivity() {
                 "pv" -> {
                     val pvMoves = parts.drop(i + 1)
                     if (pvMoves.isNotEmpty()) {
-                        // 読み筋の最初の1手だけ駒名を入れて分かりやすくする
-                        val firstMove = formatUsiMove(pvMoves[0], currentBoard)
-                        val restMoves = pvMoves.drop(1).take(4).joinToString(" ") { formatUsiMove(it) }
-                        pv = "読み筋: $firstMove $restMoves"
+                        val formattedMoves = mutableListOf<String>()
+                        var tempTurn = turn // 引数でもらった現在の手番から開始
+                        
+                        // 読み筋の数手分を日本語化
+                        pvMoves.take(6).forEach { moveStr ->
+                            val symbol = if (tempTurn == Player.SENTE) "▲" else "△"
+                            // 第2引数のboardを渡すことで駒名を特定（数手先は不正確になるが、まずは現状の盤面を基準にする）
+                            val formatted = formatUsiMove(moveStr, currentBoard)
+                            formattedMoves.add("$symbol$formatted")
+                            
+                            // 手番を交互に
+                            tempTurn = if (tempTurn == Player.SENTE) Player.GOTE else Player.SENTE
+                        }
+                        pv = "読み筋: " + formattedMoves.joinToString(" ")
                     }
                     break
                 }
@@ -549,7 +586,8 @@ class MainActivity : ComponentActivity() {
         }
         
         val file = java.io.File(targetDir, filename)
-        if (file.exists()) return
+        // 開発中は毎回上書きコピーするようにして、確実に最新のファイルを届ける
+        // if (file.exists()) return 
 
         try {
             assets.open(filename).use { inputStream ->
@@ -557,8 +595,9 @@ class MainActivity : ComponentActivity() {
                     inputStream.copyTo(outputStream)
                 }
             }
+            android.util.Log.d("ShogiGUI", "File copied to: ${file.absolutePath}")
         } catch (e: Exception) {
-            e.printStackTrace()
+            android.util.Log.e("ShogiGUI", "Copy failed: ${e.message}")
         }
     }
 
