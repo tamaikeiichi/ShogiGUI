@@ -2396,32 +2396,49 @@ StandardInput std_input;
 
 // 標準入力から1行もらう。Ctrl+Zが来れば"quit"が来たものとする。
 // また先行入力でqueueに積んでおくことができる。(次のinput()で取り出される)
-std::string StandardInput::input()
-{
-	string cmd;
-	if (cmds.size() == 0)
+//std::string StandardInput::input()
+//{
+//	string cmd;
+//	if (cmds.size() == 0)
+//	{
+//		if (!std::getline(cin, cmd)) // 入力が来るかEOFがくるまでここで待機する。
+//			cmd = "quit";
+//	} else {
+//		// 積んであるコマンドがあるならそれを実行する。
+//		// 尽きれば"quit"だと解釈してdoループを抜ける仕様にすることはできるが、
+//		// そうしてしまうとgoコマンド(これはノンブロッキングなので)の最中にquitが送られてしまう。
+//		// ただ、
+//		// YaneuraOu-mid.exe bench,quit
+//		// のようなことは出来るのでPGOの役には立ちそうである。
+//		cmd = cmds.front();
+//		cmds.pop();
+//	}
+//	return cmd;
+//}
+//
+//// 先行入力としてqueueに積む。(次のinput()で取り出される)
+//void StandardInput::push(const std::string& s)
+//{
+//	cmds.push(s);
+//}
+// StandardInputのprivateメンバーに追加
+// （misc.hのクラス定義も合わせて変更が必要）
+
+std::string StandardInput::input() {
+	std::unique_lock<std::mutex> lock(mtx);
+	cv.wait(lock, [this]{ return !cmds.empty(); });
+	auto s = cmds.front();
+	cmds.pop();
+	return s;
+}
+
+void StandardInput::push(const std::string& s) {
 	{
-		if (!std::getline(cin, cmd)) // 入力が来るかEOFがくるまでここで待機する。
-			cmd = "quit";
-	} else {
-		// 積んであるコマンドがあるならそれを実行する。
-		// 尽きれば"quit"だと解釈してdoループを抜ける仕様にすることはできるが、
-		// そうしてしまうとgoコマンド(これはノンブロッキングなので)の最中にquitが送られてしまう。
-		// ただ、
-		// YaneuraOu-mid.exe bench,quit
-		// のようなことは出来るのでPGOの役には立ちそうである。
-		cmd = cmds.front();
-		cmds.pop();
+		std::lock_guard<std::mutex> lock(mtx);
+		cmds.push(s);
 	}
-	return cmd;
+	cv.notify_one();
 }
-
-// 先行入力としてqueueに積む。(次のinput()で取り出される)
-void StandardInput::push(const std::string& s)
-{
-	cmds.push(s);
-}
-
 void StandardInput::parse_args(int argc, char* argv[])
 {
 	// ファイルからコマンドの指定

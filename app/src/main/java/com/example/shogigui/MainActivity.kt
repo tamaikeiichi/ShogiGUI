@@ -27,6 +27,8 @@ import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.tooling.preview.Preview
 import androidx.compose.ui.unit.dp
 import com.example.shogigui.ui.theme.ShogiGUITheme
+import kotlinx.coroutines.Dispatchers
+import kotlinx.coroutines.withContext
 
 class MainActivity : ComponentActivity() {
     @OptIn(ExperimentalMaterial3Api::class)
@@ -35,9 +37,9 @@ class MainActivity : ComponentActivity() {
         enableEdgeToEdge()
         
         // 開発中は毎回上書きコピーするようにして、確実に最新のファイルを届ける（バックグラウンド推奨だが一旦ここでも最小化）
-        java.util.concurrent.Executors.newSingleThreadExecutor().execute {
-            copyAssetsToFileDir("nn.bin", "eval")
-        }
+//        java.util.concurrent.Executors.newSingleThreadExecutor().execute {
+//            copyAssetsToFileDir("nn.bin", "eval")
+//        }
 
         setContent {
             ShogiGUITheme {
@@ -65,19 +67,17 @@ class MainActivity : ComponentActivity() {
                         onOutputReceived = { rawLine ->
                             val line = rawLine.trim()
                             
-                            // 不要な option 出力をログに含めないようにして、肝心な情報を残す
-                            if (!line.startsWith("option")) {
-                                engineLog = (engineLog + line).takeLast(20)
-                            }
+                            // ログを常に蓄積（上書きしない）
+                            engineLog = (engineLog + line).takeLast(50)
                             
                             when {
+                                line.contains("JNI:") -> {
+                                    // デバッグメッセージは特別に表示
+                                    engineOutput = line
+                                }
                                 line == "usiok" -> {
-                                    engineOutput = "初期化完了 (usiok)... 準備中"
-                                    // 本気を出すためのオプション設定
-                                    sendCommand("setoption name Threads value 4")
-                                    sendCommand("setoption name USI_Hash value 256")
-                                    sendCommand("setoption name BookFile value no_book") // 定跡エラーを回避
-                                    sendCommand("isready")
+                                    engineOutput = "初期化完了 (usiok)"
+                                    // setoption や isready はもう送信済みなので何もしない
                                 }
                                 line == "readyok" -> {
                                     isEngineReady = true
@@ -118,16 +118,16 @@ class MainActivity : ComponentActivity() {
                         engine.sendCommand("stop")
                         val sfen = boardToSfen(boardState, currentPlayer, senteHand, goteHand)
                         engine.sendCommand("position sfen $sfen")
-                        engine.sendCommand("go movetime 2000") // 2秒思考に変更
+                        engine.sendCommand("go movetime 1000") // 2秒思考に変更
                     }
                 }
 
                 // アプリ起動時にエンジンを自動的に準備
                 LaunchedEffect(Unit) {
-                    kotlinx.coroutines.delay(500)
+                    kotlinx.coroutines.delay(1000)
                     try {
                         engine.start(filesDir.absolutePath)
-                        engine.sendCommand("usi")
+                        // delay と engine.sendCommand("usi") は削除
                     } catch (e: Exception) {
                         engineOutput = "エンジン起動失敗: ${e.message}"
                     }
@@ -265,9 +265,9 @@ class MainActivity : ComponentActivity() {
                                 containerColor = MaterialTheme.colorScheme.secondaryContainer
                             )
                         ) {
-                            // 最新の整形された出力を表示
+                            // 履歴全体を表示（スクロール可能）
                             Text(
-                                text = engineOutput,
+                                text = if (engineLog.isEmpty()) engineOutput else engineLog.joinToString("\n"),
                                 modifier = Modifier.padding(8.dp),
                                 style = MaterialTheme.typography.bodySmall,
                                 minLines = 8,
@@ -510,16 +510,15 @@ class MainActivity : ComponentActivity() {
                     val pvMoves = parts.drop(i + 1)
                     if (pvMoves.isNotEmpty()) {
                         val formattedMoves = mutableListOf<String>()
-                        var tempTurn = turn // 引数でもらった現在の手番から開始
-                        
-                        // 読み筋の数手分を日本語化
+                        var tempTurn = turn
+                        var tempBoard = currentBoard  // 現在の盤面からスタート
+
                         pvMoves.take(6).forEach { moveStr ->
                             val symbol = if (tempTurn == Player.SENTE) "▲" else "△"
-                            // 第2引数のboardを渡すことで駒名を特定（数手先は不正確になるが、まずは現状の盤面を基準にする）
-                            val formatted = formatUsiMove(moveStr, currentBoard)
+                            val formatted = formatUsiMove(moveStr, tempBoard)  // 現在の盤面で駒名を特定
                             formattedMoves.add("$symbol$formatted")
-                            
-                            // 手番を交互に
+
+                            tempBoard = applyUsiMove(moveStr, tempBoard)  // 盤面を1手進める
                             tempTurn = if (tempTurn == Player.SENTE) Player.GOTE else Player.SENTE
                         }
                         pv = "読み筋: " + formattedMoves.joinToString(" ")
@@ -541,7 +540,8 @@ class MainActivity : ComponentActivity() {
     // USI形式の指し手(7g7f)を日本語座標(7七銀)に変換
     private fun formatUsiMove(usiMove: String, board: Map<Pair<Int, Int>, Piece>? = null): String {
         if (usiMove.length < 4) return usiMove
-        
+
+        fun colToNum(c: Char) = c.toString()
         fun rowToKanji(c: Char) = when(c) {
             'a' -> "一"; 'b' -> "二"; 'c' -> "三"; 'd' -> "四"; 'e' -> "五"
             'f' -> "六"; 'g' -> "七"; 'h' -> "八"; 'i' -> "九"
@@ -550,27 +550,27 @@ class MainActivity : ComponentActivity() {
 
         return try {
             if (usiMove[1] == '*') {
-                // 持ち駒を打つ (P*5e -> 5五歩打)
+                // 持ち駒を打つ (P*5e → 5五歩打)
                 val piece = when(usiMove[0]) {
-                    'P' -> "歩"; 'L' -> "香"; 'N' -> "桂"; 'S' -> "銀"; 'G' -> "金"; 'B' -> "角"; 'R' -> "飛"
+                    'P' -> "歩"; 'L' -> "香"; 'N' -> "桂"; 'S' -> "銀"
+                    'G' -> "金"; 'B' -> "角"; 'R' -> "飛"
                     else -> usiMove[0].toString()
                 }
-                "${usiMove[2]}${rowToKanji(usiMove[3])}${piece}打"
+                "${colToNum(usiMove[2])}${rowToKanji(usiMove[3])}${piece}打"
             } else {
-                // 通常の移動 (7g7f -> 7六歩)
+                // 通常移動 (2g2f → 2六)
                 val fromCol = usiMove[0] - '0'
                 val fromRow = usiMove[1] - 'a'
-                // 元のマスにある駒を特定
                 val piece = board?.get(Pair(fromRow, 9 - fromCol))
-                val pieceLabel = piece?.let { 
-                    if (it.isPromoted) it.type.promotedLabel ?: it.type.label else it.type.label 
+                val pieceLabel = piece?.let {
+                    if (it.isPromoted) it.type.promotedLabel ?: it.type.label else it.type.label
                 } ?: ""
-                
-                val toCol = usiMove[2]
+
+                val toCol = colToNum(usiMove[2])
                 val toRow = rowToKanji(usiMove[3])
                 val prom = if (usiMove.endsWith("+")) "成" else ""
-                
-                "$toCol$toRow$pieceLabel$prom"
+
+                "${toCol}${toRow}${pieceLabel}${prom}"
             }
         } catch (e: Exception) {
             usiMove
@@ -801,6 +801,49 @@ class MainActivity : ComponentActivity() {
         newBoard.remove(from)
         newBoard[to] = piece.copy(isPromoted = promote || piece.isPromoted)
         onUpdate(newBoard, newSenteHand, newGoteHand)
+    }
+
+    // USI形式の1手を盤面に適用して新しい盤面を返す
+    private fun applyUsiMove(
+        usiMove: String,
+        board: Map<Pair<Int, Int>, Piece>
+    ): Map<Pair<Int, Int>, Piece> {
+        if (usiMove.length < 4) return board
+        val newBoard = board.toMutableMap()
+
+        return try {
+            if (usiMove[1] == '*') {
+                // 持ち駒を打つ (P*5e)
+                val type = when(usiMove[0]) {
+                    'P' -> PieceType.PAWN; 'L' -> PieceType.LANCE; 'N' -> PieceType.KNIGHT
+                    'S' -> PieceType.SILVER; 'G' -> PieceType.GOLD
+                    'B' -> PieceType.BISHOP; 'R' -> PieceType.ROOK
+                    else -> return board
+                }
+                val toCol = usiMove[2] - '0'
+                val toRow = usiMove[3] - 'a'
+                // 手番は盤面から推定できないのでSENTEとして仮置き（表示用なので問題なし）
+                newBoard[Pair(toRow, 9 - toCol)] = Piece(type, Player.SENTE)
+                newBoard
+            } else {
+                // 通常移動 (2g2f)
+                val fromCol = usiMove[0] - '0'
+                val fromRow = usiMove[1] - 'a'
+                val toCol = usiMove[2] - '0'
+                val toRow = usiMove[3] - 'a'
+                val promote = usiMove.endsWith("+")
+
+                val fromPos = Pair(fromRow, 9 - fromCol)
+                val toPos = Pair(toRow, 9 - toCol)
+                val piece = newBoard[fromPos] ?: return board
+
+                newBoard.remove(fromPos)
+                newBoard[toPos] = piece.copy(isPromoted = piece.isPromoted || promote)
+                newBoard
+            }
+        } catch (e: Exception) {
+            board
+        }
     }
 }
 

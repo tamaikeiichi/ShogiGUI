@@ -68,42 +68,62 @@ Java_com_example_shogigui_UsiEngine_nativeStart(JNIEnv* env, jobject thiz) {
         g_mid = env->GetMethodID(clazz, "onOutput", "(Ljava/lang/String;)V");
     }
 
-    // デバッグメッセージを強制送信
-    {
+    // デバッグメッセージ用ヘルパー
+    auto sendDebug = [&](const char* msg) {
         JNIEnv* myEnv;
-        g_vm->AttachCurrentThread(&myEnv, nullptr);
-        jstring msg = myEnv->NewStringUTF("info string JNI: Engine thread started");
-        myEnv->CallVoidMethod(g_obj, g_mid, msg);
-        myEnv->DeleteLocalRef(msg);
-    }
+        if (g_vm->GetEnv((void**)&myEnv, JNI_VERSION_1_6) == JNI_EDETACHED) {
+            g_vm->AttachCurrentThread(&myEnv, nullptr);
+        }
+        jstring jmsg = myEnv->NewStringUTF(msg);
+        myEnv->CallVoidMethod(g_obj, g_mid, jmsg);
+        myEnv->DeleteLocalRef(jmsg);
+    };
 
-    // Redirect cout (ここを一旦コメントアウトして、純粋な起動を試す)
-    // UsiBuf buf;
-    // std::streambuf* old_cout = std::cout.rdbuf(&buf);
+    sendDebug("info string JNI: Engine thread started");
 
     // Initialize YaneuraOu
     static bool initialized = false;
     if (!initialized) {
         char* argv[] = {(char*)"yaneuraou"};
+
+        sendDebug("info string JNI: CommandLine::init start");
         CommandLine::init(1, argv);
+
+        sendDebug("info string JNI: USI::init start");
         USI::init(Options);
+
+        sendDebug("info string JNI: Bitboards::init start");
         Bitboards::init();
+
+        sendDebug("info string JNI: Position::init start");
         Position::init();
+
+        sendDebug("info string JNI: Search::init start");
         Search::init();
+
         initialized = true;
     }
 
+    sendDebug("info string JNI: Thread setting start");
     size_t thread_num = Options.count("Threads") ? (size_t)Options["Threads"] : 1;
-	Threads.set(thread_num);
-    Eval::init();
+    Threads.set(thread_num);
 
-    char* argv[] = {(char*)"yaneuraou"};
-    // Start loop (this will block until "quit")
-    USI::loop(1, argv);
+    sendDebug("info string JNI: Eval::init start");
+    Eval::init();
+    sendDebug("info string JNI: Eval::init done");
+
+    sendDebug("info string JNI: USI::loop start");
+
+    // Redirect cout to Kotlin (蛇口を開ける)
+    UsiBuf buf;
+    std::streambuf* old_cout = std::cout.rdbuf(&buf);
+
+    char* argv_loop[] = {(char*)"yaneuraou"};
+    USI::loop(1, argv_loop);
 
     // Cleanup
     Threads.set(0);
-    // std::cout.rdbuf(old_cout);
+    std::cout.rdbuf(old_cout); // 蛇口を元に戻す
 
     {
         std::lock_guard<std::mutex> lock(g_mutex);
@@ -115,7 +135,9 @@ Java_com_example_shogigui_UsiEngine_nativeStart(JNIEnv* env, jobject thiz) {
 extern "C" JNIEXPORT void JNICALL
 Java_com_example_shogigui_UsiEngine_nativeSendCommand(JNIEnv* env, jobject thiz, jstring command) {
     const char* cmd = env->GetStringUTFChars(command, nullptr);
+    __android_log_print(ANDROID_LOG_DEBUG, "ShogiJNI", "sendCommand called: %s", cmd);
     std_input.push(std::string(cmd));
+    __android_log_print(ANDROID_LOG_DEBUG, "ShogiJNI", "sendCommand pushed: %s", cmd);
     env->ReleaseStringUTFChars(command, cmd);
 }
 

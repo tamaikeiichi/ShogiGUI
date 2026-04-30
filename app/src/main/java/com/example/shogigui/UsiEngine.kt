@@ -23,12 +23,17 @@ class UsiEngine(private val dummyPath: String = "") {
     private external fun nativeSetWorkDir(path: String)
 
     fun start(workDir: String = "") {
-        // 完全に新しいスレッドで起動し、UIスレッドを絶対に邪魔しない
         Thread({
             try {
                 if (workDir.isNotEmpty()) {
                     nativeSetWorkDir(workDir)
                 }
+                // 必要なコマンドを全部先に積んでおく
+                nativeSendCommand("usi")
+                nativeSendCommand("setoption name Threads value 4")
+                nativeSendCommand("setoption name USI_Hash value 256")
+                nativeSendCommand("setoption name BookFile value no_book")
+                nativeSendCommand("isready")
                 nativeStart()
             } catch (e: Exception) {
                 mainHandler.post {
@@ -39,13 +44,11 @@ class UsiEngine(private val dummyPath: String = "") {
     }
 
     fun sendCommand(command: String) {
-        // コマンド送信も別スレッドで行う
         Thread({
             try {
+                android.util.Log.d("ShogiJNI", "sendCommand: $command") // 追加
                 nativeSendCommand(command)
-            } catch (e: Exception) {
-                // エラー時はログのみ
-            }
+            } catch (e: Exception) {}
         }, "USI-Command-Thread").start()
     }
 

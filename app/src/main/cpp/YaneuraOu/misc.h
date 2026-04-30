@@ -1200,6 +1200,8 @@ private:
 	// 先行入力されたものを積んでおくqueue。
 	// これが尽きれば標準入力から入力する。
 	std::queue<std::string> cmds;
+	std::mutex mtx;                    // 追加
+	std::condition_variable cv;        // 追加
 };
 
 extern StandardInput std_input;
