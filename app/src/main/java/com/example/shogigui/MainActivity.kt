@@ -41,6 +41,7 @@ class MainActivity : ComponentActivity() {
 //            copyAssetsToFileDir("nn.bin", "eval")
 //        }
 
+
         setContent {
             ShogiGUITheme {
                 // 初期配置の状態管理
@@ -57,68 +58,94 @@ class MainActivity : ComponentActivity() {
                 var isEngineReady by remember { mutableStateOf(false) }
                 
                 // エンジンのインスタンスを保持
+                val engine = remember { UsiEngine() }
+                
                 // エンジンからの出力を表示するための状態
                 var engineOutput by remember { mutableStateOf("エンジン待機中...") }
-                var engineLog by remember { mutableStateOf(listOf<String>()) }
-                
-                // エンジンのインスタンスを保持
-                val engine = remember { 
-                    UsiEngine().apply {
-                        onOutputReceived = { rawLine ->
-                            val line = rawLine.trim()
-                            
-                            // ログを常に蓄積（上書きしない）
+                var engineLog by remember { mutableStateOf(listOf("エンジン待機中...")) }
+
+                // エンジンからの出力を処理するロジック
+                val processOutput = { rawLine: String ->
+                    val line = rawLine.trim()
+                    
+                    // 外部ストレージ領域にログを保存 (PCから見える場所)
+                    try {
+                        val logFile = java.io.File(getExternalFilesDir(null), "debug_engine.txt")
+                        logFile.appendText("${java.util.Date()}: $line\n")
+                    } catch (e: Exception) {}
+
+                    when {
+                        line.contains("JNI:") -> {
+                            engineOutput = line
                             engineLog = (engineLog + line).takeLast(50)
-                            
-                            when {
-                                line.contains("JNI:") -> {
-                                    // デバッグメッセージは特別に表示
-                                    engineOutput = line
-                                }
-                                line == "usiok" -> {
-                                    engineOutput = "初期化完了 (usiok)"
-                                    // setoption や isready はもう送信済みなので何もしない
-                                }
-                                line == "readyok" -> {
-                                    isEngineReady = true
-                                    if (engineOutput.contains("準備中") || engineOutput.startsWith("初期化")) {
-                                        engineOutput = "準備完了。解析を待機しています..."
-                                    }
-                                }
-                                line.startsWith("info") -> {
-                                    val parsed = parseInfo(line, boardState, currentPlayer)
-                                    // 深さや評価値が含まれている場合、または準備完了前なら更新する
-                                    if (parsed.contains("深さ") || parsed.contains("評価") || !isEngineReady) {
-                                        engineOutput = parsed
-                                    }
-                                }
-                                line.startsWith("bestmove") -> {
-                                    val move = line.substringAfter("bestmove ").substringBefore(" ")
-                                    if (move != "ponder" && move != "(none)") {
-                                        val playerLabel = if (currentPlayer == Player.SENTE) "先手" else "後手"
-                                        val formattedMove = formatUsiMove(move, boardState)
-                                        // 現在の解析情報（深さ・評価値）を維持しつつ、最善手を追記
-                                        engineOutput = engineOutput + "\n最善手: $playerLabel $formattedMove"
-                                    }
-                                }
-                                else -> {
-                                    // 起動直後のみ、その他の出力を表示する
-                                    if (engineOutput == "エンジン待機中...") {
-                                        engineOutput = line
-                                    }
-                                }
+                        }
+                        line == "usiok" -> {
+                            val msg = "初期化完了 (usiok)"
+                            engineOutput = msg
+                            engineLog = (engineLog + msg).takeLast(50)
+                        }
+                        line == "readyok" -> {
+                            isEngineReady = true
+                            val msg = "準備完了。解析を開始します..."
+                            engineOutput = msg
+                            engineLog = (engineLog + msg).takeLast(50)
+                        }
+                        line.startsWith("info") -> {
+                            val parsed = parseInfo(line, boardState, currentPlayer)
+                            if (parsed.contains("深さ") || parsed.contains("評価") || !isEngineReady) {
+                                engineOutput = parsed
+                                val logMsg = parsed.replace("\n", "  ")
+                                engineLog = (engineLog + logMsg).takeLast(50)
+                            } else {
+                                engineLog = (engineLog + line).takeLast(50)
+                            }
+                        }
+                        line.startsWith("bestmove") -> {
+                            val move = line.substringAfter("bestmove ").substringBefore(" ")
+                            if (move != "ponder" && move != "(none)") {
+                                val playerLabel = if (currentPlayer == Player.SENTE) "▲" else "△"
+                                val formattedMove = formatUsiMove(move, boardState)
+                                val finalMsg = "最善手: $playerLabel$formattedMove"
+                                engineOutput = finalMsg
+                                engineLog = (engineLog + finalMsg).takeLast(50)
+                            } else {
+                                engineLog = (engineLog + line).takeLast(50)
+                            }
+                        }
+                        else -> {
+                            // option も含め、準備中はすべて表示して安心させる
+                            if (!line.startsWith("option")) {
+                                engineLog = (engineLog + line).takeLast(50)
                             }
                         }
                     }
                 }
 
+                // 常に最新の盤面状態を関数に反映させる
+                SideEffect {
+                    engine.onOutputReceived = { rawLine ->
+                        // エンジン（バックグラウンド）からの通知を、確実にメインスレッドで処理する
+                        runOnUiThread {
+                            processOutput(rawLine)
+                        }
+                    }
+                }
+
                 // 盤面変化を監視してエンジンに通知（自動追従）
+                var isAnalyzing by remember { mutableStateOf(false) }
+
                 LaunchedEffect(isAnalysisMode, isEngineReady, boardState, currentPlayer, senteHand, goteHand) {
                     if (isAnalysisMode && isEngineReady) {
-                        engine.sendCommand("stop")
+                        if (isAnalyzing) {
+                            engine.sendCommand("stop")
+                            kotlinx.coroutines.delay(100)
+                        }
                         val sfen = boardToSfen(boardState, currentPlayer, senteHand, goteHand)
                         engine.sendCommand("position sfen $sfen")
-                        engine.sendCommand("go movetime 1000") // 2秒思考に変更
+                        engine.sendCommand("go movetime 1000")
+                        isAnalyzing = true
+                    } else if (!isAnalysisMode) {
+                        isAnalyzing = false
                     }
                 }
 
@@ -265,9 +292,9 @@ class MainActivity : ComponentActivity() {
                                 containerColor = MaterialTheme.colorScheme.secondaryContainer
                             )
                         ) {
-                            // 履歴全体を表示（スクロール可能）
+                            // 履歴全体を常に表示
                             Text(
-                                text = if (engineLog.isEmpty()) engineOutput else engineLog.joinToString("\n"),
+                                text = engineLog.joinToString("\n"),
                                 modifier = Modifier.padding(8.dp),
                                 style = MaterialTheme.typography.bodySmall,
                                 minLines = 8,

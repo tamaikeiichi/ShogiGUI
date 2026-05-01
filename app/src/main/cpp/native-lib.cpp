@@ -36,6 +36,10 @@ private:
     std::string line;
     void sendToKotlin() {
         if (line.empty()) return;
+
+        // Logcat にも出力 (タグ: ShogiJNI)
+        __android_log_print(ANDROID_LOG_DEBUG, "ShogiJNI", "Engine: %s", line.c_str());
+
         std::lock_guard<std::mutex> lock(g_mutex);
         if (!g_obj || !g_vm) return;
 
@@ -111,6 +115,9 @@ Java_com_example_shogigui_UsiEngine_nativeStart(JNIEnv* env, jobject thiz) {
     sendDebug("info string JNI: Eval::init start");
     Eval::init();
     sendDebug("info string JNI: Eval::init done");
+
+    // エンジンがループに入る前に「usi」を予約しておく
+    std_input.push("usi");
 
     sendDebug("info string JNI: USI::loop start");
 
