@@ -56,6 +56,8 @@ class MainActivity : ComponentActivity() {
 
     // Activityのフィールドとして保持
     private var rootNode: KifuNode? = null
+    private var savedSenteName: String = "先手"
+    private var savedGoteName: String = "後手"
 
     @OptIn(ExperimentalMaterial3Api::class)
     override fun onCreate(savedInstanceState: Bundle?) {
@@ -68,8 +70,11 @@ class MainActivity : ComponentActivity() {
 //        }
         // Activityライフサイクルで一度だけ読み込む
         if (rootNode == null) {
+            val prefs = getSharedPreferences("kifu_prefs", MODE_PRIVATE)
             val saved = getSharedPreferences("kifu_prefs", MODE_PRIVATE)
                 .getString("current_tree", null)
+            savedSenteName = prefs.getString("sente_name", "先手") ?: "先手"
+            savedGoteName = prefs.getString("gote_name", "後手") ?: "後手"
             rootNode = if (saved != null) {
                 try { jsonToKifuTree(JSONObject(saved)) }
                 catch (e: Exception) {
@@ -80,12 +85,12 @@ class MainActivity : ComponentActivity() {
             }
         }
 
+
         setContent {
             ShogiGUITheme {
                 // 棋譜ツリーの状態管理
                 val initialNode = remember { rootNode!! }
                 var currentNode by remember { mutableStateOf(initialNode) }
-                
                 // 現在のパス（スライダー用）を計算
                 val currentPath = remember(currentNode, initialNode) {
                     val path = mutableListOf<KifuNode>()
@@ -114,8 +119,8 @@ class MainActivity : ComponentActivity() {
                 var isEngineReady by remember { mutableStateOf(false) }
                 
                 // 対局者名
-                var senteName by remember { mutableStateOf("先手") }
-                var goteName by remember { mutableStateOf("後手") }
+                var senteName by remember { mutableStateOf(savedSenteName) }
+                var goteName by remember { mutableStateOf(savedGoteName) }
                 
                 // エンジンのインスタンスを保持
                 val engine = remember { UsiEngine() }
@@ -319,6 +324,10 @@ class MainActivity : ComponentActivity() {
                                                 currentNode = newNode
                                                 saveKifuTree(initialNode)
                                             }
+                                            getSharedPreferences("kifu_prefs", MODE_PRIVATE).edit()
+                                                .putString("sente_name", senteName)
+                                                .putString("gote_name", goteName)
+                                                .apply()
                                         }
 
                                     },
