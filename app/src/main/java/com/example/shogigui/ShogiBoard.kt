@@ -33,9 +33,13 @@ fun ShogiBoard(
     boardState: Map<Pair<Int, Int>, Piece>,
     selectedSquare: Pair<Int, Int>?,
     onSquareClick: (Int, Int) -> Unit,
-    modifier: Modifier = Modifier
+    modifier: Modifier = Modifier,
+    lastFrom: Pair<Int, Int>? = null,
+    lastTo: Pair<Int, Int>? = null
 ) {
     val boardColor = Color(0xFFFFD9A5)
+    val highlightColor = Color(0xFFF4D35E).copy(alpha = 0.6f) // 指し手の強調色（山吹色系）
+    val selectionColor = MaterialTheme.colorScheme.primaryContainer.copy(alpha = 0.7f)
     val kanjiNumbers = listOf("一", "二", "三", "四", "五", "六", "七", "八", "九")
 
     Column(
@@ -43,7 +47,7 @@ fun ShogiBoard(
             .background(boardColor)
             .padding(2.dp)
     ) {
-        // 上側の数字ラベル (筋: 9から1) - 右側の段ラベル分(24dp)を空ける
+        // ... (筋ラベル部分は変更なし)
         Row(modifier = Modifier.fillMaxWidth().padding(end = 18.dp)) {
             for (col in 0 until 9) {
                 Box(modifier = Modifier.weight(1f), contentAlignment = Alignment.Center) {
@@ -54,7 +58,6 @@ fun ShogiBoard(
         
         Spacer(modifier = Modifier.height(2.dp))
 
-        // 盤面と段ラベルを同じRowに配置し、高さを最小サイズ(IntrinsicSize.Min)で同期
         Row(
             modifier = Modifier
                 .fillMaxWidth()
@@ -70,14 +73,24 @@ fun ShogiBoard(
                 for (row in 0 until 9) {
                     Row(modifier = Modifier.weight(1f)) {
                         for (col in 0 until 9) {
-                            val piece = boardState[Pair(row, col)]
-                            val isSelected = selectedSquare == Pair(row, col)
+                            val clickedPos = Pair(row, col)
+                            val piece = boardState[clickedPos]
+                            
+                            val isSelected = selectedSquare == clickedPos
+                            val isLastMove = clickedPos == lastFrom || clickedPos == lastTo
+                            
+                            val bgColor = when {
+                                isSelected -> selectionColor
+                                isLastMove -> highlightColor
+                                else -> Color.Transparent
+                            }
+
                             ShogiSquare(
                                 modifier = Modifier
                                     .weight(1f)
                                     .fillMaxHeight()
                                     .border(0.5.dp, Color.Black)
-                                    .background(if (isSelected) MaterialTheme.colorScheme.primaryContainer.copy(alpha = 0.7f) else Color.Transparent)
+                                    .background(bgColor)
                                     .clickable { onSquareClick(row, col) },
                                 piece = piece
                             )
@@ -85,6 +98,7 @@ fun ShogiBoard(
                     }
                 }
             }
+            // ... (段ラベル部分は変更なし)
 
             // 右側の段ラベル (一から九) - 盤面の高さに完全に追従
             Column(

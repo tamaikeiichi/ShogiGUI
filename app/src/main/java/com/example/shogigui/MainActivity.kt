@@ -6,6 +6,8 @@ import androidx.activity.compose.setContent
 import androidx.activity.enableEdgeToEdge
 import androidx.compose.animation.core.*
 import androidx.compose.foundation.background
+import androidx.compose.foundation.rememberScrollState
+import androidx.compose.foundation.verticalScroll
 import androidx.compose.foundation.layout.fillMaxSize
 import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.layout.Box
@@ -31,6 +33,8 @@ import androidx.compose.ui.tooling.preview.Preview
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.platform.LocalClipboardManager
 import androidx.compose.ui.text.AnnotatedString
+import org.json.JSONArray
+import org.json.JSONObject
 import com.example.shogigui.ui.theme.ShogiGUITheme
 
 // 棋譜の1局面を管理するノードクラス
@@ -40,13 +44,19 @@ class KifuNode(
     val goteHand: Map<PieceType, Int>,
     val currentPlayer: Player,
     val moveLabel: String = "開始局面",
-    val parent: KifuNode? = null
+    val parent: KifuNode? = null,
+    val lastFrom: Pair<Int, Int>? = null,
+    val lastTo: Pair<Int, Int>? = null
 ) {
     val children = mutableStateListOf<KifuNode>()
     val moveCount: Int = (parent?.moveCount ?: -1) + 1
 }
 
 class MainActivity : ComponentActivity() {
+
+    // Activityのフィールドとして保持
+    private var rootNode: KifuNode? = null
+
     @OptIn(ExperimentalMaterial3Api::class)
     override fun onCreate(savedInstanceState: Bundle?) {
         super.onCreate(savedInstanceState)
@@ -56,14 +66,24 @@ class MainActivity : ComponentActivity() {
 //        java.util.concurrent.Executors.newSingleThreadExecutor().execute {
 //            copyAssetsToFileDir("nn.bin", "eval")
 //        }
-
+        // Activityライフサイクルで一度だけ読み込む
+        if (rootNode == null) {
+            val saved = getSharedPreferences("kifu_prefs", MODE_PRIVATE)
+                .getString("current_tree", null)
+            rootNode = if (saved != null) {
+                try { jsonToKifuTree(JSONObject(saved)) }
+                catch (e: Exception) {
+                    KifuNode(createInitialBoard(), emptyMap(), emptyMap(), Player.SENTE)
+                }
+            } else {
+                KifuNode(createInitialBoard(), emptyMap(), emptyMap(), Player.SENTE)
+            }
+        }
 
         setContent {
             ShogiGUITheme {
                 // 棋譜ツリーの状態管理
-                val initialNode = remember { 
-                    KifuNode(createInitialBoard(), emptyMap(), emptyMap(), Player.SENTE) 
-                }
+                val initialNode = remember { rootNode!! }
                 var currentNode by remember { mutableStateOf(initialNode) }
                 
                 // 現在のパス（スライダー用）を計算
@@ -295,7 +315,10 @@ class MainActivity : ComponentActivity() {
                                                 else ->
                                                     parseKif(text, initialNode) ?: parseKifu(text, initialNode)
                                             }
-                                            if (newNode != null) currentNode = newNode
+                                            if (newNode != null) {
+                                                currentNode = newNode
+                                                saveKifuTree(initialNode)
+                                            }
                                         }
 
                                     },
@@ -377,6 +400,7 @@ class MainActivity : ComponentActivity() {
                                                 initialNode.children.clear()
                                                 selectedSquare = null
                                                 selectedHandPiece = null
+                                                getSharedPreferences("kifu_prefs", MODE_PRIVATE).edit().remove("current_tree").apply()
                                                 showMenu = false
                                             }
                                         )
@@ -386,7 +410,10 @@ class MainActivity : ComponentActivity() {
                                                 val text = clipboardManager.getText()?.text
                                                 if (text != null) {
                                                     val newNode = parseKifu(text, initialNode)
-                                                    if (newNode != null) currentNode = newNode
+                                                    if (newNode != null) {
+                                                        currentNode = newNode
+                                                        saveKifuTree(initialNode)
+                                                    }
                                                 }
                                                 showMenu = false
                                             }
@@ -412,9 +439,10 @@ class MainActivity : ComponentActivity() {
                     Column(
                         modifier = Modifier
                             .fillMaxSize()
-                            .padding(innerPadding),
+                            .padding(innerPadding)
+                            .verticalScroll(rememberScrollState()),
                         horizontalAlignment = Alignment.CenterHorizontally,
-                        verticalArrangement = Arrangement.Center
+                        verticalArrangement = Arrangement.Top
                     ) {
                         // エンジンの解析情報を表示
                         Card(
@@ -435,27 +463,7 @@ class MainActivity : ComponentActivity() {
                             )
                         }
 
-                        // 後手情報
-                        if (currentPlayer == Player.GOTE) {
-                            ElevatedCard(
-                                elevation = CardDefaults.elevatedCardElevation(defaultElevation = 8.dp),
-                                colors = CardDefaults.elevatedCardColors(
-                                    containerColor = MaterialTheme.colorScheme.primaryContainer
-                                ),
-                                modifier = Modifier.padding(bottom = 8.dp)
-                            ) {
-                                PlayerInfoContent(goteName, "△")
-                            }
-                        } else {
-                            Card(
-                                colors = CardDefaults.cardColors(
-                                    containerColor = MaterialTheme.colorScheme.surfaceVariant
-                                ),
-                                modifier = Modifier.padding(bottom = 8.dp)
-                            ) {
-                                PlayerInfoContent(goteName, "△")
-                            }
-                        }
+
 
                         // 後手の持ち駒（逆向き）
                         HandView(
@@ -473,6 +481,8 @@ class MainActivity : ComponentActivity() {
                         ShogiBoard(
                             boardState = boardState,
                             selectedSquare = selectedSquare,
+                            lastFrom = currentNode.lastFrom,
+                            lastTo = currentNode.lastTo,
                             onSquareClick = { row, col ->
                                 val clickedPos = Pair(row, col)
                                 
@@ -633,25 +643,86 @@ class MainActivity : ComponentActivity() {
                             }
                         )
 
-                        // 先手情報
-                        if (currentPlayer == Player.SENTE) {
-                            ElevatedCard(
-                                elevation = CardDefaults.elevatedCardElevation(defaultElevation = 8.dp),
-                                colors = CardDefaults.elevatedCardColors(
-                                    containerColor = MaterialTheme.colorScheme.primaryContainer
-                                ),
-                                modifier = Modifier.padding(top = 8.dp)
-                            ) {
-                                PlayerInfoContent(senteName, "▲")
+                        Row(
+                            modifier = Modifier.fillMaxWidth(),
+                            horizontalArrangement = Arrangement.spacedBy(8.dp)
+                        ) {
+                            // 先手情報
+                            var sentePulsed by remember { mutableStateOf(false) }
+
+                            LaunchedEffect(currentPlayer) {
+                                if (currentPlayer == Player.SENTE) {
+                                    sentePulsed = true
+                                    kotlinx.coroutines.delay(200)  // 次のcurrentPlayer変化でキャンセルされる
+                                    sentePulsed = false
+                                } else {
+                                    sentePulsed = false  // 即座に戻す
+                                }
                             }
-                        } else {
-                            Card(
-                                colors = CardDefaults.cardColors(
-                                    containerColor = MaterialTheme.colorScheme.surfaceVariant
+                            @OptIn(ExperimentalMaterial3ExpressiveApi::class)
+                            FilledTonalIconButton(
+                                onClick = {},
+                                shapes = IconButtonDefaults.shapes(
+                                    shape = if (!sentePulsed)
+                                        MaterialTheme.shapes.small
+                                    else
+                                        MaterialTheme.shapes.largeIncreased       // 手番でないとき: 角ばった
                                 ),
-                                modifier = Modifier.padding(top = 8.dp)
+                                colors = IconButtonDefaults.filledTonalIconButtonColors(
+                                    containerColor = if (currentPlayer == Player.SENTE)
+                                        MaterialTheme.colorScheme.primaryContainer
+                                    else
+                                        MaterialTheme.colorScheme.surfaceVariant,
+                                    contentColor = if (currentPlayer == Player.SENTE)
+                                        MaterialTheme.colorScheme.onPrimaryContainer
+                                    else
+                                        MaterialTheme.colorScheme.onSurfaceVariant
+                                ),
+                                modifier = Modifier
+                                    .weight(1f)
+                                    .padding(top = 8.dp)
+                                    .height(48.dp)
                             ) {
-                                PlayerInfoContent(senteName, "▲")
+                                PlayerInfoContent(senteName, "先手▲")
+                            }
+
+                            // 後手情報
+                            var gotePulsed by remember { mutableStateOf(false) }
+
+                            LaunchedEffect(currentPlayer) {
+                                if (currentPlayer == Player.GOTE) {
+                                    gotePulsed = true
+                                    kotlinx.coroutines.delay(200)
+                                    gotePulsed = false
+                                } else {
+                                    gotePulsed = false
+                                }
+                            }
+                            @OptIn(ExperimentalMaterial3ExpressiveApi::class)
+                            FilledTonalIconButton(
+                                onClick = {},
+                                shapes = IconButtonDefaults.shapes(
+                                    shape = if (gotePulsed)
+                                        MaterialTheme.shapes.small
+                                    else
+                                        MaterialTheme.shapes.largeIncreased       // 手番でないとき: 角ばった
+                                ),
+                                colors = IconButtonDefaults.filledTonalIconButtonColors(
+                                    containerColor = if (currentPlayer == Player.GOTE)
+                                        MaterialTheme.colorScheme.primaryContainer
+                                    else
+                                        MaterialTheme.colorScheme.surfaceVariant,
+                                    contentColor = if (currentPlayer == Player.GOTE)
+                                        MaterialTheme.colorScheme.onPrimaryContainer
+                                    else
+                                        MaterialTheme.colorScheme.onSurfaceVariant
+                                ),
+                                modifier = Modifier
+                                    .weight(1f)
+                                    .padding(top = 8.dp)
+                                    .height(48.dp)
+                            ) {
+                                PlayerInfoContent(goteName, "後手△")
                             }
                         }
                     }
@@ -1016,10 +1087,100 @@ class MainActivity : ComponentActivity() {
         newBoard[to] = piece.copy(isPromoted = promote || piece.isPromoted)
         
         val nextPlayer = if (parentNode.currentPlayer == Player.SENTE) Player.GOTE else Player.SENTE
-        val newNode = KifuNode(newBoard, newSenteHand, newGoteHand, nextPlayer, label, parentNode)
+        val newNode = KifuNode(newBoard, newSenteHand, newGoteHand, nextPlayer, label, parentNode, from, to)
         
         parentNode.children.add(newNode)
+        saveKifuTree(getRootNode(parentNode))
         onUpdate(newNode)
+    }
+
+    private fun getRootNode(node: KifuNode): KifuNode {
+        var p = node
+        while (p.parent != null) p = p.parent!!
+        return p
+    }
+
+    private fun saveKifuTree(root: KifuNode) {
+        val json = kifuTreeToJson(root)
+        getSharedPreferences("kifu_prefs", MODE_PRIVATE).edit().putString("current_tree", json.toString()).apply()
+    }
+
+    private fun kifuTreeToJson(node: KifuNode): JSONObject {
+        val json = JSONObject()
+        json.put("turn", node.currentPlayer.name)
+        json.put("label", node.moveLabel)
+        
+        // 盤面
+        val boardJson = JSONObject()
+        node.board.forEach { (pos, piece) ->
+            val pJson = JSONObject()
+            pJson.put("t", piece.type.name)
+            pJson.put("o", piece.owner.name)
+            pJson.put("p", piece.isPromoted)
+            boardJson.put("${pos.first},${pos.second}", pJson)
+        }
+        json.put("board", boardJson)
+
+        // 持ち駒
+        val senteHandJson = JSONObject()
+        node.senteHand.forEach { (t, c) -> senteHandJson.put(t.name, c) }
+        json.put("senteHand", senteHandJson)
+
+        val goteHandJson = JSONObject()
+        node.goteHand.forEach { (t, c) -> goteHandJson.put(t.name, c) }
+        json.put("goteHand", goteHandJson)
+
+        // ハイライト
+        json.put("lastFrom", if (node.lastFrom != null) "${node.lastFrom.first},${node.lastFrom.second}" else null)
+        json.put("lastTo", if (node.lastTo != null) "${node.lastTo.first},${node.lastTo.second}" else null)
+
+        // 子要素 (再帰)
+        val childrenJson = JSONArray()
+        node.children.forEach { childrenJson.put(kifuTreeToJson(it)) }
+        json.put("children", childrenJson)
+        
+        return json
+    }
+
+    private fun jsonToKifuTree(json: JSONObject, parent: KifuNode? = null): KifuNode {
+        val board = mutableMapOf<Pair<Int, Int>, Piece>()
+        val boardJson = json.getJSONObject("board")
+        boardJson.keys().forEach { key ->
+            val pos = key.split(",").let { Pair(it[0].toInt(), it[1].toInt()) }
+            val pJson = boardJson.getJSONObject(key)
+            board[pos] = Piece(
+                PieceType.valueOf(pJson.getString("t")),
+                Player.valueOf(pJson.getString("o")),
+                pJson.getBoolean("p")
+            )
+        }
+
+        val senteHand = mutableMapOf<PieceType, Int>()
+        val sHandJson = json.getJSONObject("senteHand")
+        sHandJson.keys().forEach { senteHand[PieceType.valueOf(it)] = sHandJson.getInt(it) }
+
+        val goteHand = mutableMapOf<PieceType, Int>()
+        val gHandJson = json.getJSONObject("goteHand")
+        gHandJson.keys().forEach { goteHand[PieceType.valueOf(it)] = gHandJson.getInt(it) }
+
+        val lastFrom = json.optString("lastFrom", null)?.takeIf { it != "null" && it.isNotEmpty() }?.split(",")?.let { Pair(it[0].toInt(), it[1].toInt()) }
+        val lastTo = json.optString("lastTo", null)?.takeIf { it != "null" && it.isNotEmpty() }?.split(",")?.let { Pair(it[0].toInt(), it[1].toInt()) }
+
+        val node = KifuNode(
+            board, senteHand, goteHand, 
+            Player.valueOf(json.getString("turn")),
+            json.getString("label"),
+            parent,
+            lastFrom,
+            lastTo
+        )
+
+        val childrenJson = json.getJSONArray("children")
+        for (i in 0 until childrenJson.length()) {
+            node.children.add(jsonToKifuTree(childrenJson.getJSONObject(i), node))
+        }
+
+        return node
     }
 
     // KIF形式（通常版および簡易版）を解析

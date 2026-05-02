@@ -108,6 +108,20 @@ Java_com_example_shogigui_UsiEngine_nativeStart(JNIEnv* env, jobject thiz) {
         initialized = true;
     }
 
+    // Threads.set() も初回のみ呼ぶ
+    static bool threads_initialized = false;
+    if (!threads_initialized) {
+        size_t thread_num = Options.count("Threads") ? (size_t)Options["Threads"] : 1;
+        Threads.set(thread_num);
+        Eval::init();
+        threads_initialized = true;
+    }
+
+    static std::atomic<bool> running(false);
+    if (running.exchange(true)) {
+        return; // 2回目の呼び出しは即リターン
+    }
+
     sendDebug("info string JNI: Thread setting start");
     size_t thread_num = Options.count("Threads") ? (size_t)Options["Threads"] : 1;
     Threads.set(thread_num);
