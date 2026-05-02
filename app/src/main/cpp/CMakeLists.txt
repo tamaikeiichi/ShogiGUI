@@ -8,16 +8,22 @@ file(GLOB_RECURSE ENGINE_SOURCES "YaneuraOu/*.cpp")
 add_library(yaneuraou SHARED ${ENGINE_SOURCES} native-lib.cpp)
 
 # コンパイルオプションとマクロ定義
+# CPUアーキテクチャに応じた最適化フラグの設定
+if(${ANDROID_ABI} STREQUAL "x86_64")
+    target_compile_definitions(yaneuraou PRIVATE USE_SSE42)
+elseif(${ANDROID_ABI} STREQUAL "arm64-v8a")
+    # ARM向けの定義（やねうら王の仕様に合わせる）
+    target_compile_definitions(yaneuraou PRIVATE NO_SSE)
+endif()
+
 target_compile_definitions(yaneuraou PRIVATE
     YANEURAOU_ENGINE_NNUE
     ENGINE_NAME="Suisho5_Android"
     ENGINE_VERSION="2024.1.0"
     TARGET_CPU="Android"
-    USE_SSE42
-    # 高速化のための追加フラグ
+    # その他共通フラグ
     NDEBUG
     NO_ASSUME_VLA
-    # メモリ管理の最適化
     USE_LARGE_PAGES
 )
 
