@@ -335,7 +335,7 @@ class MainActivity : ComponentActivity() {
 
                                     },
                                     modifier = Modifier
-                                        .weight(0.4f)
+                                        .weight(0.3f)
                                         .height(72.dp),
                                     shape = MaterialTheme.shapes.extraLarge,
                                     border = BorderStroke(1.dp, MaterialTheme.colorScheme.outline)
@@ -368,7 +368,7 @@ class MainActivity : ComponentActivity() {
                                         }
                                     },
                                     modifier = Modifier
-                                        .weight(0.6f)
+                                        .weight(0.4f)
                                         .height(72.dp)
                                         .graphicsLayer {
                                             if (!isEngineReady) this.alpha = alpha
@@ -424,20 +424,28 @@ class MainActivity : ComponentActivity() {
                                     }
                                 }
                                 Button(
+                                    modifier = Modifier
+                                        .weight(0.3f)
+                                        .height(72.dp),
                                     onClick = {
                                         isBoardFlipped = !isBoardFlipped
                                         showMenu = false
                                     }
                                 ){
-                                    Icon(
-                                        painter = painterResource(id = R.drawable.rotate_right_24px),
-                                        contentDescription = "反転",
-                                        modifier = Modifier.size(28.dp)
-                                    )
-                                    Text(
-                                        text = "反転",
-                                        style = MaterialTheme.typography.labelSmall // アイコンの下に小さく文字を添える
-                                    )
+                                    Column(
+                                        horizontalAlignment = Alignment.CenterHorizontally,
+                                        verticalArrangement = Arrangement.Center
+                                    ) {
+                                        Icon(
+                                            painter = painterResource(id = R.drawable.rotate_right_24px),
+                                            contentDescription = "反転",
+                                            modifier = Modifier.size(28.dp)
+                                        )
+                                        Text(
+                                            text = "反転",
+                                            style = MaterialTheme.typography.labelSmall // アイコンの下に小さく文字を添える
+                                        )
+                                    }
                                 }
                                 // メニューボタン
                                 Box {
