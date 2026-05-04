@@ -31,6 +31,7 @@ import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.tooling.preview.Preview
 import androidx.compose.ui.unit.dp
+import androidx.compose.ui.unit.sp
 import androidx.compose.ui.platform.LocalClipboardManager
 import androidx.compose.ui.text.AnnotatedString
 import org.json.JSONArray
@@ -89,7 +90,7 @@ class MainActivity : ComponentActivity() {
         setContent {
             ShogiGUITheme {
                 // 棋譜ツリーの状態管理
-                val initialNode = remember { rootNode!! }
+                var initialNode by remember { mutableStateOf(rootNode!!) }
                 var currentNode by remember { mutableStateOf(initialNode) }
                 // 現在のパス（スライダー用）を計算
                 val currentPath = remember(currentNode, initialNode) {
@@ -288,9 +289,11 @@ class MainActivity : ComponentActivity() {
                                                     parseKif(text, freshRoot) ?: parseKifu(text, freshRoot)
                                             }
                                             if (newNode != null) {
+                                                initialNode = freshRoot
                                                 currentNode = newNode
-                                                saveKifuTree(initialNode)
+                                                saveKifuTree(freshRoot)
                                             } else {
+                                                initialNode = freshRoot
                                                 currentNode = freshRoot
                                             }
                                             getSharedPreferences("kifu_prefs", MODE_PRIVATE).edit()
@@ -387,10 +390,13 @@ class MainActivity : ComponentActivity() {
                                             onClick = {
                                                 val text = clipboardManager.getText()?.text
                                                 if (text != null) {
-                                                    val newNode = parseKifu(text, initialNode)
+                                                    val freshRoot2 = KifuNode(createInitialBoard(), emptyMap(), emptyMap(), Player.SENTE)
+                                                    rootNode = freshRoot2
+                                                    val newNode = parseKifu(text, freshRoot2)
                                                     if (newNode != null) {
+                                                        initialNode = freshRoot2
                                                         currentNode = newNode
-                                                        saveKifuTree(initialNode)
+                                                        saveKifuTree(freshRoot2)
                                                     }
                                                 }
                                                 showMenu = false
@@ -1478,18 +1484,31 @@ class MainActivity : ComponentActivity() {
 
 @Composable
 fun PlayerInfoContent(name: String, mark: String) {
+    // コンテキスト外に出すために、まずデフォルトのサイズを取得する
+    val defaultFontSize = MaterialTheme.typography.titleMedium.fontSize
+    var fontSize by remember(name) { mutableStateOf(defaultFontSize) }
+
     Row(
         modifier = Modifier.padding(horizontal = 8.dp, vertical = 4.dp),
         verticalAlignment = Alignment.CenterVertically
     ) {
         Text(
             text = "$mark ",
-            style = MaterialTheme.typography.titleMedium,
-            fontWeight = FontWeight.Bold
+            style = MaterialTheme.typography.titleMedium.copy(fontSize = 14.sp),
+            fontWeight = FontWeight.Bold,
+            maxLines = 1
         )
         Text(
             text = name,
-            style = MaterialTheme.typography.titleMedium
+            style = MaterialTheme.typography.titleMedium.copy(fontSize = fontSize),
+            maxLines = 1,
+            softWrap = false,
+            onTextLayout = { textLayoutResult ->
+                // 表示がはみ出している場合、サイズを小さくして再描画を促す
+                if (textLayoutResult.hasVisualOverflow && fontSize > 8.sp) {
+                    fontSize *= 0.9f
+                }
+            }
         )
     }
 }
