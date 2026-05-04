@@ -5,6 +5,7 @@ import androidx.activity.ComponentActivity
 import androidx.activity.compose.setContent
 import androidx.activity.enableEdgeToEdge
 import androidx.compose.animation.core.*
+import androidx.compose.foundation.BorderStroke
 import androidx.compose.foundation.background
 import androidx.compose.foundation.rememberScrollState
 import androidx.compose.foundation.verticalScroll
@@ -24,6 +25,7 @@ import androidx.compose.material3.*
 import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.automirrored.filled.ArrowBack
 import androidx.compose.material.icons.automirrored.filled.ArrowForward
+import androidx.compose.material.icons.filled.ContentPaste
 import androidx.compose.material.icons.filled.Menu
 import androidx.compose.runtime.*
 import androidx.compose.ui.Modifier
@@ -110,6 +112,9 @@ class MainActivity : ComponentActivity() {
                 val goteHand = currentNode.goteHand
                 val currentPlayer = currentNode.currentPlayer
 
+                // MainActivity 内に定義を追加
+                var pvList by remember { mutableStateOf(mutableMapOf<Int, String>()) }
+
                 var selectedSquare by remember { mutableStateOf<Pair<Int, Int>?>(null) }
                 var selectedHandPiece by remember { mutableStateOf<Pair<Player, PieceType>?>(null) }
                 var promotionPendingBy by remember { mutableStateOf<PendingMove?>(null) }
@@ -118,6 +123,7 @@ class MainActivity : ComponentActivity() {
                 val clipboardManager = LocalClipboardManager.current
                 var isAnalysisMode by remember { mutableStateOf(false) }
                 var isEngineReady by remember { mutableStateOf(false) }
+                var isAnalyzing by remember { mutableStateOf(false) }
                 
                 // 対局者名
                 var senteName by remember { mutableStateOf(savedSenteName) }
@@ -151,6 +157,7 @@ class MainActivity : ComponentActivity() {
                             engineLog = (engineLog + msg).takeLast(50)
                             // ここで本気を出すためのオプションを設定（メモリを128MBに調整）
                             engine.sendCommand("setoption name Threads value 4")
+                            engine.sendCommand("setoption name MultiPV value 3")
                             engine.sendCommand("setoption name USI_Hash value 128")
                             engine.sendCommand("setoption name BookFile value no_book")
                             engine.sendCommand("isready")
@@ -163,22 +170,35 @@ class MainActivity : ComponentActivity() {
                             // 自動開始は LaunchedEffect 側に任せるため、ここでは何もしない
                         }
                         line.startsWith("info") -> {
+                            // lineから "multipv X" を抽出
+                            val multipvMatch = Regex("multipv (\\d+)").find(line)
+                            val rank = multipvMatch?.groupValues?.get(1)?.toInt() ?: 1
+
                             val parsed = parseInfo(line, boardState, currentPlayer)
-                            if (parsed.contains("深さ") || parsed.contains("評価") || !isEngineReady) {
-                                engineOutput = parsed
-                                val logMsg = parsed.replace("\n", "  ")
-                                engineLog = (engineLog + logMsg).takeLast(50)
-                            } else {
-                                engineLog = (engineLog + line).takeLast(50)
+                            if (parsed.contains("評価") || parsed.contains("読み筋")) {
+                                // 順位（rank）をキーにして保存
+                                pvList[rank] = parsed
+                                // リストを順位順に並べて結合し、表示用テキストを作る
+                                engineOutput = pvList.toSortedMap().values.joinToString("\n---\n")
                             }
+//                            if (parsed.contains("深さ") || parsed.contains("評価") || !isEngineReady) {
+//                                engineOutput = parsed
+//                                val logMsg = parsed.replace("\n", "  ")
+//                                engineLog = (engineLog + logMsg).takeLast(50)
+//                            } else {
+//                                engineLog = (engineLog + line).takeLast(50)
+//                            }
                         }
                         line.startsWith("bestmove") -> {
+                            isAnalysisMode = false
+                            isAnalyzing = false // 解析が終わったことを記録
+
                             val move = line.substringAfter("bestmove ").substringBefore(" ")
                             if (move != "ponder" && move != "(none)") {
                                 val playerLabel = if (currentPlayer == Player.SENTE) "▲" else "△"
                                 val formattedMove = formatUsiMove(move, boardState)
                                 val finalMsg = "最善手: $playerLabel$formattedMove"
-                                engineOutput = finalMsg
+                                engineOutput = engineOutput + "\n" + finalMsg
                                 engineLog = (engineLog + finalMsg).takeLast(50)
                             } else {
                                 engineLog = (engineLog + line).takeLast(50)
@@ -204,7 +224,7 @@ class MainActivity : ComponentActivity() {
                 }
 
                 // 盤面変化を監視してエンジンに通知（自動追従）
-                var isAnalyzing by remember { mutableStateOf(false) }
+
 // LaunchedEffect の代わりに snapshotFlow を使う
                 LaunchedEffect(isAnalysisMode, isEngineReady) {
                     if (isAnalysisMode && isEngineReady) {
@@ -213,6 +233,7 @@ class MainActivity : ComponentActivity() {
                                 currentNode.senteHand to currentNode.goteHand)
                         }.collect { (board, player, hands) ->
                             engine.sendCommand("stop")
+                            pvList.clear() // ★ここ：前の局面の次善手を消す
                             kotlinx.coroutines.delay(100)
                             val sfen = boardToSfen(board, player, hands.first, hands.second)
                             if (sfen.isNotEmpty()) {
@@ -306,9 +327,23 @@ class MainActivity : ComponentActivity() {
                                     modifier = Modifier
                                         .weight(0.4f)
                                         .height(72.dp),
-                                    shape = MaterialTheme.shapes.extraLarge
+                                    shape = MaterialTheme.shapes.extraLarge,
+                                    border = BorderStroke(1.dp, MaterialTheme.colorScheme.outline)
                                 ) {
-                                    Text("読込", style = MaterialTheme.typography.titleMedium)
+                                    Column(
+                                        horizontalAlignment = Alignment.CenterHorizontally,
+                                        verticalArrangement = Arrangement.Center
+                                    ) {
+                                        Icon(
+                                            imageVector = Icons.Default.ContentPaste, // クリップボードからの読込を象徴
+                                            contentDescription = "棋譜読込",
+                                            modifier = Modifier.size(28.dp)
+                                        )
+                                        Text(
+                                            text = "読込",
+                                            style = MaterialTheme.typography.labelSmall // アイコンの下に小さく文字を添える
+                                        )
+                                    }
                                 }
 
                                 // 解析ボタン
@@ -434,16 +469,21 @@ class MainActivity : ComponentActivity() {
                                 .fillMaxWidth()
                                 .padding(8.dp),
                             colors = CardDefaults.cardColors(
-                                containerColor = MaterialTheme.colorScheme.secondaryContainer
+                                // 解析中（isAnalysisMode）かどうかに合わせて色を変えると分かりやすいです
+                                containerColor = if (isAnalysisMode)
+                                    MaterialTheme.colorScheme.tertiaryContainer
+                                else
+                                    MaterialTheme.colorScheme.secondaryContainer
                             )
                         ) {
                             // 履歴全体を常に表示
                             Text(
-                                text = engineLog.joinToString("\n"),
+                                text = engineOutput,
+                                    //engineLog.joinToString("\n"),
                                 modifier = Modifier.padding(8.dp),
                                 style = MaterialTheme.typography.bodySmall,
                                 minLines = 1,
-                                maxLines = 2
+                                maxLines = 4
                             )
                         }
 

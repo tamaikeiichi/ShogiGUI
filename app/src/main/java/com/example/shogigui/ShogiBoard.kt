@@ -37,8 +37,8 @@ fun ShogiBoard(
     lastFrom: Pair<Int, Int>? = null,
     lastTo: Pair<Int, Int>? = null
 ) {
-    val boardColor = Color(0xFFFFD9A5)
-    val highlightColor = Color(0xFFF4D35E).copy(alpha = 0.6f) // 指し手の強調色（山吹色系）
+    val boardColor = Color(0xFFFFE3BE)
+    val highlightColor = Color(0xFFFCA78B).copy(alpha = 0.6f) // 指し手の強調色（山吹色系）
     val selectionColor = MaterialTheme.colorScheme.primaryContainer.copy(alpha = 0.7f)
     val kanjiNumbers = listOf("一", "二", "三", "四", "五", "六", "七", "八", "九")
 
