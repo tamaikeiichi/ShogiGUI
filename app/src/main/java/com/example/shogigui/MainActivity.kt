@@ -39,6 +39,7 @@ import androidx.compose.ui.tooling.preview.Preview
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
 import androidx.compose.ui.platform.LocalClipboardManager
+import androidx.compose.ui.res.painterResource
 import androidx.compose.ui.text.AnnotatedString
 import org.json.JSONArray
 import org.json.JSONObject
@@ -118,6 +119,8 @@ class MainActivity : ComponentActivity() {
                 val senteHand = currentNode.senteHand
                 val goteHand = currentNode.goteHand
                 val currentPlayer = currentNode.currentPlayer
+
+                var isBoardFlipped by remember { mutableStateOf(false) }
 
                 // MainActivity 内に定義を追加
                 val pvList = remember { mutableStateMapOf<Int, String>() }
@@ -384,20 +387,57 @@ class MainActivity : ComponentActivity() {
                                             modifier = Modifier.padding(end = 16.dp),
                                             color = MaterialTheme.colorScheme.primary
                                         )
-                                        Text(
-                                            text = "エンジン準備中",
-                                            style = MaterialTheme.typography.titleMedium,
-                                            color = MaterialTheme.colorScheme.onSurfaceVariant
-                                        )
+//                                        Text(
+//                                            text = "エンジン準備中",
+//                                            style = MaterialTheme.typography.titleMedium,
+//                                            color = MaterialTheme.colorScheme.onSurfaceVariant
+//                                        )
                                     } else {
-                                        Text(
-                                            text = if (isAnalysisMode) "停止" else "解析",
-                                            style = MaterialTheme.typography.titleLarge,
-                                            color = if (isAnalysisMode)
-                                                MaterialTheme.colorScheme.onTertiaryContainer
-                                            else MaterialTheme.colorScheme.onPrimary
-                                        )
+                                        if (isAnalysisMode) {
+                                            Icon(
+                                                painter = painterResource(id = R.drawable.stop_circle_24px),
+                                                contentDescription = "停止",
+                                                modifier = Modifier.size(28.dp)
+                                            )
+                                            Text(
+                                                text = "停止",
+                                                style = MaterialTheme.typography.labelSmall // アイコンの下に小さく文字を添える
+                                            )
+                                        }
+                                        else {
+                                            Column(
+                                                horizontalAlignment = Alignment.CenterHorizontally,
+                                                verticalArrangement = Arrangement.Center
+                                            ) {
+                                                Icon(
+                                                    painter = painterResource(id = R.drawable.network_intelligence_24px),
+                                                    contentDescription = "棋譜解析",
+                                                    modifier = Modifier.size(28.dp)
+                                                )
+                                                Text(
+                                                    text = "解析",
+                                                    style = MaterialTheme.typography.labelSmall // アイコンの下に小さく文字を添える
+                                                )
+                                            }
+                                        }
+
                                     }
+                                }
+                                Button(
+                                    onClick = {
+                                        isBoardFlipped = !isBoardFlipped
+                                        showMenu = false
+                                    }
+                                ){
+                                    Icon(
+                                        painter = painterResource(id = R.drawable.rotate_right_24px),
+                                        contentDescription = "反転",
+                                        modifier = Modifier.size(28.dp)
+                                    )
+                                    Text(
+                                        text = "反転",
+                                        style = MaterialTheme.typography.labelSmall // アイコンの下に小さく文字を添える
+                                    )
                                 }
                                 // メニューボタン
                                 Box {
@@ -514,9 +554,12 @@ class MainActivity : ComponentActivity() {
                             selectedSquare = selectedSquare,
                             lastFrom = currentNode.lastFrom,
                             lastTo = currentNode.lastTo,
+                            isFlipped = isBoardFlipped,
                             onSquareClick = { row, col ->
+                                //val clickedPos = Pair(row, col)
+                                val actualRow = if (isBoardFlipped) 8 - row else row
+                                val actualCol = if (isBoardFlipped) 8 - col else col
                                 val clickedPos = Pair(row, col)
-                                
                                 val currentHandSelection = selectedHandPiece
                                 if (currentHandSelection != null) {
                                     // 持ち駒を打つ

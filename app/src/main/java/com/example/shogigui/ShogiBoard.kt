@@ -33,9 +33,12 @@ fun ShogiBoard(
     boardState: Map<Pair<Int, Int>, Piece>,
     selectedSquare: Pair<Int, Int>?,
     onSquareClick: (Int, Int) -> Unit,
+    isFlipped: Boolean = false,
     modifier: Modifier = Modifier,
+
     lastFrom: Pair<Int, Int>? = null,
-    lastTo: Pair<Int, Int>? = null
+    lastTo: Pair<Int, Int>? = null,
+
 ) {
     val boardColor = Color(0xFFFFE3BE)
     val highlightColor = Color(0xFFFCA78B).copy(alpha = 0.6f) // 指し手の強調色（山吹色系）
@@ -44,6 +47,7 @@ fun ShogiBoard(
 
     Column(
         modifier = modifier
+            .rotate(if (isFlipped) 180f else 0f)
             .background(boardColor)
             .padding(2.dp)
     ) {
@@ -73,8 +77,17 @@ fun ShogiBoard(
                 for (row in 0 until 9) {
                     Row(modifier = Modifier.weight(1f)) {
                         for (col in 0 until 9) {
-                            val clickedPos = Pair(row, col)
+                            val actualRow =
+                                //if (isFlipped) 8 - row else
+                                    row
+                            val actualCol =
+                                //if (isFlipped) 8 - col else
+                                    col
+                            val clickedPos = Pair(actualRow, actualCol)
                             val piece = boardState[clickedPos]
+
+                            ///val clickedPos = Pair(row, col)
+                            //val piece = boardState[clickedPos]
                             
                             val isSelected = selectedSquare == clickedPos
                             val isLastMove = clickedPos == lastFrom || clickedPos == lastTo
@@ -91,8 +104,9 @@ fun ShogiBoard(
                                     .fillMaxHeight()
                                     .border(0.5.dp, Color.Black)
                                     .background(bgColor)
-                                    .clickable { onSquareClick(row, col) },
-                                piece = piece
+                                    .clickable { onSquareClick(actualRow, actualCol) },
+                                piece = piece,
+                                isFlipped = isFlipped
                             )
                         }
                     }
@@ -172,32 +186,7 @@ fun HandView(
     }
 }
 
-@Composable
-fun ShogiSquare(piece: Piece?, modifier: Modifier = Modifier) {
-    Box(
-        modifier = modifier,
-        contentAlignment = Alignment.Center
-    ) {
-        if (piece != null) {
-            PieceView(piece)
-        }
-    }
-}
 
-@Composable
-fun PieceView(piece: Piece) {
-    val label = if (piece.isPromoted) piece.type.promotedLabel ?: piece.type.label else piece.type.label
-    val color = if (piece.isPromoted) Color.Red else Color.Black
-    val rotation = if (piece.owner == Player.GOTE) 180f else 0f
-
-    Text(
-        text = label,
-        color = color,
-        fontSize = 20.sp,
-        fontWeight = FontWeight.Bold,
-        modifier = Modifier.rotate(rotation)
-    )
-}
 
 @Preview(showBackground = true)
 @Composable
@@ -227,3 +216,36 @@ fun ShogiBoardPreview() {
         onSquareClick = { _, _ -> }
     )
 }
+
+@Composable
+fun PieceView(piece: Piece, isFlipped: Boolean = false) {
+    val label = if (piece.isPromoted) piece.type.promotedLabel ?: piece.type.label else piece.type.label
+    val color = if (piece.isPromoted) Color.Red else Color.Black
+
+    val rotation = when {
+        //isFlipped && piece.owner == Player.SENTE -> 180f
+        //isFlipped && piece.owner == Player.GOTE -> 0f
+        piece.owner == Player.GOTE -> 180f
+        else -> 0f
+    }
+
+    Text(
+        text = label,
+        color = color,
+        fontSize = 20.sp,
+        fontWeight = FontWeight.Bold,
+        modifier = Modifier.rotate(rotation)
+    )
+}
+
+@Composable
+fun ShogiSquare(piece: Piece?,
+                modifier: Modifier = Modifier,
+                isFlipped: Boolean = false) {
+    Box(modifier = modifier, contentAlignment = Alignment.Center) {
+        if (piece != null) {
+            PieceView(piece, isFlipped)
+        }
+    }
+}
+
