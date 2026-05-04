@@ -7,6 +7,7 @@ import androidx.activity.enableEdgeToEdge
 import androidx.compose.animation.core.*
 import androidx.compose.foundation.BorderStroke
 import androidx.compose.foundation.background
+import androidx.compose.foundation.gestures.detectTapGestures
 import androidx.compose.foundation.rememberScrollState
 import androidx.compose.foundation.verticalScroll
 import androidx.compose.foundation.layout.fillMaxSize
@@ -19,6 +20,7 @@ import androidx.compose.foundation.layout.height
 import androidx.compose.foundation.layout.PaddingValues
 import androidx.compose.foundation.layout.size
 import androidx.compose.foundation.layout.Row
+import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.graphics.graphicsLayer
 import androidx.compose.material3.*
@@ -29,7 +31,9 @@ import androidx.compose.material.icons.filled.ContentPaste
 import androidx.compose.material.icons.filled.Menu
 import androidx.compose.runtime.*
 import androidx.compose.ui.Modifier
+import androidx.compose.ui.draw.clip
 import androidx.compose.ui.graphics.Color
+import androidx.compose.ui.input.pointer.pointerInput
 import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.tooling.preview.Preview
 import androidx.compose.ui.unit.dp
@@ -39,6 +43,9 @@ import androidx.compose.ui.text.AnnotatedString
 import org.json.JSONArray
 import org.json.JSONObject
 import com.example.shogigui.ui.theme.ShogiGUITheme
+import kotlinx.coroutines.isActive
+import kotlinx.coroutines.delay
+import kotlinx.coroutines.launch
 
 // 棋譜の1局面を管理するノードクラス
 class KifuNode(
@@ -113,7 +120,7 @@ class MainActivity : ComponentActivity() {
                 val currentPlayer = currentNode.currentPlayer
 
                 // MainActivity 内に定義を追加
-                var pvList by remember { mutableStateOf(mutableMapOf<Int, String>()) }
+                val pvList = remember { mutableStateMapOf<Int, String>() }
 
                 var selectedSquare by remember { mutableStateOf<Pair<Int, Int>?>(null) }
                 var selectedHandPiece by remember { mutableStateOf<Pair<Player, PieceType>?>(null) }
@@ -198,7 +205,7 @@ class MainActivity : ComponentActivity() {
                                 val playerLabel = if (currentPlayer == Player.SENTE) "▲" else "△"
                                 val formattedMove = formatUsiMove(move, boardState)
                                 val finalMsg = "最善手: $playerLabel$formattedMove"
-                                engineOutput = engineOutput + "\n" + finalMsg
+                                engineOutput = engineOutput //+ "\n" + finalMsg
                                 engineLog = (engineLog + finalMsg).takeLast(50)
                             } else {
                                 engineLog = (engineLog + line).takeLast(50)
@@ -483,7 +490,7 @@ class MainActivity : ComponentActivity() {
                                 modifier = Modifier.padding(8.dp),
                                 style = MaterialTheme.typography.bodySmall,
                                 minLines = 1,
-                                maxLines = 4
+                                maxLines = 15
                             )
                         }
 
@@ -617,7 +624,11 @@ class MainActivity : ComponentActivity() {
                                         currentNode.parent?.let { currentNode = it }
                                     },
                                     enabled = currentNode.parent != null,
-                                    modifier = Modifier.size(48.dp),
+                                    modifier = Modifier
+                                        .size(48.dp)
+                                        .repeatingClickable(enabled = currentNode.parent != null) {
+                                            currentNode.parent?.let { currentNode = it }
+                                        },
                                     shapes = IconButtonDefaults.shapes()
                                 ) {
                                     Icon(
@@ -625,6 +636,17 @@ class MainActivity : ComponentActivity() {
                                         contentDescription = "一手戻る"
                                     )
                                 }
+//                                RepeatingFilledTonalIconButton(
+//                                    enabled = currentNode.parent != null,
+//                                    onClick = {
+//                                        currentNode.parent?.let { currentNode = it }
+//                                    }
+//                                ) {
+//                                    Icon(
+//                                        imageVector = Icons.AutoMirrored.Filled.ArrowBack,
+//                                        contentDescription = "一手戻る"
+//                                    )
+//                                }
 
                                 Slider(
                                     value = currentNode.moveCount.toFloat(),
@@ -643,7 +665,11 @@ class MainActivity : ComponentActivity() {
                                         currentNode.children.firstOrNull()?.let { currentNode = it }
                                     },
                                     enabled = currentNode.children.isNotEmpty(),
-                                    modifier = Modifier.size(48.dp),
+                                    modifier = Modifier
+                                        .size(48.dp)
+                                        .repeatingClickable(enabled = currentNode.children.isNotEmpty()) {
+                                            currentNode.children.firstOrNull()?.let { currentNode = it }
+                                        },
                                     shapes = IconButtonDefaults.shapes()
                                 ) {
                                     Icon(
@@ -1559,3 +1585,39 @@ data class PendingMove(
     val piece: Piece,
     val captured: Piece?
 )
+
+@Composable
+fun Modifier.repeatingClickable(
+    enabled: Boolean = true,
+    initialDelay: Long = 500L,
+    delay: Long = 100L,
+    onClick: () -> Unit
+): Modifier {
+    val currentOnClick by rememberUpdatedState(onClick)
+    val scope = rememberCoroutineScope()
+
+    return if (!enabled) this else this.pointerInput(enabled) {
+        // pointerInputスコープ内では、coroutineScope { ... } を使うか、
+        // detectTapGestures のブロック内で直接 launch が使えます
+        detectTapGestures(
+            onPress = {
+                // ここで自動的に CoroutineScope が提供されます
+                val job = scope.launch {
+                    //currentOnClick()
+                    delay(initialDelay)
+                    while (true) {
+                        currentOnClick()
+                        delay(delay)
+                    }
+                }
+                tryAwaitRelease() // 指が離れるまで待機
+                job.cancel()      // 離れたらキャンセル
+            },
+            // 単発のタップ（クリック）の処理
+            onTap = {
+                currentOnClick()
+            }
+        )
+    }
+}
+
