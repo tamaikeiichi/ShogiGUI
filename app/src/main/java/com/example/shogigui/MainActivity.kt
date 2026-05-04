@@ -7,6 +7,7 @@ import androidx.activity.enableEdgeToEdge
 import androidx.compose.animation.core.*
 import androidx.compose.foundation.BorderStroke
 import androidx.compose.foundation.background
+import androidx.compose.foundation.basicMarquee
 import androidx.compose.foundation.gestures.detectTapGestures
 import androidx.compose.foundation.rememberScrollState
 import androidx.compose.foundation.verticalScroll
@@ -121,7 +122,7 @@ class MainActivity : ComponentActivity() {
                 val currentPlayer = currentNode.currentPlayer
 
                 var isBoardFlipped by remember { mutableStateOf(false) }
-
+                var isAutoAnalysis by remember { mutableStateOf(false) }
                 // MainActivity 内に定義を追加
                 val pvList = remember { mutableStateMapOf<Int, String>() }
 
@@ -272,6 +273,34 @@ class MainActivity : ComponentActivity() {
                     }
                 }
 
+                LaunchedEffect(isAutoAnalysis, isEngineReady) {
+                    if (!isAutoAnalysis || !isEngineReady) return@LaunchedEffect
+
+                    // 現在のノードから末尾まで順番に解析
+                    var node = currentNode
+                    while (isAutoAnalysis) {
+                        val sfen = boardToSfen(node.board, node.currentPlayer, node.senteHand, node.goteHand)
+                        if (sfen.isNotEmpty()) {
+                            engine.sendCommand("stop")
+                            kotlinx.coroutines.delay(100)
+                            engine.sendCommand("position sfen $sfen")
+                            engine.sendCommand("go movetime 1000")
+                            currentNode = node  // 現在の解析局面を表示
+                            kotlinx.coroutines.delay(1200)  // 解析時間 + 余裕
+                        }
+
+                        // 次のノードへ
+                        val next = node.children.firstOrNull()
+                        if (next == null) {
+                            // 末尾に到達
+                            isAutoAnalysis = false
+                            break
+                        }
+                        node = next
+                    }
+                    engine.sendCommand("stop")
+                }
+
                 Scaffold(
                     modifier = Modifier.fillMaxSize(),
                     topBar = {
@@ -351,7 +380,9 @@ class MainActivity : ComponentActivity() {
                                         )
                                         Text(
                                             text = "読込",
-                                            style = MaterialTheme.typography.labelSmall // アイコンの下に小さく文字を添える
+                                            style = MaterialTheme.typography.labelSmall,
+                                            maxLines = 1,
+                                            modifier = Modifier.basicMarquee()// アイコンの下に小さく文字を添える
                                         )
                                     }
                                 }
@@ -401,7 +432,9 @@ class MainActivity : ComponentActivity() {
                                             )
                                             Text(
                                                 text = "停止",
-                                                style = MaterialTheme.typography.labelSmall // アイコンの下に小さく文字を添える
+                                                style = MaterialTheme.typography.labelSmall,
+                                                maxLines = 1,
+                                                modifier = Modifier.basicMarquee()// アイコンの下に小さく文字を添える
                                             )
                                         }
                                         else {
@@ -416,11 +449,39 @@ class MainActivity : ComponentActivity() {
                                                 )
                                                 Text(
                                                     text = "解析",
-                                                    style = MaterialTheme.typography.labelSmall // アイコンの下に小さく文字を添える
+                                                    style = MaterialTheme.typography.labelSmall,
+                                                    maxLines = 1,
+                                                    modifier = Modifier.basicMarquee()// アイコンの下に小さく文字を添える
                                                 )
                                             }
                                         }
 
+                                    }
+                                }
+                                Button(
+                                    modifier = Modifier
+                                        .weight(0.3f)
+                                        .height(72.dp),
+                                    onClick = {
+                                        isAutoAnalysis = !isAutoAnalysis
+                                        showMenu = false
+                                    }
+                                ){
+                                    Column(
+                                        horizontalAlignment = Alignment.CenterHorizontally,
+                                        verticalArrangement = Arrangement.Center
+                                    ) {
+                                        Icon(
+                                            painter = painterResource(id = R.drawable.monitoring_24px),
+                                            contentDescription = "自動解析",
+                                            modifier = Modifier.size(28.dp)
+                                        )
+                                        Text(
+                                            text = "自動解析",
+                                            style = MaterialTheme.typography.labelSmall,
+                                            maxLines = 1,
+                                            modifier = Modifier.basicMarquee()// アイコンの下に小さく文字を添える
+                                        )
                                     }
                                 }
                                 Button(
@@ -443,7 +504,9 @@ class MainActivity : ComponentActivity() {
                                         )
                                         Text(
                                             text = "反転",
-                                            style = MaterialTheme.typography.labelSmall // アイコンの下に小さく文字を添える
+                                            style = MaterialTheme.typography.labelSmall,
+                                            maxLines = 1,
+                                            modifier = Modifier.basicMarquee()// アイコンの下に小さく文字を添える
                                         )
                                     }
                                 }
