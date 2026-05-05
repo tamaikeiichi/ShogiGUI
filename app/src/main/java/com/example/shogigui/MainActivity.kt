@@ -8,10 +8,12 @@ import androidx.compose.animation.core.*
 import androidx.compose.foundation.BorderStroke
 import androidx.compose.foundation.background
 import androidx.compose.foundation.basicMarquee
+import androidx.compose.foundation.clickable
 import androidx.compose.foundation.gestures.detectTapGestures
 import androidx.compose.foundation.rememberScrollState
 import androidx.compose.foundation.verticalScroll
 import androidx.compose.foundation.layout.fillMaxSize
+import androidx.compose.foundation.layout.fillMaxHeight
 import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.layout.Box
 import androidx.compose.foundation.layout.Column
@@ -21,6 +23,7 @@ import androidx.compose.foundation.layout.height
 import androidx.compose.foundation.layout.PaddingValues
 import androidx.compose.foundation.layout.size
 import androidx.compose.foundation.layout.Row
+import androidx.compose.foundation.layout.heightIn
 import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.graphics.graphicsLayer
@@ -58,7 +61,8 @@ class KifuNode(
     val moveLabel: String = "開始局面",
     val parent: KifuNode? = null,
     val lastFrom: Pair<Int, Int>? = null,
-    val lastTo: Pair<Int, Int>? = null
+    val lastTo: Pair<Int, Int>? = null,
+    val isPvBranch: Boolean = false  // 読み筋（一時的）かどうか
 ) {
     val children = mutableStateListOf<KifuNode>()
     val moveCount: Int = (parent?.moveCount ?: -1) + 1
@@ -125,6 +129,7 @@ class MainActivity : ComponentActivity() {
                 var isAutoAnalysis by remember { mutableStateOf(false) }
                 // MainActivity 内に定義を追加
                 val pvList = remember { mutableStateMapOf<Int, String>() }
+                val pvUsiList = remember { mutableStateMapOf<Int, List<String>>() }
 
                 var selectedSquare by remember { mutableStateOf<Pair<Int, Int>?>(null) }
                 var selectedHandPiece by remember { mutableStateOf<Pair<Player, PieceType>?>(null) }
@@ -135,6 +140,9 @@ class MainActivity : ComponentActivity() {
                 var isAnalysisMode by remember { mutableStateOf(false) }
                 var isEngineReady by remember { mutableStateOf(false) }
                 var isAnalyzing by remember { mutableStateOf(false) }
+                var isOutputExpanded by remember { mutableStateOf(false) }
+
+                var pvBranchRoot by remember { mutableStateOf<KifuNode?>(null) }
                 
                 // 対局者名
                 var senteName by remember { mutableStateOf(savedSenteName) }
@@ -181,24 +189,23 @@ class MainActivity : ComponentActivity() {
                             // 自動開始は LaunchedEffect 側に任せるため、ここでは何もしない
                         }
                         line.startsWith("info") -> {
-                            // lineから "multipv X" を抽出
                             val multipvMatch = Regex("multipv (\\d+)").find(line)
                             val rank = multipvMatch?.groupValues?.get(1)?.toInt() ?: 1
 
+                            // USI手順を抽出
+                            val pvMatch = Regex("""pv (.+)$""").find(line)
+                            if (pvMatch != null) {
+                                val usiMoves = pvMatch.groupValues[1].trim().split(" ")
+                                    .filter { it.matches(Regex("[1-9][a-i][1-9][a-i][+]?|[PLNSGBR]\\*[1-9][a-i]")) }
+                                pvUsiList[rank] = usiMoves
+                                android.util.Log.d("pvUsi", "rank=$rank moves=$usiMoves")
+                            }
+
                             val parsed = parseInfo(line, boardState, currentPlayer)
                             if (parsed.contains("評価") || parsed.contains("読み筋")) {
-                                // 順位（rank）をキーにして保存
                                 pvList[rank] = parsed
-                                // リストを順位順に並べて結合し、表示用テキストを作る
                                 engineOutput = pvList.toSortedMap().values.joinToString("\n---\n")
                             }
-//                            if (parsed.contains("深さ") || parsed.contains("評価") || !isEngineReady) {
-//                                engineOutput = parsed
-//                                val logMsg = parsed.replace("\n", "  ")
-//                                engineLog = (engineLog + logMsg).takeLast(50)
-//                            } else {
-//                                engineLog = (engineLog + line).takeLast(50)
-//                            }
                         }
                         line.startsWith("bestmove") -> {
                             isAnalysisMode = false
@@ -399,7 +406,7 @@ class MainActivity : ComponentActivity() {
                                         }
                                     },
                                     modifier = Modifier
-                                        .weight(0.4f)
+                                        .weight(0.3f)
                                         .height(72.dp)
                                         .graphicsLayer {
                                             if (!isEngineReady) this.alpha = alpha
@@ -510,6 +517,62 @@ class MainActivity : ComponentActivity() {
                                         )
                                     }
                                 }
+                                OutlinedButton(
+                                    onClick = {
+                                        val branchRoot = pvBranchRoot
+                                        android.util.Log.d("BackToMain", "branchRoot=$branchRoot currentNode=$currentNode")
+                                        android.util.Log.d("BackToMain", "branchRoot children=${branchRoot?.children?.map { "${it.moveLabel} isPv=${it.isPvBranch}" }}")
+
+                                        if (branchRoot != null) {
+                                            // pvBranchRootから読み筋ノードを再帰的に削除
+                                            fun removeAllPvBranches(node: KifuNode) {
+                                                node.children.removeIf { it.isPvBranch }
+                                                node.children.forEach { removeAllPvBranches(it) }
+                                            }
+                                            removeAllPvBranches(initialNode)
+                                            android.util.Log.d("BackToMain", "after remove, branchRoot children=${branchRoot.children.map { it.moveLabel }}")
+                                            pvBranchRoot = null
+                                            currentNode = branchRoot
+                                            android.util.Log.d("BackToMain", "set currentNode to branchRoot=${branchRoot.moveLabel}")
+
+                                        } else {
+                                            val mainLine = mutableSetOf<KifuNode>()
+                                            var n: KifuNode? = initialNode
+                                            while (n != null) {
+                                                mainLine.add(n)
+                                                n = n.children.firstOrNull()
+                                            }
+                                            var node: KifuNode? = currentNode
+                                            while (node != null && node !in mainLine) {
+                                                node = node.parent
+                                            }
+                                            if (node != null) currentNode = node
+                                        }
+                                        showMenu = false
+                                    },
+                                    modifier = Modifier
+                                        .weight(0.3f)
+                                        .height(72.dp),
+                                    shape = MaterialTheme.shapes.extraLarge,
+                                    border = BorderStroke(1.dp, MaterialTheme.colorScheme.outline)
+                                ){
+                                    Column(
+                                        horizontalAlignment = Alignment.CenterHorizontally,
+                                        verticalArrangement = Arrangement.Center
+                                    ) {
+                                        Icon(
+                                            painter = painterResource(id = R.drawable.undo_24px),
+                                            contentDescription = "反転",
+                                            modifier = Modifier.size(28.dp)
+                                        )
+                                        Text(
+                                            text = "本手順に戻る",
+                                            style = MaterialTheme.typography.labelSmall,
+                                            maxLines = 1,
+                                            modifier = Modifier.basicMarquee()// アイコンの下に小さく文字を添える
+                                        )
+                                    }
+                                }
                                 // メニューボタン
                                 Box {
                                     IconButton(
@@ -582,27 +645,114 @@ class MainActivity : ComponentActivity() {
                         verticalArrangement = Arrangement.Top
                     ) {
                         // エンジンの解析情報を表示
-                        Card(
+                        Column(
                             modifier = Modifier
                                 .fillMaxWidth()
-                                .padding(8.dp),
-                            colors = CardDefaults.cardColors(
-                                // 解析中（isAnalysisMode）かどうかに合わせて色を変えると分かりやすいです
-                                containerColor = if (isAnalysisMode)
-                                    MaterialTheme.colorScheme.tertiaryContainer
-                                else
-                                    MaterialTheme.colorScheme.secondaryContainer
-                            )
+                                .padding(8.dp)
                         ) {
-                            // 履歴全体を常に表示
-                            Text(
-                                text = engineOutput,
-                                    //engineLog.joinToString("\n"),
-                                modifier = Modifier.padding(8.dp),
-                                style = MaterialTheme.typography.bodySmall,
-                                minLines = 1,
-                                maxLines = 15
-                            )
+                            pvList.entries
+                                .sortedByDescending { extractScore(it.value) }
+                                .forEach { (rank, pvText) ->
+                                Card(
+                                    modifier = Modifier
+                                        .fillMaxWidth()
+                                        .padding(vertical = 2.dp)
+                                        .clickable {
+                                            android.util.Log.d("PvTap", "currentNode before=${currentNode.moveLabel} moveCount=${currentNode.moveCount}")
+                                            val usiMoves = pvUsiList[rank] ?: return@clickable
+                                            // 読み筋の開始点（現在のノード）を記録
+                                            pvBranchRoot = currentNode
+                                            android.util.Log.d("PvTap", "pvBranchRoot set to ${pvBranchRoot?.moveLabel}")
+
+                                            // 一時的なノードチェーンを作成（executeMove を使わない）
+                                            var node = currentNode
+                                            android.util.Log.d("PvTap", "node initial=${node.moveLabel} children before=${node.children.map { it.moveLabel }}")
+
+                                            usiMoves.forEach { moveStr ->
+                                                try {
+                                                    val newNode = if (moveStr.length >= 4 && moveStr[1] == '*') {
+                                                        val type = when(moveStr[0]) {
+                                                            'P' -> PieceType.PAWN; 'L' -> PieceType.LANCE
+                                                            'N' -> PieceType.KNIGHT; 'S' -> PieceType.SILVER
+                                                            'G' -> PieceType.GOLD; 'B' -> PieceType.BISHOP
+                                                            'R' -> PieceType.ROOK; else -> return@forEach
+                                                        }
+                                                        val toCol = 9 - (moveStr[2] - '0')
+                                                        val toRow = moveStr[3] - 'a'
+                                                        val toPos = Pair(toRow, toCol)
+                                                        val label = "${moveStr[2]}${rowToKanji(moveStr[3])}${type.label}打"
+                                                        val newBoard = node.board.toMutableMap()
+                                                        var newSenteHand = node.senteHand
+                                                        var newGoteHand = node.goteHand
+                                                        if (node.currentPlayer == Player.SENTE) {
+                                                            newSenteHand = newSenteHand.toMutableMap().apply {
+                                                                val count = this[type] ?: 0
+                                                                if (count > 1) this[type] = count - 1 else remove(type)
+                                                            }
+                                                        } else {
+                                                            newGoteHand = newGoteHand.toMutableMap().apply {
+                                                                val count = this[type] ?: 0
+                                                                if (count > 1) this[type] = count - 1 else remove(type)
+                                                            }
+                                                        }
+                                                        newBoard[toPos] = Piece(type, node.currentPlayer)
+                                                        val nextPlayer = if (node.currentPlayer == Player.SENTE) Player.GOTE else Player.SENTE
+                                                        KifuNode(newBoard, newSenteHand, newGoteHand, nextPlayer, label, node, null, toPos,
+                                                            isPvBranch = true)
+                                                    } else if (moveStr.length >= 4) {
+                                                        val fromCol = 9 - (moveStr[0] - '0')
+                                                        val fromRow = moveStr[1] - 'a'
+                                                        val toCol = 9 - (moveStr[2] - '0')
+                                                        val toRow = moveStr[3] - 'a'
+                                                        val promote = moveStr.endsWith("+")
+                                                        val fromPos = Pair(fromRow, fromCol)
+                                                        val toPos = Pair(toRow, toCol)
+                                                        val piece = node.board[fromPos] ?: return@forEach
+                                                        val captured = node.board[toPos]
+                                                        val newBoard = node.board.toMutableMap()
+                                                        var newSenteHand = node.senteHand
+                                                        var newGoteHand = node.goteHand
+                                                        if (captured != null && captured.type != PieceType.KING) {
+                                                            if (piece.owner == Player.SENTE) {
+                                                                newSenteHand = newSenteHand.toMutableMap().apply {
+                                                                    this[captured.type] = (this[captured.type] ?: 0) + 1
+                                                                }
+                                                            } else {
+                                                                newGoteHand = newGoteHand.toMutableMap().apply {
+                                                                    this[captured.type] = (this[captured.type] ?: 0) + 1
+                                                                }
+                                                            }
+                                                        }
+                                                        newBoard.remove(fromPos)
+                                                        newBoard[toPos] = piece.copy(isPromoted = promote || piece.isPromoted)
+                                                        val label = formatUsiMove(moveStr, node.board)
+                                                        val nextPlayer = if (node.currentPlayer == Player.SENTE) Player.GOTE else Player.SENTE
+                                                        KifuNode(newBoard, newSenteHand, newGoteHand, nextPlayer, label, node, fromPos, toPos,
+                                                            isPvBranch = true)
+                                                    } else return@forEach
+
+                                                    node.children.add(0, newNode)  // 先頭に追加（本手順より前に来る）
+                                                    android.util.Log.d("PvTap", "added ${newNode.moveLabel} isPv=${newNode.isPvBranch} to ${node.moveLabel}")
+                                                    node = newNode
+                                                } catch (e: Exception) {}
+                                            }
+                                            currentNode = pvBranchRoot!!.children.firstOrNull() ?: currentNode
+                                        },
+                                    colors = CardDefaults.cardColors(
+                                        containerColor = when(rank) {
+                                            1 -> MaterialTheme.colorScheme.primaryContainer
+                                            2 -> MaterialTheme.colorScheme.secondaryContainer
+                                            else -> MaterialTheme.colorScheme.tertiaryContainer
+                                        }
+                                    )
+                                ) {
+                                    Text(
+                                        text = pvText,
+                                        modifier = Modifier.padding(8.dp),
+                                        style = MaterialTheme.typography.bodySmall
+                                    )
+                                }
+                            }
                         }
 
 
@@ -918,6 +1068,61 @@ class MainActivity : ComponentActivity() {
                         )
                     }
                 }
+
+                // 拡大表示用のオーバーレイ
+                if (isOutputExpanded) {
+                    Box(
+                        modifier = Modifier
+                            .fillMaxSize()
+                            .background(Color.Black.copy(alpha = 0.6f)) // 半透明の背景
+                            .pointerInput(Unit) {
+                                detectTapGestures(onTap = { isOutputExpanded = false })
+                            },
+                        contentAlignment = Alignment.Center
+                    ) {
+                        Card(
+                            modifier = Modifier
+                                .fillMaxWidth(0.9f)
+                                .fillMaxHeight(0.7f)
+                                .padding(16.dp),
+                            colors = CardDefaults.cardColors(
+                                // ポップアップウィンドウ自体を半透明にする
+                                containerColor = MaterialTheme.colorScheme.surface.copy(alpha = 0.8f)
+                            ),
+                            elevation = CardDefaults.cardElevation(defaultElevation = 24.dp)
+                        ) {
+                            Column(modifier = Modifier.fillMaxSize()) {
+//                                Row(
+//                                    modifier = Modifier
+//                                        .fillMaxWidth()
+//                                        .padding(16.dp),
+//                                    horizontalArrangement = Arrangement.SpaceBetween,
+//                                    verticalAlignment = Alignment.CenterVertically
+//                                ) {
+////                                    Text(
+////                                        text = "",
+////                                        style = MaterialTheme.typography.titleMedium
+////                                    )
+////                                    TextButton(onClick = { isOutputExpanded = false }) {
+////                                        Text("閉じる")
+////                                    }
+//                                }
+                                Box(
+                                    modifier = Modifier
+                                        .weight(1f)
+                                        .fillMaxWidth()
+                                        .verticalScroll(rememberScrollState())
+                                        .padding(start = 16.dp, end = 16.dp, top = 16.dp, bottom = 16.dp)
+                                ) {
+                                    Text(
+                                        text = engineOutput,
+                                        style = MaterialTheme.typography.bodyMedium
+                                    )
+                                }
+                            }
+                        }
+                    }
+                }
             }
         }
     }
@@ -944,7 +1149,15 @@ class MainActivity : ComponentActivity() {
                                 val sign = if (v > 0) "+" else ""
                                 "評価: $sign$v"
                             }
-                            "mate" -> "詰み: $value"
+                            "mate" -> {
+                                val v = value.toIntOrNull() ?: 0
+                                val winner = if (v > 0) {
+                                    if (turn == Player.SENTE) "先手勝ち" else "後手勝ち"
+                                } else if (v < 0) {
+                                    if (turn == Player.SENTE) "後手勝ち" else "先手勝ち"
+                                } else ""
+                                if (winner.isNotEmpty()) "${kotlin.math.abs(v)}手詰（$winner）" else "詰み"
+                            }
                             else -> ""
                         }
                     }
@@ -973,7 +1186,7 @@ class MainActivity : ComponentActivity() {
         }
 
         val result = mutableListOf<String>()
-        if (depth.isNotEmpty()) result.add("深さ: $depth")
+        //if (depth.isNotEmpty()) result.add("深さ: $depth")
         if (score.isNotEmpty()) result.add(score)
         if (pv.isNotEmpty()) result.add(pv)
 
@@ -1276,7 +1489,8 @@ class MainActivity : ComponentActivity() {
         newBoard[to] = piece.copy(isPromoted = promote || piece.isPromoted)
 
         val nextPlayer = if (parentNode.currentPlayer == Player.SENTE) Player.GOTE else Player.SENTE
-        val newNode = KifuNode(newBoard, newSenteHand, newGoteHand, nextPlayer, label, parentNode, from, to)
+        val newNode = KifuNode(newBoard, newSenteHand, newGoteHand, nextPlayer, label, parentNode, from, to,
+            isPvBranch = true)
 
         parentNode.children.add(newNode)
         saveKifuTree(getRootNode(parentNode))
@@ -1291,7 +1505,8 @@ class MainActivity : ComponentActivity() {
 
     private fun saveKifuTree(root: KifuNode) {
         val json = kifuTreeToJson(root)
-        getSharedPreferences("kifu_prefs", MODE_PRIVATE).edit().putString("current_tree", json.toString()).apply()
+        getSharedPreferences("kifu_prefs", MODE_PRIVATE).edit()
+            .putString("current_tree", json.toString()).apply()
     }
 
     private fun kifuTreeToJson(node: KifuNode): JSONObject {
@@ -1325,9 +1540,10 @@ class MainActivity : ComponentActivity() {
 
         // 子要素 (再帰)
         val childrenJson = JSONArray()
-        node.children.forEach { childrenJson.put(kifuTreeToJson(it)) }
+        node.children
+            .filter { !it.isPvBranch }  // 読み筋は保存しない
+            .forEach { childrenJson.put(kifuTreeToJson(it)) }
         json.put("children", childrenJson)
-        
         return json
     }
 
@@ -1734,4 +1950,11 @@ fun Modifier.repeatingClickable(
         )
     }
 }
+fun extractScore(pvText: String): Int {
+    val mateLine = pvText.lines().find { it.contains("手詰") }
+    if (mateLine != null) return Int.MAX_VALUE  // 詰みは最大値
 
+    val scoreLine = pvText.lines().find { it.startsWith("評価:") } ?: return 0
+    val v = scoreLine.replace("評価:", "").trim().toIntOrNull() ?: 0
+    return kotlin.math.abs(v)
+}
