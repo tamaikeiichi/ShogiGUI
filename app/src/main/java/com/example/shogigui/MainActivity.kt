@@ -107,6 +107,13 @@ class MainActivity : ComponentActivity() {
                 // 棋譜ツリーの状態管理
                 var initialNode by remember { mutableStateOf(rootNode!!) }
                 var currentNode by remember { mutableStateOf(initialNode) }
+                // クリップボードから読み込んだ棋譜の本手順ノード列（index == moveCount）
+                var mainLineNodes by remember {
+                    val line = mutableListOf<KifuNode>()
+                    var n: KifuNode? = initialNode
+                    while (n != null) { line.add(n); n = n.children.firstOrNull { !it.isPvBranch } }
+                    mutableStateOf<List<KifuNode>>(line)
+                }
                 // 現在のパス（スライダー用）を計算
                 val currentPath = remember(currentNode, initialNode) {
                     val path = mutableListOf<KifuNode>()
@@ -363,6 +370,11 @@ class MainActivity : ComponentActivity() {
                                                 initialNode = freshRoot
                                                 currentNode = freshRoot
                                             }
+                                            // 本手順ノード列を更新（クリップボードから読み込んだ棋譜が本手順）
+                                            val line = mutableListOf<KifuNode>()
+                                            var n: KifuNode? = freshRoot
+                                            while (n != null) { line.add(n); n = n.children.firstOrNull { !it.isPvBranch } }
+                                            mainLineNodes = line
                                             getSharedPreferences("kifu_prefs", MODE_PRIVATE).edit()
                                                 .putString("sente_name", senteName)
                                                 .putString("gote_name", goteName)
@@ -465,32 +477,7 @@ class MainActivity : ComponentActivity() {
 
                                     }
                                 }
-                                Button(
-                                    modifier = Modifier
-                                        .weight(0.3f)
-                                        .height(72.dp),
-                                    onClick = {
-                                        isAutoAnalysis = !isAutoAnalysis
-                                        showMenu = false
-                                    }
-                                ){
-                                    Column(
-                                        horizontalAlignment = Alignment.CenterHorizontally,
-                                        verticalArrangement = Arrangement.Center
-                                    ) {
-                                        Icon(
-                                            painter = painterResource(id = R.drawable.monitoring_24px),
-                                            contentDescription = "自動解析",
-                                            modifier = Modifier.size(28.dp)
-                                        )
-                                        Text(
-                                            text = "自動解析",
-                                            style = MaterialTheme.typography.labelSmall,
-                                            maxLines = 1,
-                                            modifier = Modifier.basicMarquee()// アイコンの下に小さく文字を添える
-                                        )
-                                    }
-                                }
+                                //反転ボタン
                                 Button(
                                     modifier = Modifier
                                         .weight(0.3f)
@@ -517,37 +504,22 @@ class MainActivity : ComponentActivity() {
                                         )
                                     }
                                 }
+                                //本手順に戻る
                                 OutlinedButton(
                                     onClick = {
-                                        val branchRoot = pvBranchRoot
-                                        android.util.Log.d("BackToMain", "branchRoot=$branchRoot currentNode=$currentNode")
-                                        android.util.Log.d("BackToMain", "branchRoot children=${branchRoot?.children?.map { "${it.moveLabel} isPv=${it.isPvBranch}" }}")
-
-                                        if (branchRoot != null) {
-                                            // pvBranchRootから読み筋ノードを再帰的に削除
-                                            fun removeAllPvBranches(node: KifuNode) {
-                                                node.children.removeIf { it.isPvBranch }
-                                                node.children.forEach { removeAllPvBranches(it) }
-                                            }
-                                            removeAllPvBranches(initialNode)
-                                            android.util.Log.d("BackToMain", "after remove, branchRoot children=${branchRoot.children.map { it.moveLabel }}")
-                                            pvBranchRoot = null
-                                            currentNode = branchRoot
-                                            android.util.Log.d("BackToMain", "set currentNode to branchRoot=${branchRoot.moveLabel}")
-
-                                        } else {
-                                            val mainLine = mutableSetOf<KifuNode>()
-                                            var n: KifuNode? = initialNode
-                                            while (n != null) {
-                                                mainLine.add(n)
-                                                n = n.children.firstOrNull()
-                                            }
-                                            var node: KifuNode? = currentNode
-                                            while (node != null && node !in mainLine) {
-                                                node = node.parent
-                                            }
-                                            if (node != null) currentNode = node
+                                        // 現在の手数に対応する本手順ノードを探す
+                                        val targetCount = currentNode.moveCount
+                                        val targetNode = mainLineNodes.getOrElse(targetCount) {
+                                            mainLineNodes.lastOrNull() ?: initialNode
                                         }
+                                        // isPvBranch な枝（手動操作・読み筋）を全削除して本手順を保護
+                                        fun removeNonMain(node: KifuNode) {
+                                            node.children.removeIf { it.isPvBranch }
+                                            node.children.forEach { removeNonMain(it) }
+                                        }
+                                        removeNonMain(initialNode)
+                                        pvBranchRoot = null
+                                        currentNode = targetNode
                                         showMenu = false
                                     },
                                     modifier = Modifier
@@ -562,14 +534,14 @@ class MainActivity : ComponentActivity() {
                                     ) {
                                         Icon(
                                             painter = painterResource(id = R.drawable.undo_24px),
-                                            contentDescription = "反転",
+                                            contentDescription = "本手順に戻る",
                                             modifier = Modifier.size(28.dp)
                                         )
                                         Text(
-                                            text = "本手順に戻る",
+                                            text = "本譜",
                                             style = MaterialTheme.typography.labelSmall,
                                             maxLines = 1,
-                                            modifier = Modifier.basicMarquee()// アイコンの下に小さく文字を添える
+                                            modifier = Modifier.basicMarquee()
                                         )
                                     }
                                 }
@@ -602,19 +574,9 @@ class MainActivity : ComponentActivity() {
                                             }
                                         )
                                         DropdownMenuItem(
-                                            text = { Text("クリップボードから読み込み") },
+                                            text = { Text("現局面から最後まで解析")},
                                             onClick = {
-                                                val text = clipboardManager.getText()?.text
-                                                if (text != null) {
-                                                    val freshRoot2 = KifuNode(createInitialBoard(), emptyMap(), emptyMap(), Player.SENTE)
-                                                    rootNode = freshRoot2
-                                                    val newNode = parseKifu(text, freshRoot2)
-                                                    if (newNode != null) {
-                                                        initialNode = freshRoot2
-                                                        currentNode = newNode
-                                                        saveKifuTree(freshRoot2)
-                                                    }
-                                                }
+                                                isAutoAnalysis = !isAutoAnalysis
                                                 showMenu = false
                                             }
                                         )
@@ -622,14 +584,7 @@ class MainActivity : ComponentActivity() {
                                             text = { Text("エンジンの設定") },
                                             onClick = { showMenu = false }
                                         )
-                                        DropdownMenuItem(
-                                            text = { Text("解析停止") },
-                                            onClick = {
-                                                isAnalysisMode = false
-                                                engine.sendCommand("stop")
-                                                showMenu = false
-                                            }
-                                        )
+                                        
                                     }
                                 }
                             }
@@ -731,7 +686,7 @@ class MainActivity : ComponentActivity() {
                                                             isPvBranch = true)
                                                     } else return@forEach
 
-                                                    node.children.add(0, newNode)  // 先頭に追加（本手順より前に来る）
+                                                    node.children.add(newNode) // ★修正：先頭(0)ではなく末尾に追加して、本手順(0)を守る
                                                     android.util.Log.d("PvTap", "added ${newNode.moveLabel} isPv=${newNode.isPvBranch} to ${node.moveLabel}")
                                                     node = newNode
                                                 } catch (e: Exception) {}
@@ -801,7 +756,7 @@ class MainActivity : ComponentActivity() {
 
                                         if (!isNifu) {
                                             val moveLabel = "${9 - col}${rowToKanji('a' + row)}${type.label}打"
-                                            executeMove(null, clickedPos, Piece(type, player), null, false, currentNode, moveLabel) { nextNode ->
+                                            executeMove(null, clickedPos, Piece(type, player), null, false, currentNode, moveLabel, isPvBranch = true) { nextNode ->
                                                 currentNode = nextNode
                                             }
                                             selectedHandPiece = null
@@ -844,14 +799,14 @@ class MainActivity : ComponentActivity() {
 
                                                     if (mustPromote) {
                                                         val moveLabel = formatUsiMove("${9-currentSelected.second}${('a'+currentSelected.first)}${9-clickedPos.second}${('a'+clickedPos.first)}+", boardState)
-                                                        executeMove(currentSelected, clickedPos, movingPiece, targetPiece, true, currentNode, moveLabel) { nextNode ->
+                                                        executeMove(currentSelected, clickedPos, movingPiece, targetPiece, true, currentNode, moveLabel, isPvBranch = true) { nextNode ->
                                                             currentNode = nextNode
                                                         }
                                                     } else if (canPromote && enteringZone) {
                                                         promotionPendingBy = PendingMove(currentSelected, clickedPos, movingPiece, targetPiece)
                                                     } else {
                                                         val moveLabel = formatUsiMove("${9-currentSelected.second}${('a'+currentSelected.first)}${9-clickedPos.second}${('a'+clickedPos.first)}", boardState)
-                                                        executeMove(currentSelected, clickedPos, movingPiece, targetPiece, false, currentNode, moveLabel) { nextNode ->
+                                                        executeMove(currentSelected, clickedPos, movingPiece, targetPiece, false, currentNode, moveLabel, isPvBranch = true) { nextNode ->
                                                             currentNode = nextNode
                                                         }
                                                     }
@@ -1050,7 +1005,7 @@ class MainActivity : ComponentActivity() {
                             confirmButton = {
                                 TextButton(onClick = {
                                     val label = formatUsiMove("${9-move.from.second}${('a'+move.from.first)}${9-move.to.second}${('a'+move.to.first)}+", boardState)
-                                    executeMove(move.from, move.to, move.piece, move.captured, true, currentNode, label) { nextNode ->
+                                    executeMove(move.from, move.to, move.piece, move.captured, true, currentNode, label, isPvBranch = true) { nextNode ->
                                         currentNode = nextNode
                                     }
                                     promotionPendingBy = null
@@ -1059,7 +1014,7 @@ class MainActivity : ComponentActivity() {
                             dismissButton = {
                                 TextButton(onClick = {
                                     val label = formatUsiMove("${9-move.from.second}${('a'+move.from.first)}${9-move.to.second}${('a'+move.to.first)}", boardState)
-                                    executeMove(move.from, move.to, move.piece, move.captured, false, currentNode, label) { nextNode ->
+                                    executeMove(move.from, move.to, move.piece, move.captured, false, currentNode, label, isPvBranch = true) { nextNode ->
                                         currentNode = nextNode
                                     }
                                     promotionPendingBy = null
@@ -1145,12 +1100,15 @@ class MainActivity : ComponentActivity() {
                         val value = parts[++i]
                         score = when (type) {
                             "cp" -> {
-                                val v = value.toIntOrNull() ?: 0
+                                val rawV = value.toIntOrNull() ?: 0
+                                // 常に先手視点に固定 (後手番なら符号を反転)
+                                val v = if (turn == Player.SENTE) rawV else -rawV
                                 val sign = if (v > 0) "+" else ""
                                 "評価: $sign$v"
                             }
                             "mate" -> {
                                 val v = value.toIntOrNull() ?: 0
+                                // 詰みの判定も先手視点の勝ち/負けに整理
                                 val winner = if (v > 0) {
                                     if (turn == Player.SENTE) "先手勝ち" else "後手勝ち"
                                 } else if (v < 0) {
@@ -1441,6 +1399,7 @@ class MainActivity : ComponentActivity() {
         promote: Boolean,
         parentNode: KifuNode,
         label: String,
+        isPvBranch: Boolean = false,
         onUpdate: (KifuNode) -> Unit
     ) {
         val existing = parentNode.children.find { it.moveLabel == label }
@@ -1490,7 +1449,7 @@ class MainActivity : ComponentActivity() {
 
         val nextPlayer = if (parentNode.currentPlayer == Player.SENTE) Player.GOTE else Player.SENTE
         val newNode = KifuNode(newBoard, newSenteHand, newGoteHand, nextPlayer, label, parentNode, from, to,
-            isPvBranch = true)
+            isPvBranch = isPvBranch)
 
         parentNode.children.add(newNode)
         saveKifuTree(getRootNode(parentNode))
