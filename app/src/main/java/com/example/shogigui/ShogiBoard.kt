@@ -141,9 +141,10 @@ fun HandView(
     player: Player,
     selectedPieceType: PieceType? = null,
     onPieceClick: (PieceType) -> Unit = {},
+    isFlipped: Boolean = false,
     modifier: Modifier = Modifier
 ) {
-    val rotation = if (player == Player.GOTE) 180f else 0f
+    val rotation = if ((player == Player.GOTE) != isFlipped) 180f else 0f
     
     Row(
         modifier = modifier

@@ -18,7 +18,6 @@ import androidx.compose.foundation.layout.fillMaxHeight
 import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.layout.Box
 import androidx.compose.foundation.layout.Column
-import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.fillMaxWidth
 import androidx.compose.foundation.layout.height
 import androidx.compose.foundation.layout.PaddingValues
@@ -56,6 +55,7 @@ import kotlinx.coroutines.launch
 import android.content.Context
 import android.content.SharedPreferences
 import android.content.Context.MODE_PRIVATE
+import androidx.compose.foundation.layout.Arrangement
 
 // 棋譜の1局面を管理するノードクラス
 class KifuNode(
@@ -165,6 +165,12 @@ class MainActivity : ComponentActivity() {
 
                 var pvBranchRoot by remember { mutableStateOf<KifuNode?>(null) }
 
+                // エンジン設定の状態
+                var analysisTimeMs by remember { mutableLongStateOf(prefs.getLong("analysis_time", 1000L)) }
+                var multiPvCount by remember { mutableIntStateOf(prefs.getInt("multi_pv", 3)) }
+                var threadCount by remember { mutableIntStateOf(prefs.getInt("thread_count", 4)) }
+                var showSettingsDialog by remember { mutableStateOf(false) }
+
                 // 対局者名
                 var senteName by remember { mutableStateOf(savedSenteName) }
                 var goteName by remember { mutableStateOf(savedGoteName) }
@@ -200,9 +206,9 @@ class MainActivity : ComponentActivity() {
                             val msg = "初期化完了 (usiok)"
                             engineOutput = msg
                             engineLog = (engineLog + msg).takeLast(50)
-                            // ここで本気を出すためのオプションを設定（メモリを128MBに調整）
-                            engine.sendCommand("setoption name Threads value 4")
-                            engine.sendCommand("setoption name MultiPV value 3")
+                            // 保存された設定値を送信
+                            engine.sendCommand("setoption name Threads value $threadCount")
+                            engine.sendCommand("setoption name MultiPV value $multiPvCount")
                             engine.sendCommand("setoption name USI_Hash value 128")
                             engine.sendCommand("setoption name BookFile value no_book")
                             engine.sendCommand("isready")
@@ -237,15 +243,15 @@ class MainActivity : ComponentActivity() {
                         }
 
                         line.startsWith("bestmove") -> {
-                            isAnalysisMode = false
-                            isAnalyzing = false // 解析が終わったことを記録
+                            // モードは維持し、解析中フラグだけを下ろす
+                            isAnalyzing = false 
 
                             val move = line.substringAfter("bestmove ").substringBefore(" ")
                             if (move != "ponder" && move != "(none)") {
                                 val playerLabel = if (currentPlayer == Player.SENTE) "▲" else "△"
                                 val formattedMove = formatUsiMove(move, boardState)
                                 val finalMsg = "最善手: $playerLabel$formattedMove"
-                                engineOutput = engineOutput //+ "\n" + finalMsg
+                                // engineOutput = engineOutput // 表示はPVリストに任せる
                                 engineLog = (engineLog + finalMsg).takeLast(50)
                             } else {
                                 engineLog = (engineLog + line).takeLast(50)
@@ -288,7 +294,7 @@ class MainActivity : ComponentActivity() {
                             val sfen = boardToSfen(board, player, hands.first, hands.second)
                             if (sfen.isNotEmpty()) {
                                 engine.sendCommand("position sfen $sfen")
-                                engine.sendCommand("go movetime 1000")
+                                engine.sendCommand("go movetime $analysisTimeMs")
                                 isAnalyzing = true
                             }
                         }
@@ -462,8 +468,9 @@ class MainActivity : ComponentActivity() {
                                 OutlinedButton(
                                     onClick = {
                                         if (!isEngineReady) return@OutlinedButton
-                                        if (isAnalysisMode) {
+                                        if (isAnalysisMode || isAutoAnalysis) {
                                             isAnalysisMode = false
+                                            isAutoAnalysis = false // 自動解析も止める
                                             engine.sendCommand("stop")
                                         } else {
                                             isAnalysisMode = true
@@ -479,7 +486,7 @@ class MainActivity : ComponentActivity() {
                                     colors = ButtonDefaults.buttonColors(
                                         containerColor = when {
                                             !isEngineReady -> MaterialTheme.colorScheme.surfaceVariant
-                                            isAnalysisMode -> MaterialTheme.colorScheme.tertiaryContainer
+                                            isAnalysisMode || isAutoAnalysis -> MaterialTheme.colorScheme.tertiaryContainer
                                             else -> MaterialTheme.colorScheme.primary
                                         }
                                     )
@@ -493,7 +500,7 @@ class MainActivity : ComponentActivity() {
                                             color = MaterialTheme.colorScheme.primary
                                         )
                                     } else {
-                                        if (isAnalysisMode) {
+                                        if (isAnalysisMode || isAutoAnalysis) {
                                             Column(
                                                 horizontalAlignment = Alignment.CenterHorizontally,
                                                 verticalArrangement = Arrangement.Center
@@ -640,7 +647,10 @@ class MainActivity : ComponentActivity() {
                                         )
                                         DropdownMenuItem(
                                             text = { Text("エンジンの設定") },
-                                            onClick = { showMenu = false }
+                                            onClick = {
+                                                showSettingsDialog = true
+                                                showMenu = false
+                                            }
                                         )
 
                                     }
@@ -672,42 +682,79 @@ class MainActivity : ComponentActivity() {
                                     .sortedByDescending { extractScore(it.value, currentPlayer) }
                                     .forEach { (rank, pvText) ->
                                         PvInfoCard(rank, pvText) {
+                                            // ★再生に入ったら解析を止める
+                                            isAnalysisMode = false
+                                            engine.sendCommand("stop")
+
                                             val usiMoves = pvUsiList[rank] ?: return@PvInfoCard
-                                            pvBranchRoot = currentNode
-                                            var node = currentNode
+                                            
+                                            // --- 読み筋全体のツリーを構築 ---
+                                            var branchPointer = pvBranchRoot ?: currentNode
+                                            val branchNodes = mutableListOf<KifuNode>()
+                                            
                                             usiMoves.forEach { moveStr ->
                                                 try {
-                                                    val newBoard = applyUsiMove(moveStr, node.board)
-                                                    val label = formatUsiMove(moveStr, node.board)
-                                                    val sym =
-                                                        if (node.currentPlayer == Player.SENTE) "▲" else "△"
-                                                    val next =
-                                                        if (node.currentPlayer == Player.SENTE) Player.GOTE else Player.SENTE
-                                                    val toPos = Pair(
-                                                        moveStr[3] - 'a',
-                                                        9 - (moveStr[2] - '0')
-                                                    )
-                                                    val fromPos = if (moveStr[1] != '*') Pair(
-                                                        moveStr[1] - 'a',
-                                                        9 - (moveStr[0] - '0')
-                                                    ) else null
-                                                    val pv = KifuNode(
-                                                        newBoard,
-                                                        node.senteHand,
-                                                        node.goteHand,
-                                                        next,
-                                                        "$sym$label",
-                                                        node,
-                                                        fromPos,
-                                                        toPos,
-                                                        isPvBranch = true
-                                                    )
-                                                    node.children.add(pv); node = pv
-                                                } catch (e: Exception) {
-                                                }
+                                                    val fromPos = if (moveStr[1] != '*') {
+                                                        Pair(moveStr[1] - 'a', 9 - (moveStr[0] - '0'))
+                                                    } else null
+                                                    val toPos = Pair(moveStr[3] - 'a', 9 - (moveStr[2] - '0'))
+                                                    val movingPiece = if (fromPos != null) {
+                                                        branchPointer.board[fromPos]
+                                                    } else {
+                                                        val type = when(moveStr[0]) {
+                                                            'P' -> PieceType.PAWN; 'L' -> PieceType.LANCE; 'N' -> PieceType.KNIGHT
+                                                            'S' -> PieceType.SILVER; 'G' -> PieceType.GOLD; 'B' -> PieceType.BISHOP; 'R' -> PieceType.ROOK
+                                                            else -> null
+                                                        }
+                                                        if (type != null) Piece(type, branchPointer.currentPlayer) else null
+                                                    }
+                                                    
+                                                    if (movingPiece != null) {
+                                                        val label = formatUsiMove(moveStr, branchPointer.board)
+                                                        val sym = if (branchPointer.currentPlayer == Player.SENTE) "▲" else "△"
+                                                        
+                                                        val existing = branchPointer.children.find { it.moveLabel == "$sym$label" }
+                                                        if (existing != null) {
+                                                            branchPointer = existing
+                                                        } else {
+                                                            val newBoard = applyUsiMove(moveStr, branchPointer.board, branchPointer.currentPlayer).toMutableMap()
+                                                            var newSenteHand = branchPointer.senteHand
+                                                            var newGoteHand = branchPointer.goteHand
+                                                            
+                                                            if (fromPos == null) { // 打ち
+                                                                if (branchPointer.currentPlayer == Player.SENTE) {
+                                                                    newSenteHand = newSenteHand.toMutableMap().apply { this[movingPiece.type] = (this[movingPiece.type] ?: 1) - 1 }.filterValues { it > 0 }
+                                                                } else {
+                                                                    newGoteHand = newGoteHand.toMutableMap().apply { this[movingPiece.type] = (this[movingPiece.type] ?: 1) - 1 }.filterValues { it > 0 }
+                                                                }
+                                                            }
+                                                            val captured = branchPointer.board[toPos]
+                                                            if (captured != null && captured.type != PieceType.KING) {
+                                                                if (branchPointer.currentPlayer == Player.SENTE) {
+                                                                    newSenteHand = newSenteHand.toMutableMap().apply { this[captured.type] = (this[captured.type] ?: 0) + 1 }
+                                                                } else {
+                                                                    newGoteHand = newGoteHand.toMutableMap().apply { this[captured.type] = (this[captured.type] ?: 0) + 1 }
+                                                                }
+                                                            }
+                                                            
+                                                            val next = if (branchPointer.currentPlayer == Player.SENTE) Player.GOTE else Player.SENTE
+                                                            val newNode = KifuNode(newBoard, newSenteHand, newGoteHand, next, "$sym$label", branchPointer, fromPos, toPos, isPvBranch = true)
+                                                            branchPointer.children.add(newNode)
+                                                            branchPointer = newNode
+                                                        }
+                                                        branchNodes.add(branchPointer)
+                                                    }
+                                                } catch (e: Exception) {}
                                             }
-                                            currentNode =
-                                                pvBranchRoot?.children?.firstOrNull() ?: currentNode
+                                            
+                                            // --- タップで一手進める ---
+                                            val nextInPv = branchNodes.firstOrNull { it.parent == currentNode }
+                                            if (nextInPv != null) {
+                                                currentNode = nextInPv
+                                            } else if (branchNodes.isNotEmpty() && currentNode != branchNodes.lastOrNull()) {
+                                                pvBranchRoot = currentNode
+                                                currentNode = branchNodes.first()
+                                            }
                                         }
                                     }
                             }
@@ -731,7 +778,8 @@ class MainActivity : ComponentActivity() {
                                     isActive = currentPlayer == topPlayer,
                                     hand = if (topPlayer == Player.SENTE) senteHand else goteHand,
                                     selectedHandPiece = selectedHandPiece,
-                                    currentPlayer = currentPlayer
+                                    currentPlayer = currentPlayer,
+                                    isFlipped = isBoardFlipped
                                 ) { selectedSquare = null; selectedHandPiece = it }
 
                                 ShogiBoard(
@@ -740,7 +788,23 @@ class MainActivity : ComponentActivity() {
                                     lastFrom = currentNode.lastFrom,
                                     lastTo = currentNode.lastTo,
                                     isFlipped = isBoardFlipped,
-                                    onSquareClick = { r, c -> /* Square Click Logic */ },
+                                    onSquareClick = { r, c ->
+                                        handleSquareClick(
+                                            row = r,
+                                            col = c,
+                                            boardState = boardState,
+                                            currentPlayer = currentPlayer,
+                                            selectedSquare = selectedSquare,
+                                            selectedHandPiece = selectedHandPiece,
+                                            currentNode = currentNode,
+                                            onUpdate = { square, hand, node, pending ->
+                                                selectedSquare = square
+                                                selectedHandPiece = hand
+                                                if (node != null) currentNode = node
+                                                if (pending != null) promotionPendingBy = pending
+                                            }
+                                        )
+                                    },
                                     modifier = Modifier.sizeIn(
                                         maxWidth = 500.dp,
                                         maxHeight = 500.dp
@@ -753,7 +817,8 @@ class MainActivity : ComponentActivity() {
                                     isActive = currentPlayer == bottomPlayer,
                                     hand = if (bottomPlayer == Player.SENTE) senteHand else goteHand,
                                     selectedHandPiece = selectedHandPiece,
-                                    currentPlayer = currentPlayer
+                                    currentPlayer = currentPlayer,
+                                    isFlipped = isBoardFlipped
                                 ) { selectedSquare = null; selectedHandPiece = it }
 
                                 SliderControlSection(currentNode, currentPath) { currentNode = it }
@@ -775,42 +840,79 @@ class MainActivity : ComponentActivity() {
                                     .sortedByDescending { extractScore(it.value, currentPlayer) }
                                     .forEach { (rank, pvText) ->
                                         PvInfoCard(rank, pvText) {
+                                            // ★再生に入ったら解析を止める
+                                            isAnalysisMode = false
+                                            engine.sendCommand("stop")
+
                                             val usiMoves = pvUsiList[rank] ?: return@PvInfoCard
-                                            pvBranchRoot = currentNode
-                                            var node = currentNode
+                                            
+                                            // --- 読み筋全体のツリーを構築 ---
+                                            var branchPointer = pvBranchRoot ?: currentNode
+                                            val branchNodes = mutableListOf<KifuNode>()
+                                            
                                             usiMoves.forEach { moveStr ->
                                                 try {
-                                                    val newBoard = applyUsiMove(moveStr, node.board)
-                                                    val label = formatUsiMove(moveStr, node.board)
-                                                    val sym =
-                                                        if (node.currentPlayer == Player.SENTE) "▲" else "△"
-                                                    val next =
-                                                        if (node.currentPlayer == Player.SENTE) Player.GOTE else Player.SENTE
-                                                    val toPos = Pair(
-                                                        moveStr[3] - 'a',
-                                                        9 - (moveStr[2] - '0')
-                                                    )
-                                                    val fromPos = if (moveStr[1] != '*') Pair(
-                                                        moveStr[1] - 'a',
-                                                        9 - (moveStr[0] - '0')
-                                                    ) else null
-                                                    val pv = KifuNode(
-                                                        newBoard,
-                                                        node.senteHand,
-                                                        node.goteHand,
-                                                        next,
-                                                        "$sym$label",
-                                                        node,
-                                                        fromPos,
-                                                        toPos,
-                                                        isPvBranch = true
-                                                    )
-                                                    node.children.add(pv); node = pv
-                                                } catch (e: Exception) {
-                                                }
+                                                    val fromPos = if (moveStr[1] != '*') {
+                                                        Pair(moveStr[1] - 'a', 9 - (moveStr[0] - '0'))
+                                                    } else null
+                                                    val toPos = Pair(moveStr[3] - 'a', 9 - (moveStr[2] - '0'))
+                                                    val movingPiece = if (fromPos != null) {
+                                                        branchPointer.board[fromPos]
+                                                    } else {
+                                                        val type = when(moveStr[0]) {
+                                                            'P' -> PieceType.PAWN; 'L' -> PieceType.LANCE; 'N' -> PieceType.KNIGHT
+                                                            'S' -> PieceType.SILVER; 'G' -> PieceType.GOLD; 'B' -> PieceType.BISHOP; 'R' -> PieceType.ROOK
+                                                            else -> null
+                                                        }
+                                                        if (type != null) Piece(type, branchPointer.currentPlayer) else null
+                                                    }
+                                                    
+                                                    if (movingPiece != null) {
+                                                        val label = formatUsiMove(moveStr, branchPointer.board)
+                                                        val sym = if (branchPointer.currentPlayer == Player.SENTE) "▲" else "△"
+                                                        
+                                                        val existing = branchPointer.children.find { it.moveLabel == "$sym$label" }
+                                                        if (existing != null) {
+                                                            branchPointer = existing
+                                                        } else {
+                                                            val newBoard = applyUsiMove(moveStr, branchPointer.board, branchPointer.currentPlayer).toMutableMap()
+                                                            var newSenteHand = branchPointer.senteHand
+                                                            var newGoteHand = branchPointer.goteHand
+                                                            
+                                                            if (fromPos == null) { // 打ち
+                                                                if (branchPointer.currentPlayer == Player.SENTE) {
+                                                                    newSenteHand = newSenteHand.toMutableMap().apply { this[movingPiece.type] = (this[movingPiece.type] ?: 1) - 1 }.filterValues { it > 0 }
+                                                                } else {
+                                                                    newGoteHand = newGoteHand.toMutableMap().apply { this[movingPiece.type] = (this[movingPiece.type] ?: 1) - 1 }.filterValues { it > 0 }
+                                                                }
+                                                            }
+                                                            val captured = branchPointer.board[toPos]
+                                                            if (captured != null && captured.type != PieceType.KING) {
+                                                                if (branchPointer.currentPlayer == Player.SENTE) {
+                                                                    newSenteHand = newSenteHand.toMutableMap().apply { this[captured.type] = (this[captured.type] ?: 0) + 1 }
+                                                                } else {
+                                                                    newGoteHand = newGoteHand.toMutableMap().apply { this[captured.type] = (this[captured.type] ?: 0) + 1 }
+                                                                }
+                                                            }
+                                                            
+                                                            val next = if (branchPointer.currentPlayer == Player.SENTE) Player.GOTE else Player.SENTE
+                                                            val newNode = KifuNode(newBoard, newSenteHand, newGoteHand, next, "$sym$label", branchPointer, fromPos, toPos, isPvBranch = true)
+                                                            branchPointer.children.add(newNode)
+                                                            branchPointer = newNode
+                                                        }
+                                                        branchNodes.add(branchPointer)
+                                                    }
+                                                } catch (e: Exception) {}
                                             }
-                                            currentNode =
-                                                pvBranchRoot?.children?.firstOrNull() ?: currentNode
+                                            
+                                            // --- タップで一手進める ---
+                                            val nextInPv = branchNodes.firstOrNull { it.parent == currentNode }
+                                            if (nextInPv != null) {
+                                                currentNode = nextInPv
+                                            } else if (branchNodes.isNotEmpty() && currentNode != branchNodes.lastOrNull()) {
+                                                pvBranchRoot = currentNode
+                                                currentNode = branchNodes.first()
+                                            }
                                         }
                                     }
                             }
@@ -825,7 +927,8 @@ class MainActivity : ComponentActivity() {
                                 isActive = currentPlayer == topPlayer,
                                 hand = if (topPlayer == Player.SENTE) senteHand else goteHand,
                                 selectedHandPiece = selectedHandPiece,
-                                currentPlayer = currentPlayer
+                                currentPlayer = currentPlayer,
+                                isFlipped = isBoardFlipped
                             ) { selectedSquare = null; selectedHandPiece = it }
 
                             ShogiBoard(
@@ -834,7 +937,23 @@ class MainActivity : ComponentActivity() {
                                 lastFrom = currentNode.lastFrom,
                                 lastTo = currentNode.lastTo,
                                 isFlipped = isBoardFlipped,
-                                onSquareClick = { r, c -> /* Square Click Logic */ },
+                                onSquareClick = { r, c ->
+                                    handleSquareClick(
+                                        row = r,
+                                        col = c,
+                                        boardState = boardState,
+                                        currentPlayer = currentPlayer,
+                                        selectedSquare = selectedSquare,
+                                        selectedHandPiece = selectedHandPiece,
+                                        currentNode = currentNode,
+                                        onUpdate = { square, hand, node, pending ->
+                                            selectedSquare = square
+                                            selectedHandPiece = hand
+                                            if (node != null) currentNode = node
+                                            if (pending != null) promotionPendingBy = pending
+                                        }
+                                    )
+                                },
                                 modifier = Modifier.padding(16.dp)
                             )
 
@@ -844,7 +963,8 @@ class MainActivity : ComponentActivity() {
                                 isActive = currentPlayer == bottomPlayer,
                                 hand = if (bottomPlayer == Player.SENTE) senteHand else goteHand,
                                 selectedHandPiece = selectedHandPiece,
-                                currentPlayer = currentPlayer
+                                currentPlayer = currentPlayer,
+                                isFlipped = isBoardFlipped
                             ) { selectedSquare = null; selectedHandPiece = it }
 
                             SliderControlSection(currentNode, currentPath) { currentNode = it }
@@ -852,6 +972,67 @@ class MainActivity : ComponentActivity() {
 
                         }
                     }
+                }
+
+                // エンジン設定ダイアログ
+                if (showSettingsDialog) {
+                    AlertDialog(
+                        onDismissRequest = { showSettingsDialog = false },
+                        title = { Text("エンジンの設定") },
+                        text = {
+                            Column(verticalArrangement = Arrangement.spacedBy(16.dp)) {
+                                Column {
+                                    Text("思考時間: ${analysisTimeMs}ms", style = MaterialTheme.typography.labelMedium)
+                                    Slider(
+                                        value = analysisTimeMs.toFloat(),
+                                        onValueChange = { analysisTimeMs = it.toLong() },
+                                        valueRange = 100f..10000f,
+                                        steps = 98
+                                    )
+                                }
+                                Column {
+                                    Text("読み筋の数 (MultiPV): $multiPvCount", style = MaterialTheme.typography.labelMedium)
+                                    Slider(
+                                        value = multiPvCount.toFloat(),
+                                        onValueChange = { multiPvCount = it.toInt() },
+                                        valueRange = 1f..10f,
+                                        steps = 8
+                                    )
+                                }
+                                Column {
+                                    Text("スレッド数: $threadCount", style = MaterialTheme.typography.labelMedium)
+                                    Slider(
+                                        value = threadCount.toFloat(),
+                                        onValueChange = { threadCount = it.toInt() },
+                                        valueRange = 1f..16f,
+                                        steps = 15
+                                    )
+                                }
+                            }
+                        },
+                        confirmButton = {
+                            TextButton(onClick = {
+                                // 設定を保存
+                                prefs.edit().apply {
+                                    putLong("analysis_time", analysisTimeMs)
+                                    putInt("multi_pv", multiPvCount)
+                                    putInt("thread_count", threadCount)
+                                }.apply()
+                                
+                                // エンジンに即座に反映
+                                if (isEngineReady) {
+                                    engine.sendCommand("stop")
+                                    engine.sendCommand("setoption name Threads value $threadCount")
+                                    engine.sendCommand("setoption name MultiPV value $multiPvCount")
+                                    engine.sendCommand("isready")
+                                }
+                                showSettingsDialog = false
+                            }) { Text("保存") }
+                        },
+                        dismissButton = {
+                            TextButton(onClick = { showSettingsDialog = false }) { Text("キャンセル") }
+                        }
+                    )
                 }
 
                 // 成り選択ダイアログ
@@ -1025,7 +1206,7 @@ class MainActivity : ComponentActivity() {
                             val formatted = formatUsiMove(moveStr, tempBoard)  // 現在の盤面で駒名を特定
                             formattedMoves.add("$symbol$formatted")
 
-                            tempBoard = applyUsiMove(moveStr, tempBoard)  // 盤面を1手進める
+                            tempBoard = applyUsiMove(moveStr, tempBoard, tempTurn)  // 盤面を1手進める
                             tempTurn = if (tempTurn == Player.SENTE) Player.GOTE else Player.SENTE
                         }
                         pv = "読み筋: " + formattedMoves.joinToString(" ")
@@ -1753,7 +1934,8 @@ class MainActivity : ComponentActivity() {
     // USI形式の1手を盤面に適用して新しい盤面を返す
     private fun applyUsiMove(
         usiMove: String,
-        board: Map<Pair<Int, Int>, Piece>
+        board: Map<Pair<Int, Int>, Piece>,
+        player: Player = Player.SENTE
     ): Map<Pair<Int, Int>, Piece> {
         if (usiMove.length < 4) return board
         val newBoard = board.toMutableMap()
@@ -1769,8 +1951,8 @@ class MainActivity : ComponentActivity() {
                 }
                 val toCol = usiMove[2] - '0'
                 val toRow = usiMove[3] - 'a'
-                // 手番は盤面から推定できないのでSENTEとして仮置き（表示用なので問題なし）
-                newBoard[Pair(toRow, 9 - toCol)] = Piece(type, Player.SENTE)
+                // 手番の情報を使用して正しい向きの駒を配置
+                newBoard[Pair(toRow, 9 - toCol)] = Piece(type, player)
                 newBoard
             } else {
                 // 通常移動 (2g2f)
@@ -1793,17 +1975,157 @@ class MainActivity : ComponentActivity() {
         }
     }
 
+    private fun handleSquareClick(
+        row: Int,
+        col: Int,
+        boardState: Map<Pair<Int, Int>, Piece>,
+        currentPlayer: Player,
+        selectedSquare: Pair<Int, Int>?,
+        selectedHandPiece: Pair<Player, PieceType>?,
+        currentNode: KifuNode,
+        onUpdate: (Pair<Int, Int>?, Pair<Player, PieceType>?, KifuNode?, PendingMove?) -> Unit
+    ) {
+        val clickedPos = Pair(row, col)
+
+        if (selectedHandPiece != null) {
+            // 持ち駒を打つ
+            if (boardState[clickedPos] == null && selectedHandPiece.first == currentPlayer) {
+                val (player, type) = selectedHandPiece
+
+                // 二歩のチェック
+                var isNifu = false
+                if (type == PieceType.PAWN) {
+                    for (r in 0 until 9) {
+                        val p = boardState[Pair(r, col)]
+                        if (p != null && p.owner == player && p.type == PieceType.PAWN && !p.isPromoted) {
+                            isNifu = true
+                            break
+                        }
+                    }
+                }
+
+                if (!isNifu) {
+                    val moveLabel = "${9 - col}${rowToKanji('a' + row)}${type.label}打"
+                    executeMove(
+                        null,
+                        clickedPos,
+                        Piece(type, player),
+                        null,
+                        false,
+                        currentNode,
+                        moveLabel,
+                        isPvBranch = true
+                    ) { nextNode ->
+                        onUpdate(null, null, nextNode, null)
+                    }
+                }
+            }
+        } else {
+            val currentSelected = selectedSquare
+            if (currentSelected == null) {
+                // 駒を選択
+                val piece = boardState[clickedPos]
+                if (piece != null && piece.owner == currentPlayer) {
+                    onUpdate(clickedPos, null, null, null)
+                }
+            } else {
+                if (currentSelected == clickedPos) {
+                    // 選択解除
+                    onUpdate(null, null, null, null)
+                } else {
+                    val movingPiece = boardState[currentSelected]
+                    val targetPiece = boardState[clickedPos]
+
+                    if (movingPiece != null && movingPiece.owner == currentPlayer && movingPiece.owner != targetPiece?.owner) {
+                        // 駒の動きがルール通りかチェック
+                        if (isValidMovePattern(currentSelected, clickedPos, movingPiece, boardState)) {
+                            // 成り判定
+                            val canPromote =
+                                !movingPiece.isPromoted && movingPiece.type.promotedLabel != null
+                            val isSenteZone = clickedPos.first <= 2 || currentSelected.first <= 2
+                            val isGoteZone = clickedPos.first >= 6 || currentSelected.first >= 6
+                            val enteringZone =
+                                if (movingPiece.owner == Player.SENTE) isSenteZone else isGoteZone
+
+                            // 強制成り判定 (歩・香は1段目、桂は1-2段目)
+                            var mustPromote = false
+                            if (movingPiece.type == PieceType.PAWN || movingPiece.type == PieceType.LANCE) {
+                                if (movingPiece.owner == Player.SENTE && clickedPos.first == 0) mustPromote = true
+                                if (movingPiece.owner == Player.GOTE && clickedPos.first == 8) mustPromote = true
+                            } else if (movingPiece.type == PieceType.KNIGHT) {
+                                if (movingPiece.owner == Player.SENTE && clickedPos.first <= 1) mustPromote = true
+                                if (movingPiece.owner == Player.GOTE && clickedPos.first >= 7) mustPromote = true
+                            }
+
+                            if (mustPromote) {
+                                val moveLabel = formatUsiMove(
+                                    "${9 - currentSelected.second}${('a' + currentSelected.first)}${9 - clickedPos.second}${('a' + clickedPos.first)}+",
+                                    boardState
+                                )
+                                executeMove(
+                                    currentSelected,
+                                    clickedPos,
+                                    movingPiece,
+                                    targetPiece,
+                                    true,
+                                    currentNode,
+                                    moveLabel,
+                                    isPvBranch = true
+                                ) { nextNode ->
+                                    onUpdate(null, null, nextNode, null)
+                                }
+                            } else if (canPromote && enteringZone) {
+                                // 成り選択用
+                                onUpdate(null, null, null, PendingMove(currentSelected, clickedPos, movingPiece, targetPiece))
+                            } else {
+                                val moveLabel = formatUsiMove(
+                                    "${9 - currentSelected.second}${('a' + currentSelected.first)}${9 - clickedPos.second}${('a' + clickedPos.first)}",
+                                    boardState
+                                )
+                                executeMove(
+                                    currentSelected,
+                                    clickedPos,
+                                    movingPiece,
+                                    targetPiece,
+                                    false,
+                                    currentNode,
+                                    moveLabel,
+                                    isPvBranch = true
+                                ) { nextNode ->
+                                    onUpdate(null, null, nextNode, null)
+                                }
+                            }
+                        }
+                    } else if (targetPiece?.owner == movingPiece?.owner) {
+                        // 自分の別の駒を選択し直す
+                        onUpdate(clickedPos, null, null, null)
+                    }
+                }
+            }
+        }
+    }
 }
 
 @Composable
-fun PlayerInfoContent(name: String, mark: String) {
+fun PlayerInfoContent(
+    name: String,
+    mark: String,
+    isFlipped: Boolean = false
+) {
     // コンテキスト外に出すために、まずデフォルトのサイズを取得する
     val defaultFontSize = MaterialTheme.typography.titleMedium.fontSize
     var fontSize by remember(name) { mutableStateOf(defaultFontSize) }
 
     Row(
-        modifier = Modifier.padding(horizontal = 8.dp, vertical = 4.dp),
-        verticalAlignment = Alignment.CenterVertically
+        modifier = Modifier
+            .fillMaxWidth()
+            .padding(horizontal = 8.dp, vertical = 4.dp),
+        verticalAlignment = Alignment.CenterVertically,
+        horizontalArrangement =
+            if(((mark == "▲") && !isFlipped) || ((mark == "△") && isFlipped)) {
+                Arrangement.End} else {
+                Arrangement.Start
+            }
     ) {
         Text(
             text = "$mark ",
@@ -1917,16 +2239,22 @@ fun PlayerStatusSection(
     hand: Map<PieceType, Int>,
     selectedHandPiece: Pair<Player, PieceType>?,
     currentPlayer: Player,
+    isFlipped: Boolean = false,
     onSelected: (Pair<Player, PieceType>?) -> Unit
 ) {
     val player = if (mark == "▲") Player.SENTE else Player.GOTE
     Column(modifier = Modifier.fillMaxWidth()) {
-        PlayerInfoContent(name = playerName, mark = mark)
+        PlayerInfoContent(
+            name = playerName,
+            mark = mark,
+            isFlipped = isFlipped
+        )
         HandView(
             hand = hand,
             player = player,
             selectedPieceType = selectedHandPiece?.takeIf { it.first == player }?.second,
-            onPieceClick = { type -> if (isActive) onSelected(Pair(player, type)) }
+            onPieceClick = { type -> if (isActive) onSelected(Pair(player, type)) },
+            isFlipped = isFlipped
         )
     }
 }
