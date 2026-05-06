@@ -56,22 +56,23 @@ import android.content.Context
 import android.content.SharedPreferences
 import android.content.Context.MODE_PRIVATE
 import androidx.compose.foundation.layout.Arrangement
+import kotlin.collections.sortedByDescending
 
 // 棋譜の1局面を管理するノードクラス
-class KifuNode(
-    val board: Map<Pair<Int, Int>, Piece>,
-    val senteHand: Map<PieceType, Int>,
-    val goteHand: Map<PieceType, Int>,
-    val currentPlayer: Player,
-    val moveLabel: String = "開始局面",
-    val parent: KifuNode? = null,
-    val lastFrom: Pair<Int, Int>? = null,
-    val lastTo: Pair<Int, Int>? = null,
-    val isPvBranch: Boolean = false  // 読み筋（一時的）かどうか
-) {
-    val children = mutableStateListOf<KifuNode>()
-    val moveCount: Int = (parent?.moveCount ?: -1) + 1
-}
+//class KifuNode(
+//    val board: Map<Pair<Int, Int>, Piece>,
+//    val senteHand: Map<PieceType, Int>,
+//    val goteHand: Map<PieceType, Int>,
+//    val currentPlayer: Player,
+//    val moveLabel: String = "開始局面",
+//    val parent: KifuNode? = null,
+//    val lastFrom: Pair<Int, Int>? = null,
+//    val lastTo: Pair<Int, Int>? = null,
+//    val isPvBranch: Boolean = false  // 読み筋（一時的）かどうか
+//) {
+//    val children = mutableStateListOf<KifuNode>()
+//    val moveCount: Int = (parent?.moveCount ?: -1) + 1
+//}
 
 class MainActivity : ComponentActivity() {
 
@@ -483,11 +484,11 @@ class MainActivity : ComponentActivity() {
                                             if (!isEngineReady) this.alpha = alpha
                                         },
                                     shape = MaterialTheme.shapes.extraLarge,
-                                    colors = ButtonDefaults.buttonColors(
+                                    colors = ButtonDefaults.outlinedButtonColors(
                                         containerColor = when {
-                                            !isEngineReady -> MaterialTheme.colorScheme.surfaceVariant
+                                            !isEngineReady -> Color.Transparent
                                             isAnalysisMode || isAutoAnalysis -> MaterialTheme.colorScheme.tertiaryContainer
-                                            else -> MaterialTheme.colorScheme.primary
+                                            else -> Color.Transparent
                                         }
                                     )
                                 ) {
@@ -2148,12 +2149,12 @@ fun PlayerInfoContent(
     }
 }
 
-data class PendingMove(
-    val from: Pair<Int, Int>,
-    val to: Pair<Int, Int>,
-    val piece: Piece,
-    val captured: Piece?
-)
+//data class PendingMove(
+//    val from: Pair<Int, Int>,
+//    val to: Pair<Int, Int>,
+//    val piece: Piece,
+//    val captured: Piece?
+//)
 
 @Composable
 fun Modifier.repeatingClickable(
@@ -2190,27 +2191,27 @@ fun Modifier.repeatingClickable(
     }
 }
 
-fun extractScore(pvText: String, turn: Player): Int {
-    // 詰みの判定
-    val mateLine = pvText.lines().find { it.contains("手詰") }
-    if (mateLine != null) {
-        val isSenteWin = mateLine.contains("先手勝ち")
-        return if (turn == Player.SENTE) {
-            if (isSenteWin) Int.MAX_VALUE else Int.MIN_VALUE
-        } else {
-            if (!isSenteWin) Int.MAX_VALUE else Int.MIN_VALUE
-        }
-    }
-
-    // 評価値の抽出
-    val scoreLine = pvText.lines().find { it.startsWith("評価:") } ?: return 0
-    // 「評価: +123 (互角)」から "+123" を取り出す
-    val vStr = scoreLine.substringAfter("評価:").trim().split(" ")[0]
-    val v = vStr.toIntOrNull() ?: 0
-
-    // 手番の人にとって良い順にするため、後手番なら符号を反転させて評価する
-    return if (turn == Player.SENTE) v else -v
-}
+//fun extractScore(pvText: String, turn: Player): Int {
+//    // 詰みの判定
+//    val mateLine = pvText.lines().find { it.contains("手詰") }
+//    if (mateLine != null) {
+//        val isSenteWin = mateLine.contains("先手勝ち")
+//        return if (turn == Player.SENTE) {
+//            if (isSenteWin) Int.MAX_VALUE else Int.MIN_VALUE
+//        } else {
+//            if (!isSenteWin) Int.MAX_VALUE else Int.MIN_VALUE
+//        }
+//    }
+//
+//    // 評価値の抽出
+//    val scoreLine = pvText.lines().find { it.startsWith("評価:") } ?: return 0
+//    // 「評価: +123 (互角)」から "+123" を取り出す
+//    val vStr = scoreLine.substringAfter("評価:").trim().split(" ")[0]
+//    val v = vStr.toIntOrNull() ?: 0
+//
+//    // 手番の人にとって良い順にするため、後手番なら符号を反転させて評価する
+//    return if (turn == Player.SENTE) v else -v
+//}
 
 @Composable
 fun PvInfoCard(rank: Int, pvText: String, onTap: () -> Unit) {

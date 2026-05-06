@@ -1,5 +1,7 @@
 package com.example.shogigui
 
+import android.R.attr.tag
+import android.util.Log
 import androidx.compose.foundation.background
 import androidx.compose.foundation.border
 import androidx.compose.foundation.clickable
@@ -11,6 +13,8 @@ import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.draw.rotate
 import androidx.compose.ui.graphics.Color
+import androidx.compose.ui.text.font.Font
+import androidx.compose.ui.text.font.FontFamily
 import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.tooling.preview.Preview
 import androidx.compose.ui.unit.dp
@@ -28,6 +32,9 @@ enum class Player {
 
 data class Piece(val type: PieceType, val owner: Player, val isPromoted: Boolean = false)
 
+val shogiFont = FontFamily(Font(R.font.notoserif))
+    // FontFamily(Font(R.font.aoyagireisyosimo_ttf_2_01))
+
 @Composable
 fun ShogiBoard(
     boardState: Map<Pair<Int, Int>, Piece>,
@@ -40,12 +47,11 @@ fun ShogiBoard(
     lastTo: Pair<Int, Int>? = null,
 
 ) {
-    val boardColor = Color(0xFFFFE3BE)
-    val highlightColor = Color(0xFFFCA78B).copy(alpha = 0.6f) // 指し手の強調色（山吹色系）
+    val boardColor = Color(0xFFE7CB6F)
+    val highlightColor = Color(0xFF6F8BE7).copy(alpha = 0.6f) // 指し手の強調色（山吹色系）
     val selectionColor = MaterialTheme.colorScheme.primaryContainer.copy(alpha = 0.7f)
     val kanjiNumbers = listOf("一", "二", "三", "四", "五", "六", "七", "八", "九")
-
-    Column(
+      Column(
         modifier = modifier
             .rotate(if (isFlipped) 180f else 0f)
             .background(boardColor)
@@ -127,7 +133,12 @@ fun ShogiBoard(
                             .fillMaxWidth(),
                         contentAlignment = Alignment.Center
                     ) {
-                        Text(text = kanjiNumbers[row], fontSize = 10.sp, color = Color.DarkGray)
+                        Text(
+                            text = kanjiNumbers[row],
+                            fontSize = 10.sp,
+                            color = Color.DarkGray,
+                            //fontFamily = shogiFont,
+                            )
                     }
                 }
             }
@@ -161,21 +172,25 @@ fun HandView(
                 Box(
                     contentAlignment = Alignment.TopEnd,
                     modifier = Modifier
-                        .padding(horizontal = 4.dp)
+                        .padding(horizontal = 6.dp)
                         .background(if (isSelected) MaterialTheme.colorScheme.secondaryContainer else Color.Transparent)
                         .clickable { onPieceClick(type) }
                 ) {
+                    Log.d("HandView", type.label)
                     Text(
                         text = type.label,
                         fontSize = 20.sp,
-                        fontWeight = FontWeight.Bold
+                        fontWeight = FontWeight.Bold,
+                        fontFamily = shogiFont
+                        //letterSpacing = 10.sp
+
                     )
                     if (count > 1) {
                         Text(
                             text = count.toString(),
                             fontSize = 12.sp,
                             fontWeight = FontWeight.Bold,
-                            modifier = Modifier.offset(x = 8.dp, y = (-4).dp)
+                            modifier = Modifier.offset(x = 8.dp, y = (-4).dp),
                         )
                     }
                 }
@@ -220,8 +235,10 @@ fun ShogiBoardPreview() {
 
 @Composable
 fun PieceView(piece: Piece, isFlipped: Boolean = false) {
+    val darkRed = Color(0xFF800000)
+
     val label = if (piece.isPromoted) piece.type.promotedLabel ?: piece.type.label else piece.type.label
-    val color = if (piece.isPromoted) Color.Red else Color.Black
+    val color = if (piece.isPromoted) darkRed else Color.Black
 
     val rotation = when {
         //isFlipped && piece.owner == Player.SENTE -> 180f
@@ -235,7 +252,8 @@ fun PieceView(piece: Piece, isFlipped: Boolean = false) {
         color = color,
         fontSize = 20.sp,
         fontWeight = FontWeight.Bold,
-        modifier = Modifier.rotate(rotation)
+        modifier = Modifier.rotate(rotation),
+        fontFamily = shogiFont
     )
 }
 
