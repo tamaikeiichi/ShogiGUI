@@ -1,5 +1,6 @@
 package com.example.shogigui
 
+import android.content.Context.MODE_PRIVATE
 import android.os.Bundle
 import androidx.activity.ComponentActivity
 import androidx.activity.compose.setContent
@@ -24,6 +25,7 @@ import androidx.compose.foundation.layout.PaddingValues
 import androidx.compose.foundation.layout.size
 import androidx.compose.foundation.layout.Row
 import androidx.compose.foundation.layout.heightIn
+import androidx.compose.foundation.layout.sizeIn
 import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.graphics.graphicsLayer
@@ -51,6 +53,9 @@ import com.example.shogigui.ui.theme.ShogiGUITheme
 import kotlinx.coroutines.isActive
 import kotlinx.coroutines.delay
 import kotlinx.coroutines.launch
+import android.content.Context
+import android.content.SharedPreferences
+import android.content.Context.MODE_PRIVATE
 
 // 棋譜の1局面を管理するノードクラス
 class KifuNode(
@@ -79,7 +84,9 @@ class MainActivity : ComponentActivity() {
     override fun onCreate(savedInstanceState: Bundle?) {
         super.onCreate(savedInstanceState)
         enableEdgeToEdge()
-        
+
+        val prefs = getSharedPreferences("kifu_prefs", MODE_PRIVATE)  // ← ここで一度取得
+
         // 開発中は毎回上書きコピーするようにして、確実に最新のファイルを届ける（バックグラウンド推奨だが一旦ここでも最小化）
 //        java.util.concurrent.Executors.newSingleThreadExecutor().execute {
 //            copyAssetsToFileDir("nn.bin", "eval")
@@ -92,8 +99,9 @@ class MainActivity : ComponentActivity() {
             savedSenteName = prefs.getString("sente_name", "先手") ?: "先手"
             savedGoteName = prefs.getString("gote_name", "後手") ?: "後手"
             rootNode = if (saved != null) {
-                try { jsonToKifuTree(JSONObject(saved)) }
-                catch (e: Exception) {
+                try {
+                    jsonToKifuTree(JSONObject(saved))
+                } catch (e: Exception) {
                     KifuNode(createInitialBoard(), emptyMap(), emptyMap(), Player.SENTE)
                 }
             } else {
@@ -111,7 +119,9 @@ class MainActivity : ComponentActivity() {
                 var mainLineNodes by remember {
                     val line = mutableListOf<KifuNode>()
                     var n: KifuNode? = initialNode
-                    while (n != null) { line.add(n); n = n.children.firstOrNull { !it.isPvBranch } }
+                    while (n != null) {
+                        line.add(n); n = n.children.firstOrNull { !it.isPvBranch }
+                    }
                     mutableStateOf<List<KifuNode>>(line)
                 }
                 // 現在のパス（スライダー用）を計算
@@ -119,10 +129,14 @@ class MainActivity : ComponentActivity() {
                     val path = mutableListOf<KifuNode>()
                     // ルートから現在地まで
                     var p: KifuNode? = currentNode
-                    while (p != null) { path.add(0, p); p = p.parent }
+                    while (p != null) {
+                        path.add(0, p); p = p.parent
+                    }
                     // 現在地から本譜（最初の子供）を辿る
                     var c = currentNode.children.firstOrNull()
-                    while (c != null) { path.add(c); c = c.children.firstOrNull() }
+                    while (c != null) {
+                        path.add(c); c = c.children.firstOrNull()
+                    }
                     path
                 }
 
@@ -141,7 +155,7 @@ class MainActivity : ComponentActivity() {
                 var selectedSquare by remember { mutableStateOf<Pair<Int, Int>?>(null) }
                 var selectedHandPiece by remember { mutableStateOf<Pair<Player, PieceType>?>(null) }
                 var promotionPendingBy by remember { mutableStateOf<PendingMove?>(null) }
-                
+
                 var showMenu by remember { mutableStateOf(false) }
                 val clipboardManager = LocalClipboardManager.current
                 var isAnalysisMode by remember { mutableStateOf(false) }
@@ -150,14 +164,17 @@ class MainActivity : ComponentActivity() {
                 var isOutputExpanded by remember { mutableStateOf(false) }
 
                 var pvBranchRoot by remember { mutableStateOf<KifuNode?>(null) }
-                
+
                 // 対局者名
                 var senteName by remember { mutableStateOf(savedSenteName) }
                 var goteName by remember { mutableStateOf(savedGoteName) }
-                
+
                 // エンジンのインスタンスを保持
                 val engine = remember { UsiEngine() }
-                
+
+                val filesDirPath = filesDir  // ← Activityのコンテキストで取得
+                val myFilesDir = filesDir
+                val myAssets = assets
                 // エンジンからの出力を表示するための状態
                 var engineOutput by remember { mutableStateOf("エンジン待機中...") }
                 var engineLog by remember { mutableStateOf(listOf("エンジン待機中...")) }
@@ -165,18 +182,20 @@ class MainActivity : ComponentActivity() {
                 // エンジンからの出力を処理するロジック
                 val processOutput = { rawLine: String ->
                     val line = rawLine.trim()
-                    
+
                     // 外部ストレージ領域にログを保存 (PCから見える場所)
                     try {
                         val logFile = java.io.File(getExternalFilesDir(null), "debug_engine.txt")
                         logFile.appendText("${java.util.Date()}: $line\n")
-                    } catch (e: Exception) {}
+                    } catch (e: Exception) {
+                    }
 
                     when {
                         line.contains("JNI:") -> {
                             engineOutput = line
                             engineLog = (engineLog + line).takeLast(50)
                         }
+
                         line == "usiok" -> {
                             val msg = "初期化完了 (usiok)"
                             engineOutput = msg
@@ -188,6 +207,7 @@ class MainActivity : ComponentActivity() {
                             engine.sendCommand("setoption name BookFile value no_book")
                             engine.sendCommand("isready")
                         }
+
                         line == "readyok" -> {
                             isEngineReady = true
                             val msg = "準備完了。解析を開始します..."
@@ -195,6 +215,7 @@ class MainActivity : ComponentActivity() {
                             engineLog = (engineLog + msg).takeLast(50)
                             // 自動開始は LaunchedEffect 側に任せるため、ここでは何もしない
                         }
+
                         line.startsWith("info") -> {
                             val multipvMatch = Regex("multipv (\\d+)").find(line)
                             val rank = multipvMatch?.groupValues?.get(1)?.toInt() ?: 1
@@ -214,6 +235,7 @@ class MainActivity : ComponentActivity() {
                                 engineOutput = pvList.toSortedMap().values.joinToString("\n---\n")
                             }
                         }
+
                         line.startsWith("bestmove") -> {
                             isAnalysisMode = false
                             isAnalyzing = false // 解析が終わったことを記録
@@ -229,6 +251,7 @@ class MainActivity : ComponentActivity() {
                                 engineLog = (engineLog + line).takeLast(50)
                             }
                         }
+
                         else -> {
                             // option も含め、準備中はすべて表示して安心させる
                             if (!line.startsWith("option")) {
@@ -254,8 +277,10 @@ class MainActivity : ComponentActivity() {
                 LaunchedEffect(isAnalysisMode, isEngineReady) {
                     if (isAnalysisMode && isEngineReady) {
                         snapshotFlow {
-                            Triple(currentNode.board, currentNode.currentPlayer,
-                                currentNode.senteHand to currentNode.goteHand)
+                            Triple(
+                                currentNode.board, currentNode.currentPlayer,
+                                currentNode.senteHand to currentNode.goteHand
+                            )
                         }.collect { (board, player, hands) ->
                             engine.sendCommand("stop")
                             pvList.clear() // ★ここ：前の局面の次善手を消す
@@ -276,9 +301,9 @@ class MainActivity : ComponentActivity() {
                     try {
                         // 評価関数ファイルのコピー
                         kotlinx.coroutines.withContext(kotlinx.coroutines.Dispatchers.IO) {
-                            copyAssetsToFileDir("nn.bin", "eval")
+                            copyAssetsToFileDir("nn.bin", "eval", myFilesDir, myAssets)
                         }
-                        
+
                         // 作業ディレクトリを filesDir に設定。
                         // これにより、エンジンが eval/nn.bin を正しく見つけられます。
                         engine.start(filesDir.absolutePath)
@@ -293,7 +318,12 @@ class MainActivity : ComponentActivity() {
                     // 現在のノードから末尾まで順番に解析
                     var node = currentNode
                     while (isAutoAnalysis) {
-                        val sfen = boardToSfen(node.board, node.currentPlayer, node.senteHand, node.goteHand)
+                        val sfen = boardToSfen(
+                            node.board,
+                            node.currentPlayer,
+                            node.senteHand,
+                            node.goteHand
+                        )
                         if (sfen.isNotEmpty()) {
                             engine.sendCommand("stop")
                             kotlinx.coroutines.delay(100)
@@ -340,27 +370,46 @@ class MainActivity : ComponentActivity() {
                                             // 対局者名の抽出
                                             text.lines().forEach { line ->
                                                 when {
-                                                    line.startsWith("先手：") || line.startsWith("下手：") || line.startsWith("N+") ->
-                                                        senteName = line.substringAfter("：").substringAfter("+").trim()
-                                                    line.startsWith("後手：") || line.startsWith("上手：") || line.startsWith("N-") ->
-                                                        goteName = line.substringAfter("：").substringAfter("-").trim()
+                                                    line.startsWith("先手：") || line.startsWith("下手：") || line.startsWith(
+                                                        "N+"
+                                                    ) ->
+                                                        senteName = line.substringAfter("：")
+                                                            .substringAfter("+").trim()
+
+                                                    line.startsWith("後手：") || line.startsWith("上手：") || line.startsWith(
+                                                        "N-"
+                                                    ) ->
+                                                        goteName = line.substringAfter("：")
+                                                            .substringAfter("-").trim()
                                                 }
                                             }
                                             // 新しいルートノードを作成してリセット
-                                            val freshRoot = KifuNode(createInitialBoard(), emptyMap(), emptyMap(), Player.SENTE)
+                                            val freshRoot = KifuNode(
+                                                createInitialBoard(),
+                                                emptyMap(),
+                                                emptyMap(),
+                                                Player.SENTE
+                                            )
                                             rootNode = freshRoot
 
                                             // CSA, KIF, USI を自動判別
                                             val newNode = when {
-                                                text.lines().any { it.matches(Regex("^[+-]\\d{4}[A-Z]{2}.*")) } ->
+                                                text.lines()
+                                                    .any { it.matches(Regex("^[+-]\\d{4}[A-Z]{2}.*")) } ->
                                                     parseCsa(text, freshRoot)
+
                                                 text.contains("手数----") || text.contains("手合割") ||
                                                         text.contains("▲") || text.contains("△") ->
                                                     parseKif(text, freshRoot)
+
                                                 text.contains("moves") ->
                                                     parseKifu(text, freshRoot)
+
                                                 else ->
-                                                    parseKif(text, freshRoot) ?: parseKifu(text, freshRoot)
+                                                    parseKif(text, freshRoot) ?: parseKifu(
+                                                        text,
+                                                        freshRoot
+                                                    )
                                             }
                                             if (newNode != null) {
                                                 initialNode = freshRoot
@@ -373,7 +422,10 @@ class MainActivity : ComponentActivity() {
                                             // 本手順ノード列を更新（クリップボードから読み込んだ棋譜が本手順）
                                             val line = mutableListOf<KifuNode>()
                                             var n: KifuNode? = freshRoot
-                                            while (n != null) { line.add(n); n = n.children.firstOrNull { !it.isPvBranch } }
+                                            while (n != null) {
+                                                line.add(n); n =
+                                                    n.children.firstOrNull { !it.isPvBranch }
+                                            }
                                             mainLineNodes = line
                                             getSharedPreferences("kifu_prefs", MODE_PRIVATE).edit()
                                                 .putString("sente_name", senteName)
@@ -407,9 +459,9 @@ class MainActivity : ComponentActivity() {
                                 }
 
                                 // 解析ボタン
-                                Button(
+                                OutlinedButton(
                                     onClick = {
-                                        if (!isEngineReady) return@Button
+                                        if (!isEngineReady) return@OutlinedButton
                                         if (isAnalysisMode) {
                                             isAnalysisMode = false
                                             engine.sendCommand("stop")
@@ -434,29 +486,31 @@ class MainActivity : ComponentActivity() {
                                 ) {
                                     if (!isEngineReady) {
                                         LoadingIndicator(
-                                            modifier = Modifier.padding(end = 16.dp),
+                                            modifier = Modifier
+                                                .size(28.dp)
+                                            //.padding(end = 8.dp),
+                                            ,
                                             color = MaterialTheme.colorScheme.primary
                                         )
-//                                        Text(
-//                                            text = "エンジン準備中",
-//                                            style = MaterialTheme.typography.titleMedium,
-//                                            color = MaterialTheme.colorScheme.onSurfaceVariant
-//                                        )
                                     } else {
                                         if (isAnalysisMode) {
-                                            Icon(
-                                                painter = painterResource(id = R.drawable.stop_circle_24px),
-                                                contentDescription = "停止",
-                                                modifier = Modifier.size(28.dp)
-                                            )
-                                            Text(
-                                                text = "停止",
-                                                style = MaterialTheme.typography.labelSmall,
-                                                maxLines = 1,
-                                                modifier = Modifier.basicMarquee()// アイコンの下に小さく文字を添える
-                                            )
-                                        }
-                                        else {
+                                            Column(
+                                                horizontalAlignment = Alignment.CenterHorizontally,
+                                                verticalArrangement = Arrangement.Center
+                                            ) {
+                                                Icon(
+                                                    painter = painterResource(id = R.drawable.stop_circle_24px),
+                                                    contentDescription = "停止",
+                                                    modifier = Modifier.size(28.dp)
+                                                )
+                                                Text(
+                                                    text = "停止",
+                                                    style = MaterialTheme.typography.labelSmall,
+                                                    maxLines = 1,
+                                                    modifier = Modifier.basicMarquee()// アイコンの下に小さく文字を添える
+                                                )
+                                            }
+                                        } else {
                                             Column(
                                                 horizontalAlignment = Alignment.CenterHorizontally,
                                                 verticalArrangement = Arrangement.Center
@@ -478,7 +532,7 @@ class MainActivity : ComponentActivity() {
                                     }
                                 }
                                 //反転ボタン
-                                Button(
+                                OutlinedButton(
                                     modifier = Modifier
                                         .weight(0.3f)
                                         .height(72.dp),
@@ -486,7 +540,7 @@ class MainActivity : ComponentActivity() {
                                         isBoardFlipped = !isBoardFlipped
                                         showMenu = false
                                     }
-                                ){
+                                ) {
                                     Column(
                                         horizontalAlignment = Alignment.CenterHorizontally,
                                         verticalArrangement = Arrangement.Center
@@ -512,6 +566,7 @@ class MainActivity : ComponentActivity() {
                                         val targetNode = mainLineNodes.getOrElse(targetCount) {
                                             mainLineNodes.lastOrNull() ?: initialNode
                                         }
+
                                         // isPvBranch な枝（手動操作・読み筋）を全削除して本手順を保護
                                         fun removeNonMain(node: KifuNode) {
                                             node.children.removeIf { it.isPvBranch }
@@ -527,7 +582,7 @@ class MainActivity : ComponentActivity() {
                                         .height(72.dp),
                                     shape = MaterialTheme.shapes.extraLarge,
                                     border = BorderStroke(1.dp, MaterialTheme.colorScheme.outline)
-                                ){
+                                ) {
                                     Column(
                                         horizontalAlignment = Alignment.CenterHorizontally,
                                         verticalArrangement = Arrangement.Center
@@ -569,12 +624,15 @@ class MainActivity : ComponentActivity() {
                                                 initialNode.children.clear()
                                                 selectedSquare = null
                                                 selectedHandPiece = null
-                                                getSharedPreferences("kifu_prefs", MODE_PRIVATE).edit().remove("current_tree").apply()
+                                                getSharedPreferences(
+                                                    "kifu_prefs",
+                                                    MODE_PRIVATE
+                                                ).edit().remove("current_tree").apply()
                                                 showMenu = false
                                             }
                                         )
                                         DropdownMenuItem(
-                                            text = { Text("現局面から最後まで解析")},
+                                            text = { Text("現局面から最後まで解析") },
                                             onClick = {
                                                 isAutoAnalysis = !isAutoAnalysis
                                                 showMenu = false
@@ -584,445 +642,269 @@ class MainActivity : ComponentActivity() {
                                             text = { Text("エンジンの設定") },
                                             onClick = { showMenu = false }
                                         )
-                                        
+
                                     }
                                 }
                             }
                         }
                     }
                 ) { innerPadding ->
-                    Column(
-                        modifier = Modifier
-                            .fillMaxSize()
-                            .padding(innerPadding)
-                            .verticalScroll(rememberScrollState()),
-                        horizontalAlignment = Alignment.CenterHorizontally,
-                        verticalArrangement = Arrangement.Top
-                    ) {
-                        // エンジンの解析情報を表示
-                        Column(
+                    val configuration = androidx.compose.ui.platform.LocalConfiguration.current
+                    val isWideScreen = configuration.screenWidthDp >= 840
+
+                    if (isWideScreen) {
+                        // 【広幅画面：2ペインレイアウト】
+                        Row(
                             modifier = Modifier
-                                .fillMaxWidth()
-                                .padding(8.dp)
+                                .fillMaxSize()
+                                .padding(innerPadding)
+                                .padding(16.dp),
+                            horizontalArrangement = Arrangement.spacedBy(24.dp)
                         ) {
-                            pvList.entries
-                                .sortedByDescending { extractScore(it.value) }
-                                .forEach { (rank, pvText) ->
-                                Card(
-                                    modifier = Modifier
-                                        .fillMaxWidth()
-                                        .padding(vertical = 2.dp)
-                                        .clickable {
-                                            android.util.Log.d("PvTap", "currentNode before=${currentNode.moveLabel} moveCount=${currentNode.moveCount}")
-                                            val usiMoves = pvUsiList[rank] ?: return@clickable
-                                            // 読み筋の開始点（現在のノード）を記録
+                            // --- 左ペイン：解析結果 (40%幅) ---
+                            Column(
+                                modifier = Modifier
+                                    .weight(0.5f)
+                                    .fillMaxHeight()
+                                    .verticalScroll(rememberScrollState())
+                            ) {
+                                pvList.entries
+                                    .sortedByDescending { extractScore(it.value, currentPlayer) }
+                                    .forEach { (rank, pvText) ->
+                                        PvInfoCard(rank, pvText) {
+                                            val usiMoves = pvUsiList[rank] ?: return@PvInfoCard
                                             pvBranchRoot = currentNode
-                                            android.util.Log.d("PvTap", "pvBranchRoot set to ${pvBranchRoot?.moveLabel}")
-
-                                            // 一時的なノードチェーンを作成（executeMove を使わない）
                                             var node = currentNode
-                                            android.util.Log.d("PvTap", "node initial=${node.moveLabel} children before=${node.children.map { it.moveLabel }}")
-
                                             usiMoves.forEach { moveStr ->
                                                 try {
-                                                    val newNode = if (moveStr.length >= 4 && moveStr[1] == '*') {
-                                                        val type = when(moveStr[0]) {
-                                                            'P' -> PieceType.PAWN; 'L' -> PieceType.LANCE
-                                                            'N' -> PieceType.KNIGHT; 'S' -> PieceType.SILVER
-                                                            'G' -> PieceType.GOLD; 'B' -> PieceType.BISHOP
-                                                            'R' -> PieceType.ROOK; else -> return@forEach
-                                                        }
-                                                        val toCol = 9 - (moveStr[2] - '0')
-                                                        val toRow = moveStr[3] - 'a'
-                                                        val toPos = Pair(toRow, toCol)
-                                                        val label = "${moveStr[2]}${rowToKanji(moveStr[3])}${type.label}打"
-                                                        val newBoard = node.board.toMutableMap()
-                                                        var newSenteHand = node.senteHand
-                                                        var newGoteHand = node.goteHand
-                                                        if (node.currentPlayer == Player.SENTE) {
-                                                            newSenteHand = newSenteHand.toMutableMap().apply {
-                                                                val count = this[type] ?: 0
-                                                                if (count > 1) this[type] = count - 1 else remove(type)
-                                                            }
-                                                        } else {
-                                                            newGoteHand = newGoteHand.toMutableMap().apply {
-                                                                val count = this[type] ?: 0
-                                                                if (count > 1) this[type] = count - 1 else remove(type)
-                                                            }
-                                                        }
-                                                        newBoard[toPos] = Piece(type, node.currentPlayer)
-                                                        val nextPlayer = if (node.currentPlayer == Player.SENTE) Player.GOTE else Player.SENTE
-                                                        KifuNode(newBoard, newSenteHand, newGoteHand, nextPlayer, label, node, null, toPos,
-                                                            isPvBranch = true)
-                                                    } else if (moveStr.length >= 4) {
-                                                        val fromCol = 9 - (moveStr[0] - '0')
-                                                        val fromRow = moveStr[1] - 'a'
-                                                        val toCol = 9 - (moveStr[2] - '0')
-                                                        val toRow = moveStr[3] - 'a'
-                                                        val promote = moveStr.endsWith("+")
-                                                        val fromPos = Pair(fromRow, fromCol)
-                                                        val toPos = Pair(toRow, toCol)
-                                                        val piece = node.board[fromPos] ?: return@forEach
-                                                        val captured = node.board[toPos]
-                                                        val newBoard = node.board.toMutableMap()
-                                                        var newSenteHand = node.senteHand
-                                                        var newGoteHand = node.goteHand
-                                                        if (captured != null && captured.type != PieceType.KING) {
-                                                            if (piece.owner == Player.SENTE) {
-                                                                newSenteHand = newSenteHand.toMutableMap().apply {
-                                                                    this[captured.type] = (this[captured.type] ?: 0) + 1
-                                                                }
-                                                            } else {
-                                                                newGoteHand = newGoteHand.toMutableMap().apply {
-                                                                    this[captured.type] = (this[captured.type] ?: 0) + 1
-                                                                }
-                                                            }
-                                                        }
-                                                        newBoard.remove(fromPos)
-                                                        newBoard[toPos] = piece.copy(isPromoted = promote || piece.isPromoted)
-                                                        val label = formatUsiMove(moveStr, node.board)
-                                                        val nextPlayer = if (node.currentPlayer == Player.SENTE) Player.GOTE else Player.SENTE
-                                                        KifuNode(newBoard, newSenteHand, newGoteHand, nextPlayer, label, node, fromPos, toPos,
-                                                            isPvBranch = true)
-                                                    } else return@forEach
-
-                                                    node.children.add(newNode) // ★修正：先頭(0)ではなく末尾に追加して、本手順(0)を守る
-                                                    android.util.Log.d("PvTap", "added ${newNode.moveLabel} isPv=${newNode.isPvBranch} to ${node.moveLabel}")
-                                                    node = newNode
-                                                } catch (e: Exception) {}
-                                            }
-                                            currentNode = pvBranchRoot!!.children.firstOrNull() ?: currentNode
-                                        },
-                                    colors = CardDefaults.cardColors(
-                                        containerColor = when(rank) {
-                                            1 -> MaterialTheme.colorScheme.primaryContainer
-                                            2 -> MaterialTheme.colorScheme.secondaryContainer
-                                            else -> MaterialTheme.colorScheme.tertiaryContainer
-                                        }
-                                    )
-                                ) {
-                                    Text(
-                                        text = pvText,
-                                        modifier = Modifier.padding(8.dp),
-                                        style = MaterialTheme.typography.bodySmall
-                                    )
-                                }
-                            }
-                        }
-
-
-
-                        // 後手の持ち駒（逆向き）
-                        HandView(
-                            hand = goteHand,
-                            player = Player.GOTE,
-                            selectedPieceType = if (selectedHandPiece?.first == Player.GOTE) selectedHandPiece?.second else null,
-                            onPieceClick = { type ->
-                                if (currentPlayer == Player.GOTE) {
-                                    selectedSquare = null
-                                    selectedHandPiece = if (selectedHandPiece == Pair(Player.GOTE, type)) null else Pair(Player.GOTE, type)
-                                }
-                            }
-                        )
-                        
-                        ShogiBoard(
-                            boardState = boardState,
-                            selectedSquare = selectedSquare,
-                            lastFrom = currentNode.lastFrom,
-                            lastTo = currentNode.lastTo,
-                            isFlipped = isBoardFlipped,
-                            onSquareClick = { row, col ->
-                                //val clickedPos = Pair(row, col)
-                                val actualRow = if (isBoardFlipped) 8 - row else row
-                                val actualCol = if (isBoardFlipped) 8 - col else col
-                                val clickedPos = Pair(row, col)
-                                val currentHandSelection = selectedHandPiece
-                                if (currentHandSelection != null) {
-                                    // 持ち駒を打つ
-                                    if (boardState[clickedPos] == null && currentHandSelection.first == currentPlayer) {
-                                        val (player, type) = currentHandSelection
-                                        
-                                        // 二歩のチェック
-                                        var isNifu = false
-                                        if (type == PieceType.PAWN) {
-                                            for (r in 0 until 9) {
-                                                val p = boardState[Pair(r, col)]
-                                                if (p != null && p.owner == player && p.type == PieceType.PAWN && !p.isPromoted) {
-                                                    isNifu = true
-                                                    break
+                                                    val newBoard = applyUsiMove(moveStr, node.board)
+                                                    val label = formatUsiMove(moveStr, node.board)
+                                                    val sym =
+                                                        if (node.currentPlayer == Player.SENTE) "▲" else "△"
+                                                    val next =
+                                                        if (node.currentPlayer == Player.SENTE) Player.GOTE else Player.SENTE
+                                                    val toPos = Pair(
+                                                        moveStr[3] - 'a',
+                                                        9 - (moveStr[2] - '0')
+                                                    )
+                                                    val fromPos = if (moveStr[1] != '*') Pair(
+                                                        moveStr[1] - 'a',
+                                                        9 - (moveStr[0] - '0')
+                                                    ) else null
+                                                    val pv = KifuNode(
+                                                        newBoard,
+                                                        node.senteHand,
+                                                        node.goteHand,
+                                                        next,
+                                                        "$sym$label",
+                                                        node,
+                                                        fromPos,
+                                                        toPos,
+                                                        isPvBranch = true
+                                                    )
+                                                    node.children.add(pv); node = pv
+                                                } catch (e: Exception) {
                                                 }
                                             }
-                                        }
-
-                                        if (!isNifu) {
-                                            val moveLabel = "${9 - col}${rowToKanji('a' + row)}${type.label}打"
-                                            executeMove(null, clickedPos, Piece(type, player), null, false, currentNode, moveLabel, isPvBranch = true) { nextNode ->
-                                                currentNode = nextNode
-                                            }
-                                            selectedHandPiece = null
+                                            currentNode =
+                                                pvBranchRoot?.children?.firstOrNull() ?: currentNode
                                         }
                                     }
-                                } else {
-                                    val currentSelected = selectedSquare
-                                    if (currentSelected == null) {
-                                        // 駒を選択
-                                        val piece = boardState[clickedPos]
-                                        if (piece != null && piece.owner == currentPlayer) {
-                                            selectedSquare = clickedPos
-                                        }
-                                    } else {
-                                        if (currentSelected == clickedPos) {
-                                            // 選択解除
-                                            selectedSquare = null
-                                        } else {
-                                            val movingPiece = boardState[currentSelected]
-                                            val targetPiece = boardState[clickedPos]
+                            }
 
-                                            if (movingPiece != null && movingPiece.owner == currentPlayer && movingPiece.owner != targetPiece?.owner) {
-                                                // 駒の動きがルール通りかチェック
-                                                if (isValidMovePattern(currentSelected, clickedPos, movingPiece, boardState)) {
-                                                    // 成り判定
-                                                    val canPromote = !movingPiece.isPromoted && movingPiece.type.promotedLabel != null
-                                                    val isSenteZone = clickedPos.first <= 2 || currentSelected.first <= 2
-                                                    val isGoteZone = clickedPos.first >= 6 || currentSelected.first >= 6
-                                                    val enteringZone = if (movingPiece.owner == Player.SENTE) isSenteZone else isGoteZone
-                                                    
-                                                    // 強制成り判定 (歩・香は1段目、桂は1-2段目)
-                                                    var mustPromote = false
-                                                    if (movingPiece.type == PieceType.PAWN || movingPiece.type == PieceType.LANCE) {
-                                                        if (movingPiece.owner == Player.SENTE && clickedPos.first == 0) mustPromote = true
-                                                        if (movingPiece.owner == Player.GOTE && clickedPos.first == 8) mustPromote = true
-                                                    } else if (movingPiece.type == PieceType.KNIGHT) {
-                                                        if (movingPiece.owner == Player.SENTE && clickedPos.first <= 1) mustPromote = true
-                                                        if (movingPiece.owner == Player.GOTE && clickedPos.first >= 7) mustPromote = true
-                                                    }
-
-                                                    if (mustPromote) {
-                                                        val moveLabel = formatUsiMove("${9-currentSelected.second}${('a'+currentSelected.first)}${9-clickedPos.second}${('a'+clickedPos.first)}+", boardState)
-                                                        executeMove(currentSelected, clickedPos, movingPiece, targetPiece, true, currentNode, moveLabel, isPvBranch = true) { nextNode ->
-                                                            currentNode = nextNode
-                                                        }
-                                                    } else if (canPromote && enteringZone) {
-                                                        promotionPendingBy = PendingMove(currentSelected, clickedPos, movingPiece, targetPiece)
-                                                    } else {
-                                                        val moveLabel = formatUsiMove("${9-currentSelected.second}${('a'+currentSelected.first)}${9-clickedPos.second}${('a'+clickedPos.first)}", boardState)
-                                                        executeMove(currentSelected, clickedPos, movingPiece, targetPiece, false, currentNode, moveLabel, isPvBranch = true) { nextNode ->
-                                                            currentNode = nextNode
-                                                        }
-                                                    }
-                                                    selectedSquare = null
-                                                }
-                                            } else if (targetPiece?.owner == movingPiece?.owner) {
-                                                // 自分の別の駒を選択し直す
-                                                selectedSquare = clickedPos
-                                            }
-                                        }
-                                    }
-                                }
-                            },
-                            modifier = Modifier.padding(16.dp)
-                        )
-
-                        // 局面操作スライダー
-                        Column(modifier = Modifier.padding(horizontal = 16.dp).fillMaxWidth()) {
-                            val turnMark = if (currentNode.moveCount > 0) {
-                                if (currentNode.parent?.currentPlayer == Player.SENTE) "▲" else "△"
-                            } else ""
-                            Text(
-                                text = "${currentNode.moveCount}手目: $turnMark${currentNode.moveLabel}",
-                                style = MaterialTheme.typography.bodyMedium,
-                                modifier = Modifier.align(Alignment.CenterHorizontally)
-                            )
-                            Row(
-                                verticalAlignment = Alignment.CenterVertically,
-                                horizontalArrangement = Arrangement.spacedBy(8.dp)
+                            // --- 右ペイン：将棋盤と操作系 (60%幅) ---
+                            Column(
+                                modifier = Modifier
+                                    .weight(0.5f)
+                                    .fillMaxHeight()
+                                    .verticalScroll(rememberScrollState()),
+                                horizontalAlignment = Alignment.CenterHorizontally,
+                                verticalArrangement = Arrangement.spacedBy(8.dp)
                             ) {
-                                // 一手戻るボタン
-                                FilledTonalIconButton(
-                                    onClick = {
-                                        currentNode.parent?.let { currentNode = it }
-                                    },
-                                    enabled = currentNode.parent != null,
-                                    modifier = Modifier
-                                        .size(48.dp)
-                                        .repeatingClickable(enabled = currentNode.parent != null) {
-                                            currentNode.parent?.let { currentNode = it }
-                                        },
-                                    shapes = IconButtonDefaults.shapes()
-                                ) {
-                                    Icon(
-                                        imageVector = Icons.AutoMirrored.Filled.ArrowBack,
-                                        contentDescription = "一手戻る"
-                                    )
-                                }
-//                                RepeatingFilledTonalIconButton(
-//                                    enabled = currentNode.parent != null,
-//                                    onClick = {
-//                                        currentNode.parent?.let { currentNode = it }
-//                                    }
-//                                ) {
-//                                    Icon(
-//                                        imageVector = Icons.AutoMirrored.Filled.ArrowBack,
-//                                        contentDescription = "一手戻る"
-//                                    )
-//                                }
+                                // 反転状態に応じて表示順を決定
+                                val topPlayer = if (isBoardFlipped) Player.SENTE else Player.GOTE
+                                val bottomPlayer = if (isBoardFlipped) Player.GOTE else Player.SENTE
 
-                                Slider(
-                                    value = currentNode.moveCount.toFloat(),
-                                    onValueChange = { pos ->
-                                        val targetIndex = pos.toInt()
-                                        currentPath.getOrNull(targetIndex)?.let { currentNode = it }
-                                    },
-                                    valueRange = 0f..(currentPath.size - 1).coerceAtLeast(1).toFloat(),
-                                    steps = if (currentPath.size > 2) currentPath.size - 2 else 0,
-                                    modifier = Modifier.weight(1f)
+                                PlayerStatusSection(
+                                    playerName = if (topPlayer == Player.SENTE) senteName else goteName,
+                                    mark = if (topPlayer == Player.SENTE) "▲" else "△",
+                                    isActive = currentPlayer == topPlayer,
+                                    hand = if (topPlayer == Player.SENTE) senteHand else goteHand,
+                                    selectedHandPiece = selectedHandPiece,
+                                    currentPlayer = currentPlayer
+                                ) { selectedSquare = null; selectedHandPiece = it }
+
+                                ShogiBoard(
+                                    boardState = boardState,
+                                    selectedSquare = selectedSquare,
+                                    lastFrom = currentNode.lastFrom,
+                                    lastTo = currentNode.lastTo,
+                                    isFlipped = isBoardFlipped,
+                                    onSquareClick = { r, c -> /* Square Click Logic */ },
+                                    modifier = Modifier.sizeIn(
+                                        maxWidth = 500.dp,
+                                        maxHeight = 500.dp
+                                    )
                                 )
 
-                                // 一手進むボタン
-                                FilledTonalIconButton(
-                                    onClick = {
-                                        currentNode.children.firstOrNull()?.let { currentNode = it }
-                                    },
-                                    enabled = currentNode.children.isNotEmpty(),
-                                    modifier = Modifier
-                                        .size(48.dp)
-                                        .repeatingClickable(enabled = currentNode.children.isNotEmpty()) {
-                                            currentNode.children.firstOrNull()?.let { currentNode = it }
-                                        },
-                                    shapes = IconButtonDefaults.shapes()
-                                ) {
-                                    Icon(
-                                        imageVector = Icons.AutoMirrored.Filled.ArrowForward,
-                                        contentDescription = "一手進む"
-                                    )
-                                }
+                                PlayerStatusSection(
+                                    playerName = if (bottomPlayer == Player.SENTE) senteName else goteName,
+                                    mark = if (bottomPlayer == Player.SENTE) "▲" else "△",
+                                    isActive = currentPlayer == bottomPlayer,
+                                    hand = if (bottomPlayer == Player.SENTE) senteHand else goteHand,
+                                    selectedHandPiece = selectedHandPiece,
+                                    currentPlayer = currentPlayer
+                                ) { selectedSquare = null; selectedHandPiece = it }
+
+                                SliderControlSection(currentNode, currentPath) { currentNode = it }
                             }
                         }
-                        
-                        // 先手の持ち駒
-                        HandView(
-                            hand = senteHand,
-                            player = Player.SENTE,
-                            selectedPieceType = if (selectedHandPiece?.first == Player.SENTE) selectedHandPiece?.second else null,
-                            onPieceClick = { type ->
-                                if (currentPlayer == Player.SENTE) {
-                                    selectedSquare = null
-                                    selectedHandPiece = if (selectedHandPiece == Pair(Player.SENTE, type)) null else Pair(Player.SENTE, type)
-                                }
-                            }
-                        )
-
-                        Row(
-                            modifier = Modifier.fillMaxWidth(),
-                            horizontalArrangement = Arrangement.spacedBy(8.dp)
+                    } else {
+                        // 【通常画面：縦1列レイアウト】
+                        Column(
+                            modifier = Modifier
+                                .fillMaxSize()
+                                .padding(innerPadding)
+                                .verticalScroll(rememberScrollState()),
+                            horizontalAlignment = Alignment.CenterHorizontally,
+                            verticalArrangement = Arrangement.Top
                         ) {
-                            // 先手情報
-                            var sentePulsed by remember { mutableStateOf(false) }
+                            // 解析情報（上部）
+                            Column(modifier = Modifier.padding(8.dp)) {
+                                pvList.entries
+                                    .sortedByDescending { extractScore(it.value, currentPlayer) }
+                                    .forEach { (rank, pvText) ->
+                                        PvInfoCard(rank, pvText) {
+                                            val usiMoves = pvUsiList[rank] ?: return@PvInfoCard
+                                            pvBranchRoot = currentNode
+                                            var node = currentNode
+                                            usiMoves.forEach { moveStr ->
+                                                try {
+                                                    val newBoard = applyUsiMove(moveStr, node.board)
+                                                    val label = formatUsiMove(moveStr, node.board)
+                                                    val sym =
+                                                        if (node.currentPlayer == Player.SENTE) "▲" else "△"
+                                                    val next =
+                                                        if (node.currentPlayer == Player.SENTE) Player.GOTE else Player.SENTE
+                                                    val toPos = Pair(
+                                                        moveStr[3] - 'a',
+                                                        9 - (moveStr[2] - '0')
+                                                    )
+                                                    val fromPos = if (moveStr[1] != '*') Pair(
+                                                        moveStr[1] - 'a',
+                                                        9 - (moveStr[0] - '0')
+                                                    ) else null
+                                                    val pv = KifuNode(
+                                                        newBoard,
+                                                        node.senteHand,
+                                                        node.goteHand,
+                                                        next,
+                                                        "$sym$label",
+                                                        node,
+                                                        fromPos,
+                                                        toPos,
+                                                        isPvBranch = true
+                                                    )
+                                                    node.children.add(pv); node = pv
+                                                } catch (e: Exception) {
+                                                }
+                                            }
+                                            currentNode =
+                                                pvBranchRoot?.children?.firstOrNull() ?: currentNode
+                                        }
+                                    }
+                            }
 
-                            LaunchedEffect(currentPlayer) {
-                                if (currentPlayer == Player.SENTE) {
-                                    sentePulsed = true
-                                    kotlinx.coroutines.delay(200)  // 次のcurrentPlayer変化でキャンセルされる
-                                    sentePulsed = false
-                                } else {
-                                    sentePulsed = false  // 即座に戻す
-                                }
-                            }
-                            @OptIn(ExperimentalMaterial3ExpressiveApi::class)
-                            FilledTonalIconButton(
-                                onClick = {},
-                                shapes = IconButtonDefaults.shapes(
-                                    shape = if (!sentePulsed)
-                                        MaterialTheme.shapes.small
-                                    else
-                                        MaterialTheme.shapes.largeIncreased       // 手番でないとき: 角ばった
-                                ),
-                                colors = IconButtonDefaults.filledTonalIconButtonColors(
-                                    containerColor = if (currentPlayer == Player.SENTE)
-                                        MaterialTheme.colorScheme.primaryContainer
-                                    else
-                                        MaterialTheme.colorScheme.surfaceVariant,
-                                    contentColor = if (currentPlayer == Player.SENTE)
-                                        MaterialTheme.colorScheme.onPrimaryContainer
-                                    else
-                                        MaterialTheme.colorScheme.onSurfaceVariant
-                                ),
-                                modifier = Modifier
-                                    .weight(1f)
-                                    .padding(top = 8.dp)
-                                    .height(48.dp)
-                            ) {
-                                PlayerInfoContent(senteName, "先手▲")
-                            }
+                            // 盤面と操作（中央）
+                            val topPlayer = if (isBoardFlipped) Player.SENTE else Player.GOTE
+                            val bottomPlayer = if (isBoardFlipped) Player.GOTE else Player.SENTE
 
-                            // 後手情報
-                            var gotePulsed by remember { mutableStateOf(false) }
+                            PlayerStatusSection(
+                                playerName = if (topPlayer == Player.SENTE) senteName else goteName,
+                                mark = if (topPlayer == Player.SENTE) "▲" else "△",
+                                isActive = currentPlayer == topPlayer,
+                                hand = if (topPlayer == Player.SENTE) senteHand else goteHand,
+                                selectedHandPiece = selectedHandPiece,
+                                currentPlayer = currentPlayer
+                            ) { selectedSquare = null; selectedHandPiece = it }
 
-                            LaunchedEffect(currentPlayer) {
-                                if (currentPlayer == Player.GOTE) {
-                                    gotePulsed = true
-                                    kotlinx.coroutines.delay(200)
-                                    gotePulsed = false
-                                } else {
-                                    gotePulsed = false
-                                }
-                            }
-                            @OptIn(ExperimentalMaterial3ExpressiveApi::class)
-                            FilledTonalIconButton(
-                                onClick = {},
-                                shapes = IconButtonDefaults.shapes(
-                                    shape = if (gotePulsed)
-                                        MaterialTheme.shapes.small
-                                    else
-                                        MaterialTheme.shapes.largeIncreased       // 手番でないとき: 角ばった
-                                ),
-                                colors = IconButtonDefaults.filledTonalIconButtonColors(
-                                    containerColor = if (currentPlayer == Player.GOTE)
-                                        MaterialTheme.colorScheme.primaryContainer
-                                    else
-                                        MaterialTheme.colorScheme.surfaceVariant,
-                                    contentColor = if (currentPlayer == Player.GOTE)
-                                        MaterialTheme.colorScheme.onPrimaryContainer
-                                    else
-                                        MaterialTheme.colorScheme.onSurfaceVariant
-                                ),
-                                modifier = Modifier
-                                    .weight(1f)
-                                    .padding(top = 8.dp)
-                                    .height(48.dp)
-                            ) {
-                                PlayerInfoContent(goteName, "後手△")
-                            }
+                            ShogiBoard(
+                                boardState = boardState,
+                                selectedSquare = selectedSquare,
+                                lastFrom = currentNode.lastFrom,
+                                lastTo = currentNode.lastTo,
+                                isFlipped = isBoardFlipped,
+                                onSquareClick = { r, c -> /* Square Click Logic */ },
+                                modifier = Modifier.padding(16.dp)
+                            )
+
+                            PlayerStatusSection(
+                                playerName = if (bottomPlayer == Player.SENTE) senteName else goteName,
+                                mark = if (bottomPlayer == Player.SENTE) "▲" else "△",
+                                isActive = currentPlayer == bottomPlayer,
+                                hand = if (bottomPlayer == Player.SENTE) senteHand else goteHand,
+                                selectedHandPiece = selectedHandPiece,
+                                currentPlayer = currentPlayer
+                            ) { selectedSquare = null; selectedHandPiece = it }
+
+                            SliderControlSection(currentNode, currentPath) { currentNode = it }
+
+
                         }
-                    }
-
-                    // 成り選択ダイアログ
-                    promotionPendingBy?.let { move ->
-                        AlertDialog(
-                            onDismissRequest = { /* キャンセル不可 */ },
-                            title = { Text("成り") },
-                            text = { Text("成りますか？") },
-                            confirmButton = {
-                                TextButton(onClick = {
-                                    val label = formatUsiMove("${9-move.from.second}${('a'+move.from.first)}${9-move.to.second}${('a'+move.to.first)}+", boardState)
-                                    executeMove(move.from, move.to, move.piece, move.captured, true, currentNode, label, isPvBranch = true) { nextNode ->
-                                        currentNode = nextNode
-                                    }
-                                    promotionPendingBy = null
-                                }) { Text("成る") }
-                            },
-                            dismissButton = {
-                                TextButton(onClick = {
-                                    val label = formatUsiMove("${9-move.from.second}${('a'+move.from.first)}${9-move.to.second}${('a'+move.to.first)}", boardState)
-                                    executeMove(move.from, move.to, move.piece, move.captured, false, currentNode, label, isPvBranch = true) { nextNode ->
-                                        currentNode = nextNode
-                                    }
-                                    promotionPendingBy = null
-                                }) { Text("成らない") }
-                            }
-                        )
                     }
                 }
+
+                // 成り選択ダイアログ
+                promotionPendingBy?.let { move ->
+                    AlertDialog(
+                        onDismissRequest = { /* キャンセル不可 */ },
+                        title = { Text("成り") },
+                        text = { Text("成りますか？") },
+                        confirmButton = {
+                            TextButton(onClick = {
+                                val label = formatUsiMove(
+                                    "${9 - move.from.second}${('a' + move.from.first)}${9 - move.to.second}${('a' + move.to.first)}+",
+                                    boardState
+                                )
+                                executeMove(
+                                    move.from,
+                                    move.to,
+                                    move.piece,
+                                    move.captured,
+                                    true,
+                                    currentNode,
+                                    label,
+                                    isPvBranch = true
+                                ) { nextNode ->
+                                    currentNode = nextNode
+                                }
+                                promotionPendingBy = null
+                            }) { Text("成る") }
+                        },
+                        dismissButton = {
+                            TextButton(onClick = {
+                                val label = formatUsiMove(
+                                    "${9 - move.from.second}${('a' + move.from.first)}${9 - move.to.second}${('a' + move.to.first)}",
+                                    boardState
+                                )
+                                executeMove(
+                                    move.from,
+                                    move.to,
+                                    move.piece,
+                                    move.captured,
+                                    false,
+                                    currentNode,
+                                    label,
+                                    isPvBranch = true
+                                ) { nextNode ->
+                                    currentNode = nextNode
+                                }
+                                promotionPendingBy = null
+                            }) { Text("成らない") }
+                        }
+                    )
+                }
+
 
                 // 拡大表示用のオーバーレイ
                 if (isOutputExpanded) {
@@ -1047,27 +929,17 @@ class MainActivity : ComponentActivity() {
                             elevation = CardDefaults.cardElevation(defaultElevation = 24.dp)
                         ) {
                             Column(modifier = Modifier.fillMaxSize()) {
-//                                Row(
-//                                    modifier = Modifier
-//                                        .fillMaxWidth()
-//                                        .padding(16.dp),
-//                                    horizontalArrangement = Arrangement.SpaceBetween,
-//                                    verticalAlignment = Alignment.CenterVertically
-//                                ) {
-////                                    Text(
-////                                        text = "",
-////                                        style = MaterialTheme.typography.titleMedium
-////                                    )
-////                                    TextButton(onClick = { isOutputExpanded = false }) {
-////                                        Text("閉じる")
-////                                    }
-//                                }
                                 Box(
                                     modifier = Modifier
                                         .weight(1f)
                                         .fillMaxWidth()
                                         .verticalScroll(rememberScrollState())
-                                        .padding(start = 16.dp, end = 16.dp, top = 16.dp, bottom = 16.dp)
+                                        .padding(
+                                            start = 16.dp,
+                                            end = 16.dp,
+                                            top = 16.dp,
+                                            bottom = 16.dp
+                                        )
                                 ) {
                                     Text(
                                         text = engineOutput,
@@ -1082,8 +954,13 @@ class MainActivity : ComponentActivity() {
         }
     }
 
+
     // USIのinfo行を解析して読みやすい文字列にする
-    private fun parseInfo(line: String, currentBoard: Map<Pair<Int, Int>, Piece>, turn: Player): String {
+    private fun parseInfo(
+        line: String,
+        currentBoard: Map<Pair<Int, Int>, Piece>,
+        turn: Player
+    ): String {
         // 正規表現や複数の空白に対応するために正規化
         val parts = line.split(Regex("\\s+"))
         var depth = ""
@@ -1104,8 +981,22 @@ class MainActivity : ComponentActivity() {
                                 // 常に先手視点に固定 (後手番なら符号を反転)
                                 val v = if (turn == Player.SENTE) rawV else -rawV
                                 val sign = if (v > 0) "+" else ""
-                                "評価: $sign$v"
+
+                                val status = when {
+                                    v in -200..200 -> "互角"
+                                    v in 201..500 -> "先手指しやすい"
+                                    v in -500..-201 -> "後手指しやすい"
+                                    v in 501..1000 -> "先手有利"
+                                    v in -1000..-501 -> "後手有利"
+                                    v in 1001..2000 -> "先手優勢"
+                                    v in -2000..-1001 -> "後手優勢"
+                                    v > 2000 -> "先手勝勢"
+                                    v < -2000 -> "後手勝勢"
+                                    else -> ""
+                                }
+                                "評価: $sign$v ($status)"
                             }
+
                             "mate" -> {
                                 val v = value.toIntOrNull() ?: 0
                                 // 詰みの判定も先手視点の勝ち/負けに整理
@@ -1116,10 +1007,12 @@ class MainActivity : ComponentActivity() {
                                 } else ""
                                 if (winner.isNotEmpty()) "${kotlin.math.abs(v)}手詰（$winner）" else "詰み"
                             }
+
                             else -> ""
                         }
                     }
                 }
+
                 "pv" -> {
                     val pvMoves = parts.drop(i + 1)
                     if (pvMoves.isNotEmpty()) {
@@ -1156,7 +1049,7 @@ class MainActivity : ComponentActivity() {
         if (usiMove.length < 4) return usiMove
 
         fun colToNum(c: Char) = c.toString()
-        fun rowToKanji(c: Char) = when(c) {
+        fun rowToKanji(c: Char) = when (c) {
             'a' -> "一"; 'b' -> "二"; 'c' -> "三"; 'd' -> "四"; 'e' -> "五"
             'f' -> "六"; 'g' -> "七"; 'h' -> "八"; 'i' -> "九"
             else -> c.toString()
@@ -1165,7 +1058,7 @@ class MainActivity : ComponentActivity() {
         return try {
             if (usiMove[1] == '*') {
                 // 持ち駒を打つ (P*5e → 5五歩打)
-                val piece = when(usiMove[0]) {
+                val piece = when (usiMove[0]) {
                     'P' -> "歩"; 'L' -> "香"; 'N' -> "桂"; 'S' -> "銀"
                     'G' -> "金"; 'B' -> "角"; 'R' -> "飛"
                     else -> usiMove[0].toString()
@@ -1192,21 +1085,26 @@ class MainActivity : ComponentActivity() {
     }
 
     // Assetsから評価関数をコピー
-    private fun copyAssetsToFileDir(filename: String, subDir: String = "") {
+    private fun copyAssetsToFileDir(
+        filename: String,
+        subDir: String = "",
+        baseDir: java.io.File,
+        assetManager: android.content.res.AssetManager  // ← 追加
+    ) {
         val targetDir = if (subDir.isNotEmpty()) {
-            val dir = java.io.File(filesDir, subDir)
+            val dir = java.io.File(baseDir, subDir)
             if (!dir.exists()) dir.mkdirs()
             dir
         } else {
-            filesDir
+            baseDir
         }
-        
+
         val file = java.io.File(targetDir, filename)
         // 開発中は毎回上書きコピーするようにして、確実に最新のファイルを届ける
-        // if (file.exists()) return 
+        // if (file.exists()) return
 
         try {
-            assets.open(filename).use { inputStream ->
+            assetManager.open(filename).use { inputStream ->  // assets → assetManager
                 file.outputStream().use { outputStream ->
                     inputStream.copyTo(outputStream)
                 }
@@ -1225,7 +1123,7 @@ class MainActivity : ComponentActivity() {
         goteHand: Map<PieceType, Int>
     ): String {
         val sfen = StringBuilder()
-        
+
         // 1. 盤面
         for (row in 0 until 9) {
             var emptyCount = 0
@@ -1256,10 +1154,10 @@ class MainActivity : ComponentActivity() {
             if (emptyCount > 0) sfen.append(emptyCount)
             if (row < 8) sfen.append('/')
         }
-        
+
         // 2. 手番
         sfen.append(if (turn == Player.SENTE) " b " else " w ")
-        
+
         // 3. 持ち駒
         if (senteHand.isEmpty() && goteHand.isEmpty()) {
             sfen.append("-")
@@ -1281,7 +1179,7 @@ class MainActivity : ComponentActivity() {
             appendHand(senteHand, true)
             appendHand(goteHand, false)
         }
-        
+
         // 4. 手数（ここでは1固定）
         sfen.append(" 1")
         val result = sfen.toString()
@@ -1330,9 +1228,9 @@ class MainActivity : ComponentActivity() {
         val dc = c2 - c1
         val adr = Math.abs(dr)
         val adc = Math.abs(dc)
-        
+
         val forward = if (piece.owner == Player.SENTE) -1 else 1
-        
+
         // 飛び道具の経路に駒がないかチェック
         fun isPathClear(): Boolean {
             val stepR = if (dr == 0) 0 else dr / adr
@@ -1354,6 +1252,7 @@ class MainActivity : ComponentActivity() {
                     val isKingMove = adr <= 1 && adc <= 1
                     isRookMove || isKingMove
                 }
+
                 PieceType.BISHOP -> { // 馬
                     val isBishopMove = (adr == adc) && isPathClear()
                     val isKingMove = adr <= 1 && adc <= 1
@@ -1377,12 +1276,14 @@ class MainActivity : ComponentActivity() {
                     val isBackDiagonal = dr == -forward && adc == 1
                     isForward3 || isBackDiagonal
                 }
+
                 PieceType.GOLD -> {
                     val isForward3 = dr == forward && adc <= 1
                     val isSideways = dr == 0 && adc == 1
                     val isBackward = dr == -forward && dc == 0
                     isForward3 || isSideways || isBackward
                 }
+
                 PieceType.KING -> adr <= 1 && adc <= 1
                 PieceType.ROOK -> (dr == 0 || dc == 0) && isPathClear()
                 PieceType.BISHOP -> (adr == adc) && isPathClear()
@@ -1448,8 +1349,10 @@ class MainActivity : ComponentActivity() {
         newBoard[to] = piece.copy(isPromoted = promote || piece.isPromoted)
 
         val nextPlayer = if (parentNode.currentPlayer == Player.SENTE) Player.GOTE else Player.SENTE
-        val newNode = KifuNode(newBoard, newSenteHand, newGoteHand, nextPlayer, label, parentNode, from, to,
-            isPvBranch = isPvBranch)
+        val newNode = KifuNode(
+            newBoard, newSenteHand, newGoteHand, nextPlayer, label, parentNode, from, to,
+            isPvBranch = isPvBranch
+        )
 
         parentNode.children.add(newNode)
         saveKifuTree(getRootNode(parentNode))
@@ -1464,7 +1367,7 @@ class MainActivity : ComponentActivity() {
 
     private fun saveKifuTree(root: KifuNode) {
         val json = kifuTreeToJson(root)
-        getSharedPreferences("kifu_prefs", MODE_PRIVATE).edit()
+        getSharedPreferences("kifu_prefs", android.content.Context.MODE_PRIVATE).edit()
             .putString("current_tree", json.toString()).apply()
     }
 
@@ -1472,7 +1375,7 @@ class MainActivity : ComponentActivity() {
         val json = JSONObject()
         json.put("turn", node.currentPlayer.name)
         json.put("label", node.moveLabel)
-        
+
         // 盤面
         val boardJson = JSONObject()
         node.board.forEach { (pos, piece) ->
@@ -1494,8 +1397,14 @@ class MainActivity : ComponentActivity() {
         json.put("goteHand", goteHandJson)
 
         // ハイライト
-        json.put("lastFrom", if (node.lastFrom != null) "${node.lastFrom.first},${node.lastFrom.second}" else null)
-        json.put("lastTo", if (node.lastTo != null) "${node.lastTo.first},${node.lastTo.second}" else null)
+        json.put(
+            "lastFrom",
+            if (node.lastFrom != null) "${node.lastFrom.first},${node.lastFrom.second}" else null
+        )
+        json.put(
+            "lastTo",
+            if (node.lastTo != null) "${node.lastTo.first},${node.lastTo.second}" else null
+        )
 
         // 子要素 (再帰)
         val childrenJson = JSONArray()
@@ -1527,11 +1436,15 @@ class MainActivity : ComponentActivity() {
         val gHandJson = json.getJSONObject("goteHand")
         gHandJson.keys().forEach { goteHand[PieceType.valueOf(it)] = gHandJson.getInt(it) }
 
-        val lastFrom = json.optString("lastFrom", null)?.takeIf { it != "null" && it.isNotEmpty() }?.split(",")?.let { Pair(it[0].toInt(), it[1].toInt()) }
-        val lastTo = json.optString("lastTo", null)?.takeIf { it != "null" && it.isNotEmpty() }?.split(",")?.let { Pair(it[0].toInt(), it[1].toInt()) }
+        val lastFrom =
+            json.optString("lastFrom", null)?.takeIf { it != "null" && it.isNotEmpty() }?.split(",")
+                ?.let { Pair(it[0].toInt(), it[1].toInt()) }
+        val lastTo =
+            json.optString("lastTo", null)?.takeIf { it != "null" && it.isNotEmpty() }?.split(",")
+                ?.let { Pair(it[0].toInt(), it[1].toInt()) }
 
         val node = KifuNode(
-            board, senteHand, goteHand, 
+            board, senteHand, goteHand,
             Player.valueOf(json.getString("turn")),
             json.getString("label"),
             parent,
@@ -1574,7 +1487,8 @@ class MainActivity : ComponentActivity() {
                     val colChar = movePart[0]
                     val rowChar = movePart[1]
                     val col = "１２３４５６７８９".indexOf(colChar).takeIf { it != -1 } ?: return@forEach
-                    val row = "一二三四五六七八九".indexOf(rowChar).takeIf { it != -1 } ?: return@forEach
+                    val row =
+                        "一二三四五六七八九".indexOf(rowChar).takeIf { it != -1 } ?: return@forEach
                     Pair(row, 8 - col)
                 }
                 lastToPos = toPos
@@ -1590,6 +1504,7 @@ class MainActivity : ComponentActivity() {
                         val fRow = fromMatch.groupValues[2].toInt() - 1
                         Pair(fRow, fCol)
                     }
+
                     else -> return@forEach
                 }
 
@@ -1599,7 +1514,8 @@ class MainActivity : ComponentActivity() {
                         .replace(Regex("^同[　 ]?"), "")
                         .replace(Regex("^[１-９][一二三四五六七八九]"), "")
                         .replace("打", "").trim()
-                    val type = PieceType.entries.find { pieceStr.contains(it.label) } ?: return@forEach
+                    val type =
+                        PieceType.entries.find { pieceStr.contains(it.label) } ?: return@forEach
                     Piece(type, tempNode.currentPlayer)
                 } else {
                     tempNode.board[fromPos] ?: return@forEach
@@ -1625,8 +1541,10 @@ class MainActivity : ComponentActivity() {
                     toPos, piece, tempNode.board[toPos],
                     promote, tempNode, label
                 ) { tempNode = it }
-                android.util.Log.d("parseKif",
-                    "手目=${tempNode.moveCount} label=${tempNode.moveLabel} 先手持ち駒=${tempNode.senteHand} 後手持ち駒=${tempNode.goteHand}")
+                android.util.Log.d(
+                    "parseKif",
+                    "手目=${tempNode.moveCount} label=${tempNode.moveLabel} 先手持ち駒=${tempNode.senteHand} 後手持ち駒=${tempNode.goteHand}"
+                )
             } catch (e: Exception) {
                 android.util.Log.e("parseKif", "Error: ${e.message}, line: $line")
             }
@@ -1635,11 +1553,17 @@ class MainActivity : ComponentActivity() {
     }
 
     // 指定された場所へ指定された駒を動かせる元のマスを探す
-    private fun findSourceSquare(to: Pair<Int, Int>, label: String, node: KifuNode): Pair<Int, Int>? {
+    private fun findSourceSquare(
+        to: Pair<Int, Int>,
+        label: String,
+        node: KifuNode
+    ): Pair<Int, Int>? {
         if (label.contains("打")) return Pair(-1, -1) // 駒打ちフラグ
-        
-        val type = PieceType.entries.find { label.contains(it.label) || (it.promotedLabel != null && label.contains(it.promotedLabel)) } ?: return null
-        
+
+        val type = PieceType.entries.find {
+            label.contains(it.label) || (it.promotedLabel != null && label.contains(it.promotedLabel))
+        } ?: return null
+
         // 盤面上の自分の駒をしらみつぶしに探す
         for ((pos, piece) in node.board) {
             if (piece.owner == node.currentPlayer) {
@@ -1647,7 +1571,8 @@ class MainActivity : ComponentActivity() {
                 val pieceMatches = if (label.contains("成") && !piece.isPromoted) {
                     piece.type == type // 成る前の種類が一致
                 } else {
-                    val currentLabel = if (piece.isPromoted) piece.type.promotedLabel ?: piece.type.label else piece.type.label
+                    val currentLabel = if (piece.isPromoted) piece.type.promotedLabel
+                        ?: piece.type.label else piece.type.label
                     label.contains(currentLabel)
                 }
 
@@ -1658,11 +1583,17 @@ class MainActivity : ComponentActivity() {
                 }
             }
         }
-        
+
         // どこにも見つからなければ、それは駒打ちの可能性がある（「打」と書いていなくても）
-        if (node.currentPlayer == Player.SENTE && node.senteHand.containsKey(type)) return Pair(-1, -1)
-        if (node.currentPlayer == Player.GOTE && node.goteHand.containsKey(type)) return Pair(-1, -1)
-        
+        if (node.currentPlayer == Player.SENTE && node.senteHand.containsKey(type)) return Pair(
+            -1,
+            -1
+        )
+        if (node.currentPlayer == Player.GOTE && node.goteHand.containsKey(type)) return Pair(
+            -1,
+            -1
+        )
+
         return null
     }
 
@@ -1670,10 +1601,10 @@ class MainActivity : ComponentActivity() {
     private fun parseCsa(text: String, root: KifuNode): KifuNode? {
         val lines = text.lines()
         var tempNode = root
-        
+
         // CSAの指し手は +2726FU や -8384FU のような形式
         val moveRegex = Regex("^[+-](\\d{2})(\\d{2})([A-Z]{2})")
-        
+
         lines.forEach { line ->
             val match = moveRegex.find(line.trim())
             if (match != null) {
@@ -1681,14 +1612,14 @@ class MainActivity : ComponentActivity() {
                     val fromStr = match.groupValues[1]
                     val toStr = match.groupValues[2]
                     val pieceStr = match.groupValues[3]
-                    
+
                     // 座標変換 (CSA 1-9 -> 0-8)
                     val fromCol = if (fromStr == "00") null else 9 - (fromStr[0] - '0')
                     val fromRow = if (fromStr == "00") null else (fromStr[1] - '0') - 1
-                    
+
                     val toCol = 9 - (toStr[0] - '0')
                     val toRow = (toStr[1] - '0') - 1
-                    
+
                     val (type, isPromoted) = when (pieceStr) {
                         "FU" -> PieceType.PAWN to false
                         "KY" -> PieceType.LANCE to false
@@ -1712,14 +1643,17 @@ class MainActivity : ComponentActivity() {
                     } else {
                         tempNode.board[Pair(fromRow!!, fromCol!!)] ?: return@forEach
                     }
-                    
+
                     val captured = tempNode.board[Pair(toRow, toCol)]
                     val label = if (fromStr == "00") {
                         "${toStr[0]}${rowToKanji('a' + toRow)}${type.label}打"
                     } else {
-                        formatUsiMove("${fromStr[0]}${('a' + fromRow!!)}${toStr[0]}${('a' + toRow)}${if (isPromoted && !movingPiece.isPromoted) "+" else ""}", tempNode.board)
+                        formatUsiMove(
+                            "${fromStr[0]}${('a' + fromRow!!)}${toStr[0]}${('a' + toRow)}${if (isPromoted && !movingPiece.isPromoted) "+" else ""}",
+                            tempNode.board
+                        )
                     }
-                    
+
                     executeMove(
                         if (fromStr == "00") null else Pair(fromRow!!, fromCol!!),
                         Pair(toRow, toCol),
@@ -1731,7 +1665,8 @@ class MainActivity : ComponentActivity() {
                     ) {
                         tempNode = it
                     }
-                } catch (e: Exception) {}
+                } catch (e: Exception) {
+                }
             }
         }
         return if (tempNode != root) tempNode else null
@@ -1740,15 +1675,16 @@ class MainActivity : ComponentActivity() {
     // USI形式の棋譜を解析してツリーを構築
     private fun parseKifu(text: String, root: KifuNode): KifuNode? {
         // "position startpos moves 7g7f 3c3d..." などの形式に対応
-        val movesPart = if (text.contains("moves")) text.substringAfter("moves").trim() else text.trim()
+        val movesPart =
+            if (text.contains("moves")) text.substringAfter("moves").trim() else text.trim()
         val moves = movesPart.split(Regex("\\s+")).filter { it.length >= 4 }
-        
+
         var tempNode = root
         moves.forEach { moveStr ->
             try {
                 if (moveStr[1] == '*') {
                     // 駒打ち
-                    val type = when(moveStr[0]) {
+                    val type = when (moveStr[0]) {
                         'P' -> PieceType.PAWN; 'L' -> PieceType.LANCE; 'N' -> PieceType.KNIGHT
                         'S' -> PieceType.SILVER; 'G' -> PieceType.GOLD; 'B' -> PieceType.BISHOP; 'R' -> PieceType.ROOK
                         else -> return@forEach
@@ -1756,13 +1692,23 @@ class MainActivity : ComponentActivity() {
                     val toCol = 9 - (moveStr[2] - '0')
                     val toRow = moveStr[3] - 'a'
                     val label = "${moveStr[2]}${rowToKanji(moveStr[3])}${type.label}打"
-                    
-                    executeMove(null, Pair(toRow, toCol), Piece(type, tempNode.currentPlayer), null, false, tempNode, label) {
+
+                    executeMove(
+                        null,
+                        Pair(toRow, toCol),
+                        Piece(type, tempNode.currentPlayer),
+                        null,
+                        false,
+                        tempNode,
+                        label
+                    ) {
                         tempNode = it
                     }
                     // parseKif の executeMove 呼び出し後に追加
-                    android.util.Log.d("parseKif",
-                        "手目=${tempNode.moveCount} 先手持ち駒=${tempNode.senteHand} 後手持ち駒=${tempNode.goteHand}")
+                    android.util.Log.d(
+                        "parseKif",
+                        "手目=${tempNode.moveCount} 先手持ち駒=${tempNode.senteHand} 後手持ち駒=${tempNode.goteHand}"
+                    )
                 } else {
                     // 通常移動
                     val fromCol = 9 - (moveStr[0] - '0')
@@ -1770,24 +1716,35 @@ class MainActivity : ComponentActivity() {
                     val toCol = 9 - (moveStr[2] - '0')
                     val toRow = moveStr[3] - 'a'
                     val promote = moveStr.endsWith("+")
-                    
+
                     val piece = tempNode.board[Pair(fromRow, fromCol)] ?: return@forEach
                     val captured = tempNode.board[Pair(toRow, toCol)]
                     val label = formatUsiMove(moveStr, tempNode.board)
-                    
-                    executeMove(Pair(fromRow, fromCol), Pair(toRow, toCol), piece, captured, promote, tempNode, label) {
+
+                    executeMove(
+                        Pair(fromRow, fromCol),
+                        Pair(toRow, toCol),
+                        piece,
+                        captured,
+                        promote,
+                        tempNode,
+                        label
+                    ) {
                         tempNode = it
                     }
                     // parseKif の executeMove 呼び出し後に追加
-                    android.util.Log.d("parseKif",
-                        "手目=${tempNode.moveCount} 先手持ち駒=${tempNode.senteHand} 後手持ち駒=${tempNode.goteHand}")
+                    android.util.Log.d(
+                        "parseKif",
+                        "手目=${tempNode.moveCount} 先手持ち駒=${tempNode.senteHand} 後手持ち駒=${tempNode.goteHand}"
+                    )
                 }
-            } catch (e: Exception) {}
+            } catch (e: Exception) {
+            }
         }
         return if (tempNode != root) tempNode else null
     }
 
-    private fun rowToKanji(c: Char) = when(c) {
+    private fun rowToKanji(c: Char) = when (c) {
         'a' -> "一"; 'b' -> "二"; 'c' -> "三"; 'd' -> "四"; 'e' -> "五"
         'f' -> "六"; 'g' -> "七"; 'h' -> "八"; 'i' -> "九"
         else -> c.toString()
@@ -1804,7 +1761,7 @@ class MainActivity : ComponentActivity() {
         return try {
             if (usiMove[1] == '*') {
                 // 持ち駒を打つ (P*5e)
-                val type = when(usiMove[0]) {
+                val type = when (usiMove[0]) {
                     'P' -> PieceType.PAWN; 'L' -> PieceType.LANCE; 'N' -> PieceType.KNIGHT
                     'S' -> PieceType.SILVER; 'G' -> PieceType.GOLD
                     'B' -> PieceType.BISHOP; 'R' -> PieceType.ROOK
@@ -1835,6 +1792,7 @@ class MainActivity : ComponentActivity() {
             board
         }
     }
+
 }
 
 @Composable
@@ -1909,11 +1867,139 @@ fun Modifier.repeatingClickable(
         )
     }
 }
-fun extractScore(pvText: String): Int {
-    val mateLine = pvText.lines().find { it.contains("手詰") }
-    if (mateLine != null) return Int.MAX_VALUE  // 詰みは最大値
 
+fun extractScore(pvText: String, turn: Player): Int {
+    // 詰みの判定
+    val mateLine = pvText.lines().find { it.contains("手詰") }
+    if (mateLine != null) {
+        val isSenteWin = mateLine.contains("先手勝ち")
+        return if (turn == Player.SENTE) {
+            if (isSenteWin) Int.MAX_VALUE else Int.MIN_VALUE
+        } else {
+            if (!isSenteWin) Int.MAX_VALUE else Int.MIN_VALUE
+        }
+    }
+
+    // 評価値の抽出
     val scoreLine = pvText.lines().find { it.startsWith("評価:") } ?: return 0
-    val v = scoreLine.replace("評価:", "").trim().toIntOrNull() ?: 0
-    return kotlin.math.abs(v)
+    // 「評価: +123 (互角)」から "+123" を取り出す
+    val vStr = scoreLine.substringAfter("評価:").trim().split(" ")[0]
+    val v = vStr.toIntOrNull() ?: 0
+
+    // 手番の人にとって良い順にするため、後手番なら符号を反転させて評価する
+    return if (turn == Player.SENTE) v else -v
+}
+
+@Composable
+fun PvInfoCard(rank: Int, pvText: String, onTap: () -> Unit) {
+    Card(
+        modifier = Modifier
+            .fillMaxWidth()
+            .padding(vertical = 4.dp)
+            .clickable { onTap() },
+        colors = CardDefaults.cardColors(containerColor = MaterialTheme.colorScheme.surfaceVariant)
+    ) {
+        Column(modifier = Modifier.padding(8.dp)) {
+            Text(
+                text = pvText,
+                style = MaterialTheme.typography.bodySmall,
+                modifier = Modifier.padding(top = 2.dp)
+            )
+        }
+    }
+}
+
+@Composable
+fun PlayerStatusSection(
+    playerName: String,
+    mark: String,
+    isActive: Boolean,
+    hand: Map<PieceType, Int>,
+    selectedHandPiece: Pair<Player, PieceType>?,
+    currentPlayer: Player,
+    onSelected: (Pair<Player, PieceType>?) -> Unit
+) {
+    val player = if (mark == "▲") Player.SENTE else Player.GOTE
+    Column(modifier = Modifier.fillMaxWidth()) {
+        PlayerInfoContent(name = playerName, mark = mark)
+        HandView(
+            hand = hand,
+            player = player,
+            selectedPieceType = selectedHandPiece?.takeIf { it.first == player }?.second,
+            onPieceClick = { type -> if (isActive) onSelected(Pair(player, type)) }
+        )
+    }
+}
+
+@Composable
+fun SliderControlSection(
+    currentNode: KifuNode,
+    currentPath: List<KifuNode>,
+    onNodeChange: (KifuNode) -> Unit
+) {
+    val currentIndex = currentPath.indexOf(currentNode).coerceAtLeast(0)
+    val maxIndex = (currentPath.size - 1).coerceAtLeast(0)
+
+    Column(
+        modifier = Modifier
+            .fillMaxWidth()
+            .padding(horizontal = 8.dp),
+        horizontalAlignment = Alignment.CenterHorizontally
+    ) {
+        Text(
+            text = "${currentNode.moveCount}手目 / ${maxIndex}手",
+            style = MaterialTheme.typography.bodySmall,
+            color = MaterialTheme.colorScheme.onSurfaceVariant
+        )
+        Row(
+            modifier = Modifier.fillMaxWidth(),
+            verticalAlignment = Alignment.CenterVertically,
+            horizontalArrangement = Arrangement.spacedBy(4.dp)
+        ) {
+            Box(
+                modifier = Modifier
+                    .size(36.dp)
+                    .clip(RoundedCornerShape(50))
+                    .background(MaterialTheme.colorScheme.secondaryContainer)
+                    .repeatingClickable(enabled = currentIndex > 0) {
+                        if (currentIndex > 0) onNodeChange(currentPath[currentIndex - 1])
+                    },
+                contentAlignment = Alignment.Center
+            ) {
+                Icon(
+                    Icons.AutoMirrored.Filled.ArrowBack,
+                    contentDescription = "前へ",
+                    tint = MaterialTheme.colorScheme.onSecondaryContainer,
+                    modifier = Modifier.size(20.dp)
+                )
+            }
+            Slider(
+                value = currentIndex.toFloat(),
+                onValueChange = { v ->
+                    val idx = v.toInt().coerceIn(0, maxIndex)
+                    onNodeChange(currentPath[idx])
+                },
+                valueRange = 0f..maxIndex.toFloat().coerceAtLeast(1f),
+                steps = (maxIndex - 1).coerceAtLeast(0),
+                modifier = Modifier.weight(1f)
+            )
+            Box(
+                modifier = Modifier
+                    .size(36.dp)
+                    .clip(RoundedCornerShape(50))
+                    .background(MaterialTheme.colorScheme.secondaryContainer)
+                    .repeatingClickable(enabled = currentIndex < maxIndex) {
+                        if (currentIndex < maxIndex) onNodeChange(currentPath[currentIndex + 1])
+                    },
+                contentAlignment = Alignment.Center
+            ) {
+                Icon(
+                    Icons.AutoMirrored.Filled.ArrowForward,
+                    contentDescription = "次へ",
+                    tint = MaterialTheme.colorScheme.onSecondaryContainer,
+                    modifier = Modifier.size(20.dp)
+                )
+            }
+        }
+    }
 }
