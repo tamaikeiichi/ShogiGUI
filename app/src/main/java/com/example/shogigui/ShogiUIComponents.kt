@@ -1,5 +1,7 @@
 package com.example.shogigui
 
+import android.R.attr.tag
+import android.util.Log
 import androidx.compose.foundation.Canvas
 import androidx.compose.foundation.background
 import androidx.compose.foundation.clickable
@@ -100,12 +102,21 @@ fun SliderControlSection(
                 Canvas(modifier = Modifier.fillMaxWidth().height(64.dp).padding(horizontal = 10.dp)) {
                     val width = size.width; val height = size.height; val centerY = height / 2f
                     val stepX = width / maxIndex.toFloat().coerceAtLeast(1f)
-                    drawLine(color = Color.Gray.copy(alpha = 0.2f), start = androidx.compose.ui.geometry.Offset(0f, centerY), end = androidx.compose.ui.geometry.Offset(width, centerY), strokeWidth = 1f)
+                    drawLine(color = Color.Gray.copy(alpha = 0.2f),
+                        start = androidx.compose.ui.geometry.Offset(0f, centerY),
+                        end = androidx.compose.ui.geometry.Offset(width, centerY),
+                        strokeWidth = 1f)
                     evalHistory.forEach { (moveCount, score) ->
                         if (moveCount <= maxIndex) {
                             val x = moveCount * stepX; val normalized = (score.toFloat() / 2000f).coerceIn(-1f, 1f)
                             val y = centerY - (normalized * centerY)
-                            drawLine(color = if (score >= 0) Color.Red.copy(alpha = 0.4f) else Color.Blue.copy(alpha = 0.4f), start = androidx.compose.ui.geometry.Offset(x, centerY), end = androidx.compose.ui.geometry.Offset(x, y), strokeWidth = stepX.coerceAtLeast(2f))
+                            Log.d("evalHistory_debug", "手数=$moveCount score=$score y=$y")
+                            drawLine(color = if (score >= 0)
+                                Color.Red.copy(alpha = 0.4f)
+                            else Color.Blue.copy(alpha = 0.4f),
+                                start = androidx.compose.ui.geometry.Offset(x, centerY),
+                                end = androidx.compose.ui.geometry.Offset(x, y),
+                                strokeWidth = stepX.coerceAtLeast(2f))
                         }
                     }
                 }

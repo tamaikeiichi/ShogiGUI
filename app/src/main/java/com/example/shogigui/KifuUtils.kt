@@ -91,6 +91,7 @@ fun extractScore(pvText: String, turn: Player): Int {
     }
     val scoreLine = pvText.lines().find { it.startsWith("評価:") } ?: return 0
     val vStr = scoreLine.substringAfter("評価:").trim().split(" ")[0]
+    //return vStr.replace("+", "").toIntOrNull() ?: 0
     val v = vStr.toIntOrNull() ?: 0
     return if (turn == Player.SENTE) v else -v
 }

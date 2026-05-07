@@ -121,12 +121,15 @@ class MainActivity : ComponentActivity() {
                             Regex("""pv (.+)$""").find(line)?.let { match ->
                                 pvUsiList[rank] = match.groupValues[1].trim().split(" ")
                             }
-                            val parsed = parseInfo(line, analysisBoard, analysisTurn)
+                            val parsed = parseInfo(line, analysisBoard, Player.SENTE)
+                            Log.d("parseInfo_input", "turn=$analysisTurn line=$line")
                             if (parsed.contains("評価") || parsed.contains("読み筋")) {
                                 pvList[rank] = parsed
                                 engineOutput = pvList.toSortedMap().values.joinToString("\n---\n")
                                 if (rank == 1 && parsed.contains("評価")) {
+                                    Log.d("extractScore_check", "analysisTurn=$analysisTurn currentNode.currentPlayer=${currentNode.currentPlayer}")
                                     evalHistory[analysisMoveCount] = extractScore(parsed, analysisTurn)
+                                    Log.d("evalHistory_Turn", "手数=$analysisMoveCount turn=$analysisTurn score=${evalHistory[analysisMoveCount]}")
                                 }
                             }
                         }
@@ -135,23 +138,23 @@ class MainActivity : ComponentActivity() {
 
                 SideEffect { engine.onOutputReceived = { runOnUiThread { processOutput(it) } } }
 
-                LaunchedEffect(isAnalysisMode, isAutoAnalysis, isEngineReady) {
-                    if ((isAnalysisMode || isAutoAnalysis) && isEngineReady) {
-                        snapshotFlow { currentNode }.collect { node ->
-                            engine.sendCommand("stop")
-                            isPvStale = true
-                            analysisTurn = node.currentPlayer
-                            analysisMoveCount = node.moveCount
-                            analysisBoard = node.board
-                            delay(100)
-                            val sfen = boardToSfen(node.board, node.currentPlayer, node.senteHand, node.goteHand)
-                            if (sfen.isNotEmpty()) {
-                                engine.sendCommand("position sfen $sfen")
-                                engine.sendCommand("go movetime $analysisTimeMs")
-                            }
-                        }
-                    }
-                }
+//                LaunchedEffect(isAnalysisMode, isAutoAnalysis, isEngineReady, currentNode) {
+//                    if (!(isAnalysisMode || isAutoAnalysis) || !isEngineReady) return@LaunchedEffect
+//
+//                    // 最初に現在の局面情報をキャプチャ
+//                    analysisTurn = currentNode.currentPlayer
+//                    analysisMoveCount = currentNode.moveCount
+//                    analysisBoard = currentNode.board
+//
+//                    engine.sendCommand("stop")
+//                    delay(100)
+//                    val sfen = boardToSfen(currentNode.board, currentNode.currentPlayer, currentNode.senteHand, currentNode.goteHand)
+//                    if (sfen.isNotEmpty()) {
+//                        engine.sendCommand("position sfen $sfen")
+//                        engine.sendCommand("go movetime $analysisTimeMs")
+//                    }
+//
+//                }
 
                 LaunchedEffect(Unit) {
                     delay(1000)
@@ -161,19 +164,46 @@ class MainActivity : ComponentActivity() {
                     engine.start(filesDir.absolutePath)
                 }
 
-                LaunchedEffect(isAutoAnalysis, isEngineReady) {
-                    if (!isAutoAnalysis || !isEngineReady) return@LaunchedEffect
+//                LaunchedEffect(isAutoAnalysis, isEngineReady) {
+//                    if (!isAutoAnalysis || !isEngineReady) return@LaunchedEffect
+//                    var node = currentNode
+//                    while (isAutoAnalysis) {
+//                        currentNode = node
+//                        Log.d("autoAnalysis", "手数=${node.moveCount} player=${node.currentPlayer}")
+//                        delay(analysisTimeMs)
+//                        val next = node.children.firstOrNull()
+//                        if (next == null) { isAutoAnalysis = false; break }
+//                        node = next
+//                    }
+//                    engine.sendCommand("stop")
+//                }
+                LaunchedEffect(isAutoAnalysis, isAnalysisMode, isEngineReady) {
+                    if (!(isAnalysisMode || isAutoAnalysis) || !isEngineReady) return@LaunchedEffect
+
                     var node = currentNode
-                    while (isAutoAnalysis) {
+                    do {
                         currentNode = node
-                        delay(analysisTimeMs + 300L)
+                        analysisTurn = node.currentPlayer
+                        analysisMoveCount = node.moveCount
+                        analysisBoard = node.board
+
+                        engine.sendCommand("stop")
+                        delay(100)
+                        val sfen = boardToSfen(node.board, node.currentPlayer, node.senteHand, node.goteHand)
+                        if (sfen.isNotEmpty()) {
+                            engine.sendCommand("position sfen $sfen")
+                            engine.sendCommand("go movetime $analysisTimeMs")
+                        }
+                        delay(analysisTimeMs + 100)
+
+                        if (!isAutoAnalysis) break
                         val next = node.children.firstOrNull()
                         if (next == null) { isAutoAnalysis = false; break }
                         node = next
-                    }
+                    } while (isAutoAnalysis)
+
                     engine.sendCommand("stop")
                 }
-
                 Scaffold(
                     modifier = Modifier.fillMaxSize(),
                     bottomBar = {
