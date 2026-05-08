@@ -93,10 +93,17 @@ fun SliderControlSection(
             horizontalArrangement = Arrangement.spacedBy(4.dp)
         ) {
             Box(
-                modifier = Modifier.size(36.dp).clip(RoundedCornerShape(50)).background(MaterialTheme.colorScheme.secondaryContainer)
+                modifier = Modifier
+                    .size(36.dp)
+                    .clip(RoundedCornerShape(50))
+                    .background(MaterialTheme.colorScheme.secondaryContainer)
                     .repeatingClickable(enabled = currentIndex > 0) { if (currentIndex > 0) onNodeChange(currentPath[currentIndex - 1]) },
                 contentAlignment = Alignment.Center
-            ) { Icon(Icons.AutoMirrored.Filled.ArrowBack, contentDescription = "前へ", tint = MaterialTheme.colorScheme.onSecondaryContainer, modifier = Modifier.size(20.dp)) }
+            ) {
+                Icon(Icons.AutoMirrored.Filled.ArrowBack,
+                    contentDescription = "前へ",
+                    tint = MaterialTheme.colorScheme.onSecondaryContainer,
+                    modifier = Modifier.size(20.dp)) }
 
             Box(modifier = Modifier.weight(1f), contentAlignment = Alignment.Center) {
                 Canvas(modifier = Modifier.fillMaxWidth().height(64.dp).padding(horizontal = 10.dp)) {
@@ -120,7 +127,12 @@ fun SliderControlSection(
                         }
                     }
                 }
-                Slider(value = currentIndex.toFloat(), onValueChange = { v -> onNodeChange(currentPath[v.toInt().coerceIn(0, maxIndex)]) }, valueRange = 0f..maxIndex.toFloat().coerceAtLeast(1f), steps = (maxIndex - 1).coerceAtLeast(0), modifier = Modifier.fillMaxWidth().alpha(0.45f))
+                Slider(
+                    value = currentIndex.toFloat(),
+                    onValueChange = { v -> onNodeChange(currentPath[v.toInt().coerceIn(0, maxIndex)]) },
+                    valueRange = 0f..maxIndex.toFloat().coerceAtLeast(1f),
+                    steps = (maxIndex - 1).coerceAtLeast(0),
+                    modifier = Modifier.fillMaxWidth().alpha(0.45f))
             }
 
             Box(

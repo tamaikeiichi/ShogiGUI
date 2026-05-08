@@ -24,6 +24,7 @@ fun parseInfo(
                     score = when (type) {
                         "cp" -> {
                             val rawV = value.toIntOrNull() ?: 0
+                            //先手視点でスコアを変換
                             val v = if (turn == Player.SENTE) rawV else -rawV
                             val sign = if (v > 0) "+" else ""
                             val status = when {
@@ -60,6 +61,7 @@ fun parseInfo(
                     var tempTurn = turn
                     var tempBoard = currentBoard
                     pvMoves.take(6).forEach { moveStr ->
+                        Log.d("pv_move", "move=$moveStr turn=$tempTurn")
                         val symbol = if (tempTurn == Player.SENTE) "▲" else "△"
                         val formatted = formatUsiMove(moveStr, tempBoard)
                         formattedMoves.add("$symbol$formatted")
@@ -93,7 +95,8 @@ fun extractScore(pvText: String, turn: Player): Int {
     val vStr = scoreLine.substringAfter("評価:").trim().split(" ")[0]
     //return vStr.replace("+", "").toIntOrNull() ?: 0
     val v = vStr.toIntOrNull() ?: 0
-    return if (turn == Player.SENTE) v else -v
+    //return if (turn == Player.SENTE) v else -v
+    return v
 }
 
 fun formatUsiMove(usiMove: String, board: Map<Pair<Int, Int>, Piece>? = null): String {
@@ -369,7 +372,11 @@ fun parseKifu(text: String, root: KifuNode, onSaveRequested: (KifuNode) -> Unit)
     return if (tempNode != root) tempNode else null
 }
 
-fun applyUsiMove(usiMove: String, board: Map<Pair<Int, Int>, Piece>, player: Player = Player.SENTE): Map<Pair<Int, Int>, Piece> {
+fun applyUsiMove(
+    usiMove: String,
+    board: Map<Pair<Int, Int>, Piece>,
+    player: Player = Player.SENTE
+): Map<Pair<Int, Int>, Piece> {
     if (usiMove.length < 4) return board
     val newBoard = board.toMutableMap()
     return try {
@@ -379,6 +386,7 @@ fun applyUsiMove(usiMove: String, board: Map<Pair<Int, Int>, Piece>, player: Pla
                 'S' -> PieceType.SILVER; 'G' -> PieceType.GOLD
                 'B' -> PieceType.BISHOP; 'R' -> PieceType.ROOK; else -> return board
             }
+            Log.d("applyUsiMove_player", player.toString())
             newBoard[Pair(usiMove[3] - 'a', 9 - (usiMove[2] - '0'))] = Piece(type, player)
             newBoard
         } else {
@@ -396,4 +404,52 @@ fun rowToKanji(c: Char) = when (c) {
     'a' -> "一"; 'b' -> "二"; 'c' -> "三"; 'd' -> "四"; 'e' -> "五"
     'f' -> "六"; 'g' -> "七"; 'h' -> "八"; 'i' -> "九"
     else -> c.toString()
+}
+
+// (row, col) → USI 座標文字列 (例: row=0,col=6 → "3a")
+private fun squareToUsi(pos: Pair<Int, Int>): String {
+    val file = 9 - pos.second
+    val rank = 'a' + pos.first
+    return "$file$rank"
+}
+
+// 親ノード→子ノード間の USI 手を再構成する。取得できない場合は null を返す
+fun nodeToUsiMove(parent: KifuNode, child: KifuNode): String? {
+    val to = child.lastTo ?: return null
+    val toStr = squareToUsi(to)
+    val from = child.lastFrom
+    return if (from == null) {
+        // 打ち駒：どの駒が減ったかで判定
+        val player = parent.currentPlayer
+        val parentHand = if (player == Player.SENTE) parent.senteHand else parent.goteHand
+        val childHand  = if (player == Player.SENTE) child.senteHand  else child.goteHand
+        val dropped = PieceType.entries.find { (parentHand[it] ?: 0) > (childHand[it] ?: 0) } ?: return null
+        val ch = when (dropped) {
+            PieceType.ROOK   -> "R"; PieceType.BISHOP -> "B"; PieceType.GOLD   -> "G"
+            PieceType.SILVER -> "S"; PieceType.KNIGHT -> "N"; PieceType.LANCE  -> "L"
+            PieceType.PAWN   -> "P"; else -> return null
+        }
+        "$ch*$toStr"
+    } else {
+        val fromStr = squareToUsi(from)
+        val promoted = !(parent.board[from]?.isPromoted ?: false) && (child.board[to]?.isPromoted ?: false)
+        "$fromStr$toStr${if (promoted) "+" else ""}"
+    }
+}
+
+// rootNode から currentNode までの指し手列を使った position コマンドを生成する
+fun buildPositionCommand(rootNode: KifuNode, currentNode: KifuNode): String? {
+    val path = mutableListOf<KifuNode>()
+    var p: KifuNode? = currentNode
+    while (p != null) { path.add(0, p); if (p === rootNode) break; p = p.parent }
+    if (path.isEmpty() || path[0] !== rootNode) return null
+
+    val rootSfen = boardToSfen(rootNode.board, rootNode.currentPlayer, rootNode.senteHand, rootNode.goteHand)
+    if (rootSfen.isEmpty()) return null
+
+    val moves = mutableListOf<String>()
+    for (i in 1 until path.size) {
+        moves.add(nodeToUsiMove(path[i - 1], path[i]) ?: return null)
+    }
+    return "position sfen $rootSfen" + if (moves.isEmpty()) "" else " moves ${moves.joinToString(" ")}"
 }
