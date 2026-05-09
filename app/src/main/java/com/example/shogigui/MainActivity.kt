@@ -195,7 +195,7 @@ class MainActivity : ComponentActivity() {
 
                     // 自動解析の場合のみ次の手へ進む
                     if (isAutoAnalysis) {
-                        delay(analysisTimeMs + 200)
+                        delay(analysisTimeMs + 100)
                         val next = node.children.firstOrNull()
                         if (next == null) isAutoAnalysis = false
                         else currentNode = next
@@ -363,8 +363,14 @@ class MainActivity : ComponentActivity() {
                         text = {
                             Column {
                                 Text("思考時間: ${analysisTimeMs}ms"); Slider(value = analysisTimeMs.toFloat(), onValueChange = { analysisTimeMs = it.toLong() }, valueRange = 100f..5000f)
-                                Text("候補手: $multiPvCount"); Slider(value = multiPvCount.toFloat(), onValueChange = { multiPvCount = it.toInt() }, valueRange = 1f..10f)
-                                Text("スレッド数: $threadCount"); Slider(value = threadCount.toFloat(), onValueChange = { threadCount = it.toInt() }, valueRange = 1f..16f)
+                                Text("候補手: $multiPvCount"); Slider(value = multiPvCount.toFloat(),
+                                onValueChange = { multiPvCount = it.toInt() },
+                                valueRange = 1f..3f,
+                                    steps = 1)
+                                Text("スレッド数: $threadCount"); Slider(value = threadCount.toFloat(),
+                                onValueChange = { threadCount = it.toInt() },
+                                valueRange = 1f..8f,
+                                    steps = 6)
                             }
                         },
                         confirmButton = { 
