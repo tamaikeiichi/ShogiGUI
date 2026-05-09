@@ -32,7 +32,7 @@ class MainActivity : ComponentActivity() {
     private var savedSenteName: String = "先手"
     private var savedGoteName: String = "後手"
 
-    @OptIn(ExperimentalMaterial3Api::class)
+    @OptIn(ExperimentalMaterial3Api::class, ExperimentalMaterial3ExpressiveApi::class)
     override fun onCreate(savedInstanceState: Bundle?) {
         super.onCreate(savedInstanceState)
         enableEdgeToEdge()
@@ -361,16 +361,46 @@ class MainActivity : ComponentActivity() {
                 if (showSettingsDialog) {
                     AlertDialog(onDismissRequest = { showSettingsDialog = false }, title = { Text("設定") },
                         text = {
-                            Column {
-                                Text("思考時間: ${analysisTimeMs}ms"); Slider(value = analysisTimeMs.toFloat(), onValueChange = { analysisTimeMs = it.toLong() }, valueRange = 100f..5000f)
-                                Text("候補手: $multiPvCount"); Slider(value = multiPvCount.toFloat(),
-                                onValueChange = { multiPvCount = it.toInt() },
-                                valueRange = 1f..3f,
-                                    steps = 1)
-                                Text("スレッド数: $threadCount"); Slider(value = threadCount.toFloat(),
-                                onValueChange = { threadCount = it.toInt() },
-                                valueRange = 1f..8f,
-                                    steps = 6)
+                            Column(verticalArrangement = Arrangement.spacedBy(16.dp)) {
+                                // 思考時間
+                                Column {
+                                    Text("思考時間: ${analysisTimeMs}ms", style = MaterialTheme.typography.labelMedium)
+                                    Slider(
+                                        value = analysisTimeMs.toFloat(),
+                                        onValueChange = { analysisTimeMs = it.toLong() },
+                                        valueRange = 100f..5000f
+                                    )
+                                }
+                                
+                                // 候補手 (MultiPV)
+                                Column {
+                                    Row(verticalAlignment = Alignment.Bottom) {
+                                        Text("候補手 (MultiPV)", style = MaterialTheme.typography.labelMedium)
+                                        Spacer(modifier = Modifier.width(8.dp))
+                                        Text(text = multiPvCount.toString(), style = MaterialTheme.typography.titleLarge, color = MaterialTheme.colorScheme.primary)
+                                    }
+                                    Slider(
+                                        value = multiPvCount.toFloat(),
+                                        onValueChange = { multiPvCount = it.toInt() },
+                                        valueRange = 1f..3f,
+                                        steps = 1
+                                    )
+                                }
+                                
+                                // スレッド数
+                                Column {
+                                    Row(verticalAlignment = Alignment.Bottom) {
+                                        Text("スレッド数", style = MaterialTheme.typography.labelMedium)
+                                        Spacer(modifier = Modifier.width(8.dp))
+                                        Text(text = threadCount.toString(), style = MaterialTheme.typography.titleLarge, color = MaterialTheme.colorScheme.primary)
+                                    }
+                                    Slider(
+                                        value = threadCount.toFloat(),
+                                        onValueChange = { threadCount = it.toInt() },
+                                        valueRange = 1f..8f,
+                                        steps = 6
+                                    )
+                                }
                             }
                         },
                         confirmButton = { 
