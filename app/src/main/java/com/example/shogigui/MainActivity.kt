@@ -82,6 +82,8 @@ class MainActivity : ComponentActivity() {
                 var pinnedPvList by remember { mutableStateOf<Map<Int, String>>(emptyMap()) }
                 var pinnedPvUsiList by remember { mutableStateOf<Map<Int, List<String>>>(emptyMap()) }
                 val evalHistory = remember { mutableStateMapOf<Int, Int>() }
+                val analysisHistory = remember { mutableStateMapOf<Int, Map<Int, String>>() }
+                val analysisUsiHistory = remember { mutableStateMapOf<Int, Map<Int, List<String>>>() }
 
                 var bestmoveReceived by remember { mutableStateOf(false) }
 
@@ -126,6 +128,7 @@ class MainActivity : ComponentActivity() {
                             if (parsed.contains("評価") || parsed.contains("読み筋")) {
                                 pvList[rank] = parsed
                                 engineOutput = pvList.toSortedMap().values.joinToString("\n---\n")
+                                analysisHistory[capturedMoveCount] = pvList.toMap()
                                 if (rank == 1 && parsed.contains("評価")) {
                                     val scoreLine = parsed.lines().find { it.startsWith("評価:") }
                                     val score = scoreLine?.substringAfter("評価:")?.trim()
@@ -140,8 +143,22 @@ class MainActivity : ComponentActivity() {
                     }
                 }
 
-
-
+                LaunchedEffect(currentNode) {
+                    val moveCount = currentNode.moveCount
+                    val savedPv = analysisHistory[moveCount]
+                    val savedUsi = analysisUsiHistory[moveCount]
+                    if (savedPv != null && savedUsi != null) {
+                        pvList.clear()
+                        pvList.putAll(savedPv)
+                        pvUsiList.clear()
+                        pvUsiList.putAll(savedUsi)
+                        engineOutput = pvList.toSortedMap().values.joinToString("\n---\n")
+                    } else if (!(isAnalysisMode || isAutoAnalysis)) {
+                        pvList.clear()
+                        pvUsiList.clear()
+                        engineOutput = ""
+                    }
+                }
 
                 LaunchedEffect(Unit) {
                     delay(1000)
