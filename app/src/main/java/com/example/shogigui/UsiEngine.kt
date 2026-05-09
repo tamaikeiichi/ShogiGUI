@@ -43,13 +43,22 @@ class UsiEngine(private val dummyPath: String = "") {
         }, "USI-Engine-Thread").start()
     }
 
-    fun sendCommand(command: String) {
+    private val commandQueue = java.util.concurrent.LinkedBlockingQueue<String>()
+
+    init {
         Thread({
-            try {
-                android.util.Log.d("ShogiJNI", "sendCommand: $command") // 追加
-                nativeSendCommand(command)
-            } catch (e: Exception) {}
+            while (true) {
+                val command = commandQueue.take()  // コマンドが来るまで待機
+                try {
+                    android.util.Log.d("ShogiJNI", "sendCommand: $command")
+                    nativeSendCommand(command)
+                } catch (e: Exception) {}
+            }
         }, "USI-Command-Thread").start()
+    }
+
+    fun sendCommand(command: String) {
+        commandQueue.put(command)
     }
 
     fun stop() {

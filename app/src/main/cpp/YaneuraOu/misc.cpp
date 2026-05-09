@@ -40,6 +40,7 @@ using fun8_t = bool(*)(HANDLE, BOOL, PTOKEN_PRIVILEGES, DWORD, PTOKEN_PRIVILEGES
 #include <sstream>
 //#include <vector>
 //#include <cstdlib>
+#include <android/log.h>
 
 #if defined(__linux__) && !defined(__ANDROID__)
 #include <stdlib.h>
@@ -2429,6 +2430,7 @@ std::string StandardInput::input() {
 	cv.wait(lock, [this]{ return !cmds.empty(); });
 	auto s = cmds.front();
 	cmds.pop();
+	__android_log_print(ANDROID_LOG_DEBUG, "ShogiEngine_cpp", "Processing command: %s", s.c_str());
 	return s;
 }
 

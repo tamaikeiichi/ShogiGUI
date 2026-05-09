@@ -24,6 +24,7 @@ import org.json.JSONObject
 import com.example.shogigui.ui.theme.ShogiGUITheme
 import kotlinx.coroutines.delay
 import android.util.Log
+import androidx.compose.ui.unit.DpOffset
 
 class MainActivity : ComponentActivity() {
 
@@ -157,7 +158,7 @@ class MainActivity : ComponentActivity() {
 
                 LaunchedEffect(isAutoAnalysis, isAnalysisMode, isEngineReady, currentNode) {
                     if (!(isAnalysisMode || isAutoAnalysis) || !isEngineReady) return@LaunchedEffect
-
+                    //engine.sendCommand("stop")  // ← 先にstopを送る
                     val node = currentNode  // ← var不要、currentNodeをそのまま使う
 
                     val capturedBoard = node.board
@@ -168,14 +169,17 @@ class MainActivity : ComponentActivity() {
                         runOnUiThread { processOutput(rawLine, capturedBoard, capturedTurn, capturedMoveCount) }
                     }
                     Log.d("callback_set", "手数=$capturedMoveCount turn=$capturedTurn")
+                    engine.sendCommand("stop")
                     bestmoveReceived = false  // リセット
                     engine.sendCommand("stop")
                     // bestmove が返るまで待つ
-                    var waited = 0
-                    while (!bestmoveReceived && waited < 2000) {
-                        delay(50)
-                        waited += 50
-                    }
+//                    var waited = 0
+//                    while (!bestmoveReceived && waited < 100) {
+//                        delay(50)
+//                        waited += 50
+//                        Log.d("waiting_bestmove", "waited=$waited bestmoveReceived=$bestmoveReceived")
+//                    }
+                    Log.d("waiting_bestmove", "done waiting bestmoveReceived=$bestmoveReceived")
                     //delay(100)
                     pvList.clear()
                     pvUsiList.clear()
@@ -214,6 +218,22 @@ class MainActivity : ComponentActivity() {
                                 SliderControlSection(currentNode, currentPath, evalHistory) { currentNode = it }
                                 Row(modifier = Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.spacedBy(8.dp), verticalAlignment = Alignment.CenterVertically) {
                                     val clipboard = LocalClipboardManager.current
+                                    IconButton(onClick = { showMenu = true }) { Icon(Icons.Default.Menu, "メニュー") }
+                                    DropdownMenu(
+                                        expanded = showMenu,
+                                        onDismissRequest = { showMenu = false },
+                                        offset = DpOffset(x = 0.dp, y = 0.dp),
+                                    ) {
+                                        DropdownMenuItem(
+                                            text = { Text("リセット") },
+                                            onClick = { currentNode = initialNode; initialNode.children.clear(); prefs.edit().remove("current_tree").apply(); showMenu = false })
+                                        DropdownMenuItem(
+                                            text = { Text("現局面から最後まで解析") },
+                                            onClick = { isAutoAnalysis = true; showMenu = false })
+                                        DropdownMenuItem(
+                                            text = { Text("設定") },
+                                            onClick = { showSettingsDialog = true; showMenu = false })
+                                    }
                                     OutlinedButton(onClick = {
                                         clipboard.getText()?.text?.let { text ->
                                             val freshRoot = KifuNode(createInitialBoard(), emptyMap(), emptyMap(), Player.SENTE)
@@ -221,7 +241,8 @@ class MainActivity : ComponentActivity() {
                                             pinnedPvList = emptyMap(); pinnedPvUsiList = emptyMap(); evalHistory.clear()
                                             if (newNode != null) { currentNode = newNode; saveKifu(freshRoot) }
                                         }
-                                    }, modifier = Modifier.weight(0.3f).height(72.dp), shape = MaterialTheme.shapes.extraLarge) {
+                                    }, modifier = Modifier.weight(0.3f).height(72.dp),
+                                        shape = MaterialTheme.shapes.extraLarge) {
                                         Column(horizontalAlignment = Alignment.CenterHorizontally) { Icon(Icons.Default.ContentPaste, "読込"); Text("読込", style = MaterialTheme.typography.labelSmall) }
                                     }
 
@@ -230,27 +251,30 @@ class MainActivity : ComponentActivity() {
                                             if (isAnalysisMode || isAutoAnalysis) { isAnalysisMode = false; isAutoAnalysis = false; engine.sendCommand("stop") }
                                             else { pinnedPvList = emptyMap(); pinnedPvUsiList = emptyMap(); isAnalysisMode = true }
                                         }
-                                    }, modifier = Modifier.weight(0.3f).height(72.dp), colors = ButtonDefaults.outlinedButtonColors(containerColor = if (isAnalysisMode || isAutoAnalysis) MaterialTheme.colorScheme.tertiaryContainer else Color.Transparent)) {
+                                    }, modifier = Modifier.weight(0.3f).height(72.dp),
+                                        shape = MaterialTheme.shapes.extraLarge,
+                                        colors = ButtonDefaults.outlinedButtonColors(containerColor = if (isAnalysisMode || isAutoAnalysis) MaterialTheme.colorScheme.tertiaryContainer else Color.Transparent)) {
                                         Column(horizontalAlignment = Alignment.CenterHorizontally) { Icon(painterResource(if (isAnalysisMode || isAutoAnalysis) R.drawable.stop_circle_24px else R.drawable.network_intelligence_24px), "解析"); Text(if (isAnalysisMode || isAutoAnalysis) "停止" else "解析", style = MaterialTheme.typography.labelSmall) }
                                     }
 
-                                    OutlinedButton(onClick = { isBoardFlipped = !isBoardFlipped }, modifier = Modifier.weight(0.3f).height(72.dp)) {
+                                    OutlinedButton(onClick = { isBoardFlipped = !isBoardFlipped },
+                                        modifier = Modifier.weight(0.3f).height(72.dp),
+                                        shape = MaterialTheme.shapes.extraLarge
+                                    ) {
                                         Column(horizontalAlignment = Alignment.CenterHorizontally) { Icon(painterResource(R.drawable.rotate_right_24px), "反転"); Text("反転", style = MaterialTheme.typography.labelSmall) }
                                     }
 
                                     OutlinedButton(onClick = {
                                         fun clearPv(n: KifuNode) { n.children.removeIf { it.isPvBranch }; n.children.forEach { clearPv(it) } }
                                         clearPv(initialNode); currentNode = initialNode; pinnedPvList = emptyMap()
-                                    }, modifier = Modifier.weight(0.3f).height(72.dp)) {
+                                    },
+                                        modifier = Modifier.weight(0.3f).height(72.dp),
+                                        shape = MaterialTheme.shapes.extraLarge
+                                    ) {
                                         Column(horizontalAlignment = Alignment.CenterHorizontally) { Icon(painterResource(R.drawable.undo_24px), "本譜"); Text("本譜", style = MaterialTheme.typography.labelSmall) }
                                     }
 
-                                    IconButton(onClick = { showMenu = true }) { Icon(Icons.Default.Menu, "メニュー") }
-                                    DropdownMenu(expanded = showMenu, onDismissRequest = { showMenu = false }) {
-                                        DropdownMenuItem(text = { Text("リセット") }, onClick = { currentNode = initialNode; initialNode.children.clear(); prefs.edit().remove("current_tree").apply(); showMenu = false })
-                                        DropdownMenuItem(text = { Text("現局面から最後まで解析") }, onClick = { isAutoAnalysis = true; showMenu = false })
-                                        DropdownMenuItem(text = { Text("設定") }, onClick = { showSettingsDialog = true; showMenu = false })
-                                    }
+
                                 }
                             }
                         }
@@ -260,7 +284,12 @@ class MainActivity : ComponentActivity() {
                     if (isWide) {
                         Row(modifier = Modifier.fillMaxSize().padding(innerPadding).padding(16.dp), horizontalArrangement = Arrangement.spacedBy(24.dp)) {
                             Column(modifier = Modifier.weight(0.5f).fillMaxHeight().verticalScroll(rememberScrollState())) {
-                                (if (pinnedPvList.isNotEmpty()) pinnedPvList else pvList.toMap()).entries.sortedByDescending { extractScore(it.value, currentPlayer) }.forEach { (rank, pvText) ->
+                                (if (
+                                    pinnedPvList.isNotEmpty()
+                                    ) pinnedPvList
+                                else pvList.toMap()).entries
+                                    .sortedByDescending { extractScore(it.value, currentPlayer) }
+                                    .forEach { (rank, pvText) ->
                                     val alpha = if (isPvStale && pinnedPvList.isEmpty()) 0.5f else 1f
                                     Box(modifier = Modifier.graphicsLayer { this.alpha = alpha }) {
                                         PvInfoCard(rank, pvText) {
@@ -291,10 +320,13 @@ class MainActivity : ComponentActivity() {
                                 PlayerStatusSection(if(botP==Player.SENTE) senteName else goteName, if(botP==Player.SENTE) "▲" else "△", currentPlayer==botP, if(botP==Player.SENTE) senteHand else goteHand, selectedHandPiece, currentPlayer, isBoardFlipped) { selectedHandPiece = it; selectedSquare = null }
                             }
                         }
-                    } else {
+                    }
+                    else {
                         Column(modifier = Modifier.fillMaxSize().padding(innerPadding).verticalScroll(rememberScrollState()), horizontalAlignment = Alignment.CenterHorizontally) {
                             Column(modifier = Modifier.padding(8.dp)) {
-                                (if (pinnedPvList.isNotEmpty()) pinnedPvList else pvList.toMap()).entries.sortedByDescending { extractScore(it.value, currentPlayer) }.forEach { (rank, pvText) ->
+                                (if (pinnedPvList.isNotEmpty()) pinnedPvList else pvList.toMap()).entries
+                                    .sortedByDescending { extractScore(it.value, currentPlayer) }
+                                    .forEach { (rank, pvText) ->
                                     val alpha = if (isPvStale && pinnedPvList.isEmpty()) 0.5f else 1f
                                     Box(modifier = Modifier.graphicsLayer { this.alpha = alpha }) {
                                         PvInfoCard(rank, pvText) {
