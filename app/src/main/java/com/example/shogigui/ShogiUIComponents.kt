@@ -66,11 +66,11 @@ fun PlayerStatusSection(
     selectedHandPiece: Pair<Player, PieceType>?,
     currentPlayer: Player,
     isFlipped: Boolean = false,
+    handOnTop: Boolean = false,
     onSelected: (Pair<Player, PieceType>?) -> Unit
 ) {
     val player = if (mark == "▲") Player.SENTE else Player.GOTE
-    Column(modifier = Modifier.fillMaxWidth()) {
-        PlayerInfoContent(name = playerName, mark = mark, isFlipped = isFlipped)
+    val handView: @Composable () -> Unit = {
         HandView(
             hand = hand,
             player = player,
@@ -78,6 +78,12 @@ fun PlayerStatusSection(
             onPieceClick = { type -> if (isActive) onSelected(Pair(player, type)) },
             isFlipped = isFlipped
         )
+    }
+    val nameView: @Composable () -> Unit = {
+        PlayerInfoContent(name = playerName, mark = mark, isFlipped = isFlipped)
+    }
+    Column(modifier = Modifier.fillMaxWidth()) {
+        if (handOnTop) { handView(); nameView() } else { nameView(); handView() }
     }
 }
 

@@ -54,8 +54,11 @@ fun ShogiBoard(
         3 -> MaterialTheme.colorScheme.tertiaryContainer
         else -> if (pvColorIndex > 0) MaterialTheme.colorScheme.surfaceVariant else MaterialTheme.colorScheme.surface
     }
-    val highlightColor = Color(0xFFF9DCE3).copy(alpha = 0.6f) // 指し手の強調色（山吹色系）
+    val highlightColor = MaterialTheme.colorScheme.tertiaryContainer.copy(alpha = 0.6f)
     val selectionColor = MaterialTheme.colorScheme.primaryContainer.copy(alpha = 0.7f)
+    val gridColor = MaterialTheme.colorScheme.outline
+    val cellColor = MaterialTheme.colorScheme.outlineVariant
+    val labelColor = MaterialTheme.colorScheme.onSurfaceVariant
     val kanjiNumbers = listOf("一", "二", "三", "四", "五", "六", "七", "八", "九")
       Column(
         modifier = modifier
@@ -67,7 +70,7 @@ fun ShogiBoard(
         Row(modifier = Modifier.fillMaxWidth().padding(end = 18.dp)) {
             for (col in 0 until 9) {
                 Box(modifier = Modifier.weight(1f), contentAlignment = Alignment.Center) {
-                    Text(text = (9 - col).toString(), fontSize = 10.sp, color = Color.DarkGray)
+                    Text(text = (9 - col).toString(), fontSize = 10.sp, color = labelColor)
                 }
             }
         }
@@ -84,7 +87,7 @@ fun ShogiBoard(
                 modifier = Modifier
                     .weight(1f)
                     .aspectRatio(1.0f)
-                    .border(1.5.dp, Color.Black)
+                    .border(1.5.dp, gridColor)
             ) {
                 for (row in 0 until 9) {
                     Row(modifier = Modifier.weight(1f)) {
@@ -114,7 +117,7 @@ fun ShogiBoard(
                                 modifier = Modifier
                                     .weight(1f)
                                     .fillMaxHeight()
-                                    .border(0.5.dp, Color.Black)
+                                    .border(0.5.dp, cellColor)
                                     .background(bgColor)
                                     .clickable { onSquareClick(actualRow, actualCol) },
                                 piece = piece,
@@ -142,7 +145,7 @@ fun ShogiBoard(
                         Text(
                             text = kanjiNumbers[row],
                             fontSize = 10.sp,
-                            color = Color.DarkGray,
+                            color = labelColor,
                             //fontFamily = shogiFont,
                             )
                     }
@@ -203,7 +206,7 @@ fun HandView(
             }
         }
         if (hand.values.sum() == 0) {
-            Text(text = "なし", fontSize = 14.sp, color = Color.Gray)
+            Text(text = "なし", fontSize = 14.sp, color = MaterialTheme.colorScheme.onSurfaceVariant)
         }
     }
 }
@@ -241,10 +244,8 @@ fun ShogiBoardPreview() {
 
 @Composable
 fun PieceView(piece: Piece, isFlipped: Boolean = false) {
-    val darkRed = Color(0xFF800000)
-
     val label = if (piece.isPromoted) piece.type.promotedLabel ?: piece.type.label else piece.type.label
-    val color = if (piece.isPromoted) darkRed else Color.Black
+    val color = if (piece.isPromoted) MaterialTheme.colorScheme.error else MaterialTheme.colorScheme.onSurface
 
     val rotation = when {
         //isFlipped && piece.owner == Player.SENTE -> 180f
