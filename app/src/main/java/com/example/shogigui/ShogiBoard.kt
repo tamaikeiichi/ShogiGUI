@@ -49,11 +49,10 @@ fun ShogiBoard(
 
 ) {
     val boardColor = when (pvColorIndex) {
-        1 -> Color(0xFFE8F9DC) // 緑
-        2 -> Color(0xFFF9F8DC) // 黄
-        3 -> Color(0xFFF9EAD3) // 橙
-        4 -> Color(0xFFF9D3EA) // 桃
-        else -> Color(0xFFDCE3F9) // 青（本筋）
+        1 -> MaterialTheme.colorScheme.primaryContainer
+        2 -> MaterialTheme.colorScheme.secondaryContainer
+        3 -> MaterialTheme.colorScheme.tertiaryContainer
+        else -> if (pvColorIndex > 0) MaterialTheme.colorScheme.surfaceVariant else MaterialTheme.colorScheme.surface
     }
     val highlightColor = Color(0xFFF9DCE3).copy(alpha = 0.6f) // 指し手の強調色（山吹色系）
     val selectionColor = MaterialTheme.colorScheme.primaryContainer.copy(alpha = 0.7f)
