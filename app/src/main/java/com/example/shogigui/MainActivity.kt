@@ -300,12 +300,10 @@ class MainActivity : ComponentActivity() {
 
                                     OutlinedButton(onClick = {
                                         fun clearPv(n: KifuNode) { n.children.removeIf { it.isPvBranch }; n.children.forEach { clearPv(it) } }
-                                        val targetNode = if (currentNode.isPvBranch) {
-                                            var p: KifuNode = currentNode
-                                            while (p.isPvBranch) { p = p.parent ?: break }
-                                            p
-                                        } else initialNode
-                                        clearPv(initialNode); currentNode = targetNode; pinnedPvList = emptyMap(); pvBranchPath = null
+                                        val branchPoint = pvBranchPath?.firstOrNull()?.parent
+                                        clearPv(initialNode)
+                                        if (branchPoint != null) currentNode = branchPoint
+                                        pinnedPvList = emptyMap(); pvBranchPath = null
                                     },
                                         modifier = Modifier.weight(0.3f).height(72.dp),
                                         shape = MaterialTheme.shapes.extraLarge
@@ -345,7 +343,7 @@ class MainActivity : ComponentActivity() {
                                         pvList.toMap()
                                     })
                                     .entries
-                                    .sortedWith(if (currentPlayer == Player.SENTE) compareByDescending { extractScore(it.value, Player.SENTE) } else compareBy { extractScore(it.value, Player.SENTE) })
+                                    .sortedBy { it.key }
                                     .forEach { (rank, pvText) ->
                                         val alpha = if (isPvStale && pinnedPvList.isEmpty()) 0.5f else 1f
                                         Box(modifier = Modifier.graphicsLayer { this.alpha = alpha }) {
@@ -379,7 +377,7 @@ class MainActivity : ComponentActivity() {
                             PlayerStatusSection(if(botP==Player.SENTE) senteName else goteName, if(botP==Player.SENTE) "▲" else "△", currentPlayer==botP, if(botP==Player.SENTE) senteHand else goteHand, selectedHandPiece, currentPlayer, isBoardFlipped) { selectedHandPiece = it; selectedSquare = null }
                             Column(modifier = Modifier.padding(8.dp)) {
                                 (if (pinnedPvList.isNotEmpty()) pinnedPvList else pvList.toMap()).entries
-                                    .sortedWith(if (currentPlayer == Player.SENTE) compareByDescending { extractScore(it.value, Player.SENTE) } else compareBy { extractScore(it.value, Player.SENTE) })
+                                    .sortedBy { it.key }
                                     .forEach { (rank, pvText) ->
                                         val alpha = if (isPvStale && pinnedPvList.isEmpty()) 0.5f else 1f
                                         Box(modifier = Modifier.graphicsLayer { this.alpha = alpha }) {
@@ -526,10 +524,12 @@ class MainActivity : ComponentActivity() {
             val b = applyUsiMove(m, p.board, p.currentPlayer)
             val l = formatUsiMove(m, p.board)
             val sym = if (p.currentPlayer == Player.SENTE) "▲" else "△"
+            val lastFrom = if (m.length >= 4 && m[1] != '*') Pair(m[1] - 'a', 9 - (m[0] - '0')) else null
+            val lastTo   = if (m.length >= 4) Pair(m[3] - 'a', 9 - (m[2] - '0')) else null
 
             // 同じrankのPVノードのみ再利用（別rankは別ノードで色を維持）
             val existing = p.children.find { it.moveLabel == "$sym$l" && it.pvColorIndex == rank && it.isPvBranch }
-            val n = existing ?: KifuNode(b, p.senteHand, p.goteHand, if (p.currentPlayer == Player.SENTE) Player.GOTE else Player.SENTE, "$sym$l", p, isPvBranch = true, pvColorIndex = rank).also { p.children.add(it) }
+            val n = existing ?: KifuNode(b, p.senteHand, p.goteHand, if (p.currentPlayer == Player.SENTE) Player.GOTE else Player.SENTE, "$sym$l", p, lastFrom, lastTo, isPvBranch = true, pvColorIndex = rank).also { p.children.add(it) }
             branchNodes.add(n)
             p = n
         }
