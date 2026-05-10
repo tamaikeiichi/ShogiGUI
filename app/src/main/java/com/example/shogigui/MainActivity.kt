@@ -322,33 +322,7 @@ class MainActivity : ComponentActivity() {
                     val isWide = androidx.compose.ui.platform.LocalConfiguration.current.screenWidthDp >= 840
                     if (isWide) {
                         Row(modifier = Modifier.fillMaxSize().padding(innerPadding).padding(16.dp), horizontalArrangement = Arrangement.spacedBy(24.dp)) {
-                            Column(
-                                modifier = Modifier
-                                    .weight(0.5f).fillMaxHeight()
-                                    .verticalScroll(rememberScrollState())
-                            ) {
-                                (pinnedPvList
-                                    .ifEmpty {
-                                    pvList.toMap()
-                                })
-                                    .entries
-                                    .sortedWith(if (currentPlayer == Player.SENTE) compareByDescending { extractScore(it.value, Player.SENTE) } else compareBy { extractScore(it.value, Player.SENTE) })
-                                    .forEach { (rank, pvText) ->
-                                    val alpha = if (isPvStale && pinnedPvList.isEmpty()) 0.5f else 1f
-                                    Box(modifier = Modifier.graphicsLayer { this.alpha = alpha }) {
-                                        PvInfoCard(rank, pvText) {
-                                            playPvBranch(
-                                                rank, pvList.toMap(), pvUsiList.toMap(), pinnedPvList,
-                                                currentNode, engine) {
-                                                pinned, pinnedUsi, lastNode, branchNodes, analysisMode ->
-                                                pinnedPvList = pinned; pinnedPvUsiList = pinnedUsi
-                                                pvBranchPath = branchNodes
-                                                currentNode = lastNode; isAnalysisMode = analysisMode
-                                            }
-                                        }
-                                    }
-                                }
-                            }
+
                             Column(modifier = Modifier.weight(0.5f).verticalScroll(rememberScrollState()), horizontalAlignment = Alignment.CenterHorizontally, verticalArrangement = Arrangement.spacedBy(8.dp)) {
                                 val topP = if (isBoardFlipped) Player.SENTE else Player.GOTE; val botP = if (isBoardFlipped) Player.GOTE else Player.SENTE
                                 PlayerStatusSection(if(topP==Player.SENTE) senteName else goteName, if(topP==Player.SENTE) "▲" else "△", currentPlayer==topP, if(topP==Player.SENTE) senteHand else goteHand, selectedHandPiece, currentPlayer, isBoardFlipped) { selectedHandPiece = it; selectedSquare = null }
@@ -361,26 +335,38 @@ class MainActivity : ComponentActivity() {
                                 }, isBoardFlipped, Modifier.sizeIn(maxWidth = 500.dp, maxHeight = 500.dp), currentNode.lastFrom, currentNode.lastTo, currentNode.pvColorIndex)
                                 PlayerStatusSection(if(botP==Player.SENTE) senteName else goteName, if(botP==Player.SENTE) "▲" else "△", currentPlayer==botP, if(botP==Player.SENTE) senteHand else goteHand, selectedHandPiece, currentPlayer, isBoardFlipped) { selectedHandPiece = it; selectedSquare = null }
                             }
+                            Column(
+                                modifier = Modifier
+                                    .weight(0.5f).fillMaxHeight()
+                                    .verticalScroll(rememberScrollState())
+                            ) {
+                                (pinnedPvList
+                                    .ifEmpty {
+                                        pvList.toMap()
+                                    })
+                                    .entries
+                                    .sortedWith(if (currentPlayer == Player.SENTE) compareByDescending { extractScore(it.value, Player.SENTE) } else compareBy { extractScore(it.value, Player.SENTE) })
+                                    .forEach { (rank, pvText) ->
+                                        val alpha = if (isPvStale && pinnedPvList.isEmpty()) 0.5f else 1f
+                                        Box(modifier = Modifier.graphicsLayer { this.alpha = alpha }) {
+                                            PvInfoCard(rank, pvText) {
+                                                playPvBranch(
+                                                    rank, pvList.toMap(), pvUsiList.toMap(), pinnedPvList,
+                                                    currentNode, engine) {
+                                                        pinned, pinnedUsi, lastNode, branchNodes, analysisMode ->
+                                                    pinnedPvList = pinned; pinnedPvUsiList = pinnedUsi
+                                                    pvBranchPath = branchNodes
+                                                    currentNode = lastNode; isAnalysisMode = analysisMode
+                                                }
+                                            }
+                                        }
+                                    }
+                            }
                         }
                     }
                     else {
                         Column(modifier = Modifier.fillMaxSize().padding(innerPadding).verticalScroll(rememberScrollState()), horizontalAlignment = Alignment.CenterHorizontally) {
-                            Column(modifier = Modifier.padding(8.dp)) {
-                                (if (pinnedPvList.isNotEmpty()) pinnedPvList else pvList.toMap()).entries
-                                    .sortedWith(if (currentPlayer == Player.SENTE) compareByDescending { extractScore(it.value, Player.SENTE) } else compareBy { extractScore(it.value, Player.SENTE) })
-                                    .forEach { (rank, pvText) ->
-                                    val alpha = if (isPvStale && pinnedPvList.isEmpty()) 0.5f else 1f
-                                    Box(modifier = Modifier.graphicsLayer { this.alpha = alpha }) {
-                                        PvInfoCard(rank, pvText) {
-                                            playPvBranch(rank, pvList.toMap(), pvUsiList.toMap(), pinnedPvList, currentNode, engine) { pinned, pinnedUsi, lastNode, branchNodes, analysisMode ->
-                                                pinnedPvList = pinned; pinnedPvUsiList = pinnedUsi
-                                                pvBranchPath = branchNodes
-                                                currentNode = lastNode; isAnalysisMode = analysisMode
-                                            }
-                                        }
-                                    }
-                                }
-                            }
+
                             val topP = if (isBoardFlipped) Player.SENTE else Player.GOTE; val botP = if (isBoardFlipped) Player.GOTE else Player.SENTE
                             PlayerStatusSection(if(topP==Player.SENTE) senteName else goteName, if(topP==Player.SENTE) "▲" else "△", currentPlayer==topP, if(topP==Player.SENTE) senteHand else goteHand, selectedHandPiece, currentPlayer, isBoardFlipped) { selectedHandPiece = it; selectedSquare = null }
                             ShogiBoard(boardState, selectedSquare, { r, c -> 
@@ -391,6 +377,22 @@ class MainActivity : ComponentActivity() {
                                 }
                             }, isBoardFlipped, Modifier.padding(16.dp), currentNode.lastFrom, currentNode.lastTo, currentNode.pvColorIndex)
                             PlayerStatusSection(if(botP==Player.SENTE) senteName else goteName, if(botP==Player.SENTE) "▲" else "△", currentPlayer==botP, if(botP==Player.SENTE) senteHand else goteHand, selectedHandPiece, currentPlayer, isBoardFlipped) { selectedHandPiece = it; selectedSquare = null }
+                            Column(modifier = Modifier.padding(8.dp)) {
+                                (if (pinnedPvList.isNotEmpty()) pinnedPvList else pvList.toMap()).entries
+                                    .sortedWith(if (currentPlayer == Player.SENTE) compareByDescending { extractScore(it.value, Player.SENTE) } else compareBy { extractScore(it.value, Player.SENTE) })
+                                    .forEach { (rank, pvText) ->
+                                        val alpha = if (isPvStale && pinnedPvList.isEmpty()) 0.5f else 1f
+                                        Box(modifier = Modifier.graphicsLayer { this.alpha = alpha }) {
+                                            PvInfoCard(rank, pvText) {
+                                                playPvBranch(rank, pvList.toMap(), pvUsiList.toMap(), pinnedPvList, currentNode, engine) { pinned, pinnedUsi, lastNode, branchNodes, analysisMode ->
+                                                    pinnedPvList = pinned; pinnedPvUsiList = pinnedUsi
+                                                    pvBranchPath = branchNodes
+                                                    currentNode = lastNode; isAnalysisMode = analysisMode
+                                                }
+                                            }
+                                        }
+                                    }
+                            }
                         }
                     }
                 }
