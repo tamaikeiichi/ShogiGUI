@@ -25,6 +25,7 @@ import com.example.shogigui.ui.theme.ShogiGUITheme
 import kotlinx.coroutines.delay
 import android.util.Log
 import androidx.compose.ui.unit.DpOffset
+import kotlin.math.roundToInt
 
 class MainActivity : ComponentActivity() {
 
@@ -260,7 +261,18 @@ class MainActivity : ComponentActivity() {
                                     ) {
                                         DropdownMenuItem(
                                             text = { Text("リセット") },
-                                            onClick = { currentNode = initialNode; initialNode.children.clear(); prefs.edit().remove("current_tree").apply(); showMenu = false })
+                                            onClick = {
+                                                currentNode = initialNode
+                                                initialNode.children.clear()
+                                                senteName = "先手"
+                                                goteName = "後手"
+                                                prefs.edit()
+                                                    .remove("current_tree")
+                                                    .remove("sente_name")
+                                                    .remove("gote_name")
+                                                    .apply()
+                                                showMenu = false
+                                            })
                                         DropdownMenuItem(
                                             text = { Text("現局面から最後まで解析") },
                                             onClick = { isAutoAnalysis = true; showMenu = false })
@@ -425,7 +437,7 @@ class MainActivity : ComponentActivity() {
                                     Text("思考時間: ${analysisTimeMs}ms", style = MaterialTheme.typography.labelMedium)
                                     Slider(
                                         value = analysisTimeMs.toFloat(),
-                                        onValueChange = { analysisTimeMs = it.toLong() },
+                                        onValueChange = { analysisTimeMs = it.roundToInt().toLong() },
                                         valueRange = 100f..5000f
                                     )
                                 }
@@ -439,7 +451,7 @@ class MainActivity : ComponentActivity() {
                                     }
                                     Slider(
                                         value = multiPvCount.toFloat(),
-                                        onValueChange = { multiPvCount = it.toInt() },
+                                        onValueChange = { multiPvCount = it.roundToInt() },
                                         valueRange = 1f..3f,
                                         steps = 1
                                     )
@@ -454,7 +466,7 @@ class MainActivity : ComponentActivity() {
                                     }
                                     Slider(
                                         value = threadCount.toFloat(),
-                                        onValueChange = { threadCount = it.toInt() },
+                                        onValueChange = { threadCount = it.roundToInt() },
                                         valueRange = 1f..8f,
                                         steps = 6
                                     )
