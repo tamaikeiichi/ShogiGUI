@@ -61,12 +61,22 @@ class MainActivity : ComponentActivity() {
                 }
 
                 // --- 状態管理 ---
-                val currentPath = remember(currentNode, initialNode) {
+                var pvBranchPath by remember { mutableStateOf<List<KifuNode>?>(null) }
+                val currentPath = remember(currentNode, initialNode, pvBranchPath) {
                     val path = mutableListOf<KifuNode>()
-                    var p: KifuNode? = currentNode
-                    while (p != null) { path.add(0, p); p = p.parent }
-                    var c = currentNode.children.firstOrNull()
-                    while (c != null) { path.add(c); c = c.children.firstOrNull() }
+                    val pvPath = pvBranchPath
+                    if (pvPath != null && pvPath.isNotEmpty()) {
+                        val backward = mutableListOf<KifuNode>()
+                        var p: KifuNode? = pvPath[0].parent
+                        while (p != null) { backward.add(0, p); p = p.parent }
+                        path.addAll(backward)
+                        path.addAll(pvPath)
+                    } else {
+                        var p: KifuNode? = currentNode
+                        while (p != null) { path.add(0, p); p = p.parent }
+                        var c = currentNode.children.firstOrNull()
+                        while (c != null) { path.add(c); c = c.children.firstOrNull() }
+                    }
                     path
                 }
 
@@ -124,8 +134,10 @@ class MainActivity : ComponentActivity() {
                         line.startsWith("info") -> {
                             if (isPvStale) { pvList.clear(); isPvStale = false }
                             val rank = Regex("multipv (\\d+)").find(line)?.groupValues?.get(1)?.toInt() ?: 1
-                            Regex("""pv (.+)$""").find(line)?.let { match ->
-                                pvUsiList[rank] = match.groupValues[1].trim().split(" ")
+                            val infoParts = line.split(Regex("\\s+"))
+                            val pvIdx = infoParts.indexOf("pv")
+                            if (pvIdx >= 0 && pvIdx + 1 < infoParts.size) {
+                                pvUsiList[rank] = infoParts.drop(pvIdx + 1)
                             }
                             val parsed = parseInfo(line, capturedBoard, capturedTurn)
 
@@ -260,7 +272,7 @@ class MainActivity : ComponentActivity() {
                                         clipboard.getText()?.text?.let { text ->
                                             val freshRoot = KifuNode(createInitialBoard(), emptyMap(), emptyMap(), Player.SENTE)
                                             val newNode = parseKif(text, freshRoot, saveKifu)
-                                            pinnedPvList = emptyMap(); pinnedPvUsiList = emptyMap(); evalHistory.clear()
+                                            pinnedPvList = emptyMap(); pinnedPvUsiList = emptyMap(); pvBranchPath = null; evalHistory.clear()
                                             if (newNode != null) { currentNode = newNode; saveKifu(freshRoot) }
                                         }
                                     }, modifier = Modifier.weight(0.3f).height(72.dp),
@@ -288,7 +300,12 @@ class MainActivity : ComponentActivity() {
 
                                     OutlinedButton(onClick = {
                                         fun clearPv(n: KifuNode) { n.children.removeIf { it.isPvBranch }; n.children.forEach { clearPv(it) } }
-                                        clearPv(initialNode); currentNode = initialNode; pinnedPvList = emptyMap()
+                                        val targetNode = if (currentNode.isPvBranch) {
+                                            var p: KifuNode = currentNode
+                                            while (p.isPvBranch) { p = p.parent ?: break }
+                                            p
+                                        } else initialNode
+                                        clearPv(initialNode); currentNode = targetNode; pinnedPvList = emptyMap(); pvBranchPath = null
                                     },
                                         modifier = Modifier.weight(0.3f).height(72.dp),
                                         shape = MaterialTheme.shapes.extraLarge
@@ -321,10 +338,12 @@ class MainActivity : ComponentActivity() {
                                     Box(modifier = Modifier.graphicsLayer { this.alpha = alpha }) {
                                         PvInfoCard(rank, pvText) {
                                             playPvBranch(
-                                                rank, pvList.toMap(), pvUsiList.toMap(), pinnedPvList, 
-                                                currentNode, engine) { 
-                                                pinned, pinnedUsi, lastNode, analysisMode ->
-                                                pinnedPvList = pinned; pinnedPvUsiList = pinnedUsi; currentNode = lastNode; isAnalysisMode = analysisMode
+                                                rank, pvList.toMap(), pvUsiList.toMap(), pinnedPvList,
+                                                currentNode, engine) {
+                                                pinned, pinnedUsi, lastNode, branchNodes, analysisMode ->
+                                                pinnedPvList = pinned; pinnedPvUsiList = pinnedUsi
+                                                pvBranchPath = branchNodes
+                                                currentNode = lastNode; isAnalysisMode = analysisMode
                                             }
                                         }
                                     }
@@ -339,7 +358,7 @@ class MainActivity : ComponentActivity() {
                                         if(n != null) currentNode = n
                                         if(p != null) promotionPendingBy = p
                                     }
-                                }, isBoardFlipped, Modifier.sizeIn(maxWidth = 500.dp, maxHeight = 500.dp), currentNode.lastFrom, currentNode.lastTo, currentNode.isPvBranch)
+                                }, isBoardFlipped, Modifier.sizeIn(maxWidth = 500.dp, maxHeight = 500.dp), currentNode.lastFrom, currentNode.lastTo, currentNode.pvColorIndex)
                                 PlayerStatusSection(if(botP==Player.SENTE) senteName else goteName, if(botP==Player.SENTE) "▲" else "△", currentPlayer==botP, if(botP==Player.SENTE) senteHand else goteHand, selectedHandPiece, currentPlayer, isBoardFlipped) { selectedHandPiece = it; selectedSquare = null }
                             }
                         }
@@ -353,8 +372,10 @@ class MainActivity : ComponentActivity() {
                                     val alpha = if (isPvStale && pinnedPvList.isEmpty()) 0.5f else 1f
                                     Box(modifier = Modifier.graphicsLayer { this.alpha = alpha }) {
                                         PvInfoCard(rank, pvText) {
-                                            playPvBranch(rank, pvList.toMap(), pvUsiList.toMap(), pinnedPvList, currentNode, engine) { pinned, pinnedUsi, lastNode, analysisMode ->
-                                                pinnedPvList = pinned; pinnedPvUsiList = pinnedUsi; currentNode = lastNode; isAnalysisMode = analysisMode
+                                            playPvBranch(rank, pvList.toMap(), pvUsiList.toMap(), pinnedPvList, currentNode, engine) { pinned, pinnedUsi, lastNode, branchNodes, analysisMode ->
+                                                pinnedPvList = pinned; pinnedPvUsiList = pinnedUsi
+                                                pvBranchPath = branchNodes
+                                                currentNode = lastNode; isAnalysisMode = analysisMode
                                             }
                                         }
                                     }
@@ -368,7 +389,7 @@ class MainActivity : ComponentActivity() {
                                     if(n != null) currentNode = n
                                     if(p != null) promotionPendingBy = p
                                 }
-                            }, isBoardFlipped, Modifier.padding(16.dp), currentNode.lastFrom, currentNode.lastTo, currentNode.isPvBranch)
+                            }, isBoardFlipped, Modifier.padding(16.dp), currentNode.lastFrom, currentNode.lastTo, currentNode.pvColorIndex)
                             PlayerStatusSection(if(botP==Player.SENTE) senteName else goteName, if(botP==Player.SENTE) "▲" else "△", currentPlayer==botP, if(botP==Player.SENTE) senteHand else goteHand, selectedHandPiece, currentPlayer, isBoardFlipped) { selectedHandPiece = it; selectedSquare = null }
                         }
                     }
@@ -474,7 +495,7 @@ class MainActivity : ComponentActivity() {
         pinnedPvList: Map<Int, String>,
         currentNode: KifuNode,
         engine: UsiEngine,
-        onUpdate: (Map<Int, String>, Map<Int, List<String>>, KifuNode, Boolean) -> Unit
+        onUpdate: (Map<Int, String>, Map<Int, List<String>>, KifuNode, List<KifuNode>, Boolean) -> Unit
     ) {
         var currentPinnedList = pinnedPvList
         var currentPinnedUsi = emptyMap<Int, List<String>>()
@@ -493,7 +514,7 @@ class MainActivity : ComponentActivity() {
             val b = applyUsiMove(m, p.board, p.currentPlayer)
             val l = formatUsiMove(m, p.board)
             val sym = if (p.currentPlayer == Player.SENTE) "▲" else "△"
-            
+
             val existing = p.children.find { it.moveLabel == "$sym$l" }
             val n = if (existing != null) {
                 existing
@@ -505,10 +526,9 @@ class MainActivity : ComponentActivity() {
             branchNodes.add(n)
             p = n
         }
-        
         // 最初の1手目へジャンプ
         val targetNode = branchNodes.firstOrNull() ?: currentNode
-        onUpdate(currentPinnedList, currentPinnedUsi, targetNode, false)
+        onUpdate(currentPinnedList, currentPinnedUsi, targetNode, branchNodes.toList(), false)
     }
 
     private fun handleSquareClick(
