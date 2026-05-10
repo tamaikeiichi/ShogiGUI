@@ -310,11 +310,15 @@ class MainActivity : ComponentActivity() {
 
                                     OutlinedButton(onClick = {
                                         fun clearPv(n: KifuNode) { n.children.removeIf { it.isPvBranch }; n.children.forEach { clearPv(it) } }
-                                        clearPv(initialNode)
                                         val pvBranchPoint = pvBranchPath?.firstOrNull()?.parent
+                                        // currentNodeが属する実際のルートを取得してPV除去
+                                        var treeRoot: KifuNode = currentNode
+                                        while (treeRoot.parent != null) { treeRoot = treeRoot.parent!! }
+                                        clearPv(treeRoot)
                                         if (pvBranchPoint != null) {
                                             currentNode = pvBranchPoint
                                         } else {
+                                            // 親を辿り、自分が最初の非PV子でない最初の祖先（分岐点）へジャンプ
                                             var p: KifuNode? = currentNode
                                             while (p?.parent != null) {
                                                 val parent = p.parent!!
