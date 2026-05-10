@@ -12,7 +12,8 @@ class KifuNode(
     val parent: KifuNode? = null,
     val lastFrom: Pair<Int, Int>? = null,
     val lastTo: Pair<Int, Int>? = null,
-    val isPvBranch: Boolean = false  // 読み筋（一時的）かどうか
+    val isPvBranch: Boolean = false,
+    val pvColorIndex: Int = 0 // 0:なし, 1:第1候補, 2:第2候補...
 ) {
     val children = mutableStateListOf<KifuNode>()
     val moveCount: Int = (parent?.moveCount ?: -1) + 1

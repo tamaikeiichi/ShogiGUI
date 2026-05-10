@@ -320,16 +320,12 @@ class MainActivity : ComponentActivity() {
                                     val alpha = if (isPvStale && pinnedPvList.isEmpty()) 0.5f else 1f
                                     Box(modifier = Modifier.graphicsLayer { this.alpha = alpha }) {
                                         PvInfoCard(rank, pvText) {
-                                            if (pinnedPvList.isEmpty()) { pinnedPvList = pvList.toMap(); pinnedPvUsiList = pvUsiList.toMap(); isAnalysisMode = false; engine.sendCommand("stop") }
-                                            val usi = pinnedPvUsiList[rank] ?: return@PvInfoCard
-                                            var p = currentNode
-                                            usi.forEach { m ->
-                                                val b = applyUsiMove(m, p.board, p.currentPlayer)
-                                                val l = formatUsiMove(m, p.board)
-                                                val n = KifuNode(b, p.senteHand, p.goteHand, if(p.currentPlayer == Player.SENTE) Player.GOTE else Player.SENTE, l, p, isPvBranch = true)
-                                                p.children.add(n); p = n
+                                            playPvBranch(
+                                                rank, pvList.toMap(), pvUsiList.toMap(), pinnedPvList, 
+                                                currentNode, engine) { 
+                                                pinned, pinnedUsi, lastNode, analysisMode ->
+                                                pinnedPvList = pinned; pinnedPvUsiList = pinnedUsi; currentNode = lastNode; isAnalysisMode = analysisMode
                                             }
-                                            currentNode = currentNode.children.lastOrNull { it.isPvBranch } ?: currentNode
                                         }
                                     }
                                 }
@@ -357,16 +353,9 @@ class MainActivity : ComponentActivity() {
                                     val alpha = if (isPvStale && pinnedPvList.isEmpty()) 0.5f else 1f
                                     Box(modifier = Modifier.graphicsLayer { this.alpha = alpha }) {
                                         PvInfoCard(rank, pvText) {
-                                            if (pinnedPvList.isEmpty()) { pinnedPvList = pvList.toMap(); pinnedPvUsiList = pvUsiList.toMap(); isAnalysisMode = false; engine.sendCommand("stop") }
-                                            val usi = pinnedPvUsiList[rank] ?: return@PvInfoCard
-                                            var p = currentNode
-                                            usi.forEach { m ->
-                                                val b = applyUsiMove(m, p.board, p.currentPlayer)
-                                                val l = formatUsiMove(m, p.board)
-                                                val n = KifuNode(b, p.senteHand, p.goteHand, if(p.currentPlayer == Player.SENTE) Player.GOTE else Player.SENTE, l, p, isPvBranch = true)
-                                                p.children.add(n); p = n
+                                            playPvBranch(rank, pvList.toMap(), pvUsiList.toMap(), pinnedPvList, currentNode, engine) { pinned, pinnedUsi, lastNode, analysisMode ->
+                                                pinnedPvList = pinned; pinnedPvUsiList = pinnedUsi; currentNode = lastNode; isAnalysisMode = analysisMode
                                             }
-                                            currentNode = currentNode.children.lastOrNull { it.isPvBranch } ?: currentNode
                                         }
                                     }
                                 }
@@ -476,6 +465,50 @@ class MainActivity : ComponentActivity() {
 
     private fun getRootNode(node: KifuNode): KifuNode {
         var p = node; while (p.parent != null) p = p.parent!!; return p
+    }
+
+    private fun playPvBranch(
+        rank: Int,
+        pvList: Map<Int, String>,
+        pvUsiList: Map<Int, List<String>>,
+        pinnedPvList: Map<Int, String>,
+        currentNode: KifuNode,
+        engine: UsiEngine,
+        onUpdate: (Map<Int, String>, Map<Int, List<String>>, KifuNode, Boolean) -> Unit
+    ) {
+        var currentPinnedList = pinnedPvList
+        var currentPinnedUsi = emptyMap<Int, List<String>>()
+
+        if (currentPinnedList.isEmpty()) {
+            currentPinnedList = pvList.toMap()
+            currentPinnedUsi = pvUsiList.toMap()
+            engine.sendCommand("stop")
+        }
+
+        val usi = (if (pinnedPvList.isEmpty()) currentPinnedUsi else pvUsiList)[rank] ?: return
+        var p = currentNode
+        val branchNodes = mutableListOf<KifuNode>()
+
+        usi.forEach { m ->
+            val b = applyUsiMove(m, p.board, p.currentPlayer)
+            val l = formatUsiMove(m, p.board)
+            val sym = if (p.currentPlayer == Player.SENTE) "▲" else "△"
+            
+            val existing = p.children.find { it.moveLabel == "$sym$l" }
+            val n = if (existing != null) {
+                existing
+            } else {
+                val newNode = KifuNode(b, p.senteHand, p.goteHand, if (p.currentPlayer == Player.SENTE) Player.GOTE else Player.SENTE, "$sym$l", p, isPvBranch = true, pvColorIndex = rank)
+                p.children.add(newNode)
+                newNode
+            }
+            branchNodes.add(n)
+            p = n
+        }
+        
+        // 最初の1手目へジャンプ
+        val targetNode = branchNodes.firstOrNull() ?: currentNode
+        onUpdate(currentPinnedList, currentPinnedUsi, targetNode, false)
     }
 
     private fun handleSquareClick(
