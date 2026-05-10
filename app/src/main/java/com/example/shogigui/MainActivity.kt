@@ -107,7 +107,11 @@ class MainActivity : ComponentActivity() {
                 val engine = remember { UsiEngine() }
                 var engineOutput by remember { mutableStateOf("エンジン待機中...") }
 
-                val processOutput = { rawLine: String, capturedBoard: Map<Pair<Int, Int>, Piece>, capturedTurn: Player, capturedMoveCount: Int ->
+                val processOutput = {
+                    rawLine: String,
+                    capturedBoard: Map<Pair<Int, Int>, Piece>,
+                    capturedTurn: Player,
+                    capturedMoveCount: Int ->
                     Log.d("callback_used", "手数=$capturedMoveCount turn=$capturedTurn line=$rawLine")
                     val line = rawLine.trim()
                     when {
@@ -300,11 +304,16 @@ class MainActivity : ComponentActivity() {
                     val isWide = androidx.compose.ui.platform.LocalConfiguration.current.screenWidthDp >= 840
                     if (isWide) {
                         Row(modifier = Modifier.fillMaxSize().padding(innerPadding).padding(16.dp), horizontalArrangement = Arrangement.spacedBy(24.dp)) {
-                            Column(modifier = Modifier.weight(0.5f).fillMaxHeight().verticalScroll(rememberScrollState())) {
-                                (if (
-                                    pinnedPvList.isNotEmpty()
-                                    ) pinnedPvList
-                                else pvList.toMap()).entries
+                            Column(
+                                modifier = Modifier
+                                    .weight(0.5f).fillMaxHeight()
+                                    .verticalScroll(rememberScrollState())
+                            ) {
+                                (pinnedPvList
+                                    .ifEmpty {
+                                    pvList.toMap()
+                                })
+                                    .entries
                                     .sortedByDescending { extractScore(it.value, currentPlayer) }
                                     .forEach { (rank, pvText) ->
                                     val alpha = if (isPvStale && pinnedPvList.isEmpty()) 0.5f else 1f
