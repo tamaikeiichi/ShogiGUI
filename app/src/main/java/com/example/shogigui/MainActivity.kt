@@ -133,6 +133,7 @@ class MainActivity : ComponentActivity() {
                                 pvList[rank] = parsed
                                 engineOutput = pvList.toSortedMap().values.joinToString("\n---\n")
                                 analysisHistory[capturedMoveCount] = pvList.toMap()
+                                analysisUsiHistory[capturedMoveCount] = pvUsiList.toMap()
                                 if (rank == 1 && parsed.contains("評価")) {
                                     val scoreLine = parsed.lines().find { it.startsWith("評価:") }
                                     val score = scoreLine?.substringAfter("評価:")?.trim()
@@ -314,7 +315,7 @@ class MainActivity : ComponentActivity() {
                                     pvList.toMap()
                                 })
                                     .entries
-                                    .sortedByDescending { extractScore(it.value, currentPlayer) }
+                                    .sortedWith(if (currentPlayer == Player.SENTE) compareByDescending { extractScore(it.value, Player.SENTE) } else compareBy { extractScore(it.value, Player.SENTE) })
                                     .forEach { (rank, pvText) ->
                                     val alpha = if (isPvStale && pinnedPvList.isEmpty()) 0.5f else 1f
                                     Box(modifier = Modifier.graphicsLayer { this.alpha = alpha }) {
@@ -351,7 +352,7 @@ class MainActivity : ComponentActivity() {
                         Column(modifier = Modifier.fillMaxSize().padding(innerPadding).verticalScroll(rememberScrollState()), horizontalAlignment = Alignment.CenterHorizontally) {
                             Column(modifier = Modifier.padding(8.dp)) {
                                 (if (pinnedPvList.isNotEmpty()) pinnedPvList else pvList.toMap()).entries
-                                    .sortedByDescending { extractScore(it.value, currentPlayer) }
+                                    .sortedWith(if (currentPlayer == Player.SENTE) compareByDescending { extractScore(it.value, Player.SENTE) } else compareBy { extractScore(it.value, Player.SENTE) })
                                     .forEach { (rank, pvText) ->
                                     val alpha = if (isPvStale && pinnedPvList.isEmpty()) 0.5f else 1f
                                     Box(modifier = Modifier.graphicsLayer { this.alpha = alpha }) {

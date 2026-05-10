@@ -25,6 +25,17 @@ import androidx.compose.ui.unit.sp
 import kotlinx.coroutines.delay
 import kotlinx.coroutines.launch
 
+// 読み筋のランクに応じたカラーパレット
+@Composable
+fun getPvColor(rank: Int): Color {
+    return when (rank) {
+        1 -> MaterialTheme.colorScheme.primaryContainer
+        2 -> MaterialTheme.colorScheme.secondaryContainer
+        3 -> MaterialTheme.colorScheme.tertiaryContainer
+        else -> MaterialTheme.colorScheme.surfaceVariant
+    }
+}
+
 @Composable
 fun PvInfoCard(rank: Int, pvText: String, onTap: () -> Unit) {
     Card(
@@ -32,7 +43,9 @@ fun PvInfoCard(rank: Int, pvText: String, onTap: () -> Unit) {
             .fillMaxWidth()
             .padding(vertical = 4.dp)
             .clickable { onTap() },
-        colors = CardDefaults.cardColors(containerColor = MaterialTheme.colorScheme.surfaceVariant)
+        colors = CardDefaults.cardColors(
+            containerColor = getPvColor(rank)
+        )
     ) {
         Column(modifier = Modifier.padding(8.dp)) {
             Text(
