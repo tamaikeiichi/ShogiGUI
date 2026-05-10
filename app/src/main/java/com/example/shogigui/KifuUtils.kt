@@ -288,6 +288,22 @@ fun jsonToKifuTree(json: JSONObject, parent: KifuNode? = null): KifuNode {
     return node
 }
 
+data class PlayerNames(val sente: String?, val gote: String?)
+
+fun extractPlayerNames(text: String): PlayerNames {
+    var sente: String? = null; var gote: String? = null
+    text.lines().forEach { line ->
+        val t = line.trim()
+        when {
+            t.startsWith("先手：") || t.startsWith("先手:") -> sente = t.substringAfter("：").substringAfter(":").trim().ifEmpty { null }
+            t.startsWith("後手：") || t.startsWith("後手:") -> gote = t.substringAfter("：").substringAfter(":").trim().ifEmpty { null }
+            t.startsWith("N+") -> sente = t.removePrefix("N+").trim().ifEmpty { null }
+            t.startsWith("N-") -> gote = t.removePrefix("N-").trim().ifEmpty { null }
+        }
+    }
+    return PlayerNames(sente, gote)
+}
+
 fun parseKif(text: String, root: KifuNode, onSaveRequested: (KifuNode) -> Unit): KifuNode? {
     var tempNode = root; var lastToPos: Pair<Int, Int>? = null
     text.lines().forEach { rawLine ->

@@ -271,7 +271,17 @@ class MainActivity : ComponentActivity() {
                                     OutlinedButton(onClick = {
                                         clipboard.getText()?.text?.let { text ->
                                             val freshRoot = KifuNode(createInitialBoard(), emptyMap(), emptyMap(), Player.SENTE)
-                                            val newNode = parseKif(text, freshRoot, saveKifu)
+                                            val newNode = when {
+                                                text.lines().any { Regex("^[+-]\\d{4}[A-Z]{2}").containsMatchIn(it.trim()) } ->
+                                                    parseCsa(text, freshRoot, saveKifu)
+                                                text.contains("moves") || text.lines().any { Regex("^[1-9][a-i][1-9][a-i][+]?$").matches(it.trim()) } ->
+                                                    parseKifu(text, freshRoot, saveKifu)
+                                                else ->
+                                                    parseKif(text, freshRoot, saveKifu)
+                                            }
+                                            val names = extractPlayerNames(text)
+                                            names.sente?.let { senteName = it }
+                                            names.gote?.let { goteName = it }
                                             pinnedPvList = emptyMap(); pinnedPvUsiList = emptyMap(); pvBranchPath = null; evalHistory.clear()
                                             if (newNode != null) { currentNode = newNode; saveKifu(freshRoot) }
                                         }

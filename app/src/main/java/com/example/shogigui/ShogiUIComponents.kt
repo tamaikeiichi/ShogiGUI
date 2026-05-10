@@ -118,6 +118,10 @@ fun SliderControlSection(
                     tint = MaterialTheme.colorScheme.onSecondaryContainer,
                     modifier = Modifier.size(20.dp)) }
 
+            val pvColor1 = MaterialTheme.colorScheme.primary
+            val pvColor2 = MaterialTheme.colorScheme.secondary
+            val pvColor3 = MaterialTheme.colorScheme.tertiary
+            val pvColorElse = MaterialTheme.colorScheme.outline
             Box(modifier = Modifier.weight(1f), contentAlignment = Alignment.Center) {
                 Canvas(modifier = Modifier.fillMaxWidth().height(64.dp).padding(horizontal = 10.dp)) {
                     val width = size.width; val height = size.height; val centerY = height / 2f
@@ -137,6 +141,17 @@ fun SliderControlSection(
                                 start = androidx.compose.ui.geometry.Offset(x, centerY),
                                 end = androidx.compose.ui.geometry.Offset(x, y),
                                 strokeWidth = stepX.coerceAtLeast(2f))
+                            //分岐で色を変えたいけど，うまくいかない
+//                        }
+//                    }
+//                    currentPath.forEachIndexed { index, node ->
+//                        if (node.isPvBranch && index <= maxIndex) {
+//                            val x = index.toFloat() * stepX
+//                            val dotColor = when (node.pvColorIndex) {
+//                                1 -> pvColor1; 2 -> pvColor2; 3 -> pvColor3; else -> pvColorElse
+//                            }
+//                            drawCircle(color = dotColor.copy(alpha = 0.7f), radius = 4f,
+//                                center = androidx.compose.ui.geometry.Offset(x, centerY))
                         }
                     }
                 }
