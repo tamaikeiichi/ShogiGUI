@@ -109,7 +109,7 @@ fun SliderControlSection(
         Row(
             modifier = Modifier.fillMaxWidth(),
             verticalAlignment = Alignment.CenterVertically,
-            horizontalArrangement = Arrangement.spacedBy(4.dp)
+            horizontalArrangement = Arrangement.spacedBy(8.dp)
         ) {
             Box(
                 modifier = Modifier
@@ -128,43 +128,49 @@ fun SliderControlSection(
             val pvColor2 = MaterialTheme.colorScheme.secondary
             val pvColor3 = MaterialTheme.colorScheme.tertiary
             val pvColorElse = MaterialTheme.colorScheme.outline
+            val activeTrackColor = MaterialTheme.colorScheme.primary
+            val inactiveTrackColor = MaterialTheme.colorScheme.outlineVariant
             Box(modifier = Modifier.weight(1f), contentAlignment = Alignment.Center) {
-                Canvas(modifier = Modifier.fillMaxWidth().height(64.dp).padding(horizontal = 10.dp)) {
+                Canvas(modifier = Modifier.fillMaxWidth().height(48.dp).padding(horizontal = 10.dp)) {
                     val width = size.width; val height = size.height; val centerY = height / 2f
-                    // 棒の太さを計算（全体の幅 / 棒の数）最低2px
+                    // バー幅: 全幅を (maxIndex+1) 等分、端がはみ出ないよう usableWidth + stroke/2 オフセット
                     val stroke = (width / (maxIndex + 1).toFloat().coerceAtLeast(1f)).coerceAtLeast(2f)
-                    // 描画の開始・終了位置を棒の太さ半分ずつ内側に入れる
                     val usableWidth = width - stroke
-                    val stepX = usableWidth / maxIndex.toFloat().coerceAtLeast(1f)
+                    val stepX = if (maxIndex > 0) usableWidth / maxIndex.toFloat() else usableWidth
+                    val offset = stroke / 2f  // 最初のバー中心を左端から offset 分内側に
+                    val activeX = offset + currentIndex.toFloat() * stepX
 
-                    drawLine(color = Color.Gray.copy(alpha = 0.2f),
-                        start = androidx.compose.ui.geometry.Offset(0f, centerY),
-                        end = androidx.compose.ui.geometry.Offset(width, centerY),
-                        strokeWidth = 1f)
+                    // トラック（非アクティブ）
+                    drawLine(inactiveTrackColor.copy(alpha = 0.4f),
+                        androidx.compose.ui.geometry.Offset(0f, centerY),
+                        androidx.compose.ui.geometry.Offset(width, centerY), 4f)
+                    // トラック（アクティブ）
+                    if (currentIndex > 0) drawLine(activeTrackColor.copy(alpha = 0.6f),
+                        androidx.compose.ui.geometry.Offset(offset, centerY),
+                        androidx.compose.ui.geometry.Offset(activeX, centerY), 4f)
 
+                    // 評価値バー
                     evalHistory.forEach { (moveCount, score) ->
                         if (moveCount <= maxIndex) {
-                            val x = (moveCount * stepX) + (stroke / 2f)
+                            val x = offset + moveCount * stepX
                             val normalized = (score.toFloat() / 2000f).coerceIn(-1f, 1f)
                             val y = centerY - (normalized * centerY)
-                            Log.d("evalHistory_debug", "手数=$moveCount score=$score y=$y")
-                            drawLine(color = if (score >= 0)
-                                Color.Red.copy(alpha = 0.4f)
-                            else Color.Blue.copy(alpha = 0.4f),
+                            drawLine(color = if (score >= 0) Color.Red.copy(alpha = 0.5f) else Color.Blue.copy(alpha = 0.5f),
                                 start = androidx.compose.ui.geometry.Offset(x, centerY),
                                 end = androidx.compose.ui.geometry.Offset(x, y),
                                 strokeWidth = stroke)
-                            //分岐で色を変えたいけど，うまくいかない
-//                        }
-//                    }
-//                    currentPath.forEachIndexed { index, node ->
-//                        if (node.isPvBranch && index <= maxIndex) {
-//                            val x = index.toFloat() * stepX
-//                            val dotColor = when (node.pvColorIndex) {
-//                                1 -> pvColor1; 2 -> pvColor2; 3 -> pvColor3; else -> pvColorElse
-//                            }
-//                            drawCircle(color = dotColor.copy(alpha = 0.7f), radius = 4f,
-//                                center = androidx.compose.ui.geometry.Offset(x, centerY))
+                        }
+                    }
+
+                    // PV分岐ドット
+                    currentPath.forEachIndexed { index, node ->
+                        if (node.isPvBranch && index <= maxIndex) {
+                            val x = offset + index.toFloat() * stepX
+                            val dotColor = when (node.pvColorIndex) {
+                                1 -> pvColor1; 2 -> pvColor2; 3 -> pvColor3; else -> pvColorElse
+                            }
+                            drawCircle(dotColor.copy(alpha = 0.8f), radius = 5f,
+                                center = androidx.compose.ui.geometry.Offset(x, centerY))
                         }
                     }
                 }
@@ -173,7 +179,13 @@ fun SliderControlSection(
                     onValueChange = { v -> onNodeChange(currentPath[v.toInt().coerceIn(0, maxIndex)]) },
                     valueRange = 0f..maxIndex.toFloat().coerceAtLeast(1f),
                     steps = (maxIndex - 1).coerceAtLeast(0),
-                    modifier = Modifier.fillMaxWidth().alpha(0.45f))
+                    modifier = Modifier.fillMaxWidth(),
+                    colors = SliderDefaults.colors(
+                        activeTrackColor = Color.Transparent,
+                        inactiveTrackColor = Color.Transparent,
+                        activeTickColor = Color.Transparent,
+                        inactiveTickColor = Color.Transparent,
+                    ))
             }
 
             Box(

@@ -205,17 +205,7 @@ class MainActivity : ComponentActivity() {
                     }
                     Log.d("callback_set", "手数=$capturedMoveCount turn=$capturedTurn")
                     engine.sendCommand("stop")
-                    bestmoveReceived = false  // リセット
-                    engine.sendCommand("stop")
-                    // bestmove が返るまで待つ
-//                    var waited = 0
-//                    while (!bestmoveReceived && waited < 100) {
-//                        delay(50)
-//                        waited += 50
-//                        Log.d("waiting_bestmove", "waited=$waited bestmoveReceived=$bestmoveReceived")
-//                    }
-                    Log.d("waiting_bestmove", "done waiting bestmoveReceived=$bestmoveReceived")
-                    //delay(100)
+                    bestmoveReceived = false
                     pvList.clear()
                     pvUsiList.clear()
 
@@ -228,9 +218,11 @@ class MainActivity : ComponentActivity() {
                         engine.sendCommand("go movetime $analysisTimeMs")
                     }
 
-                    // 自動解析の場合のみ次の手へ進む
+                    // 自動解析：bestmove を受け取ったら即座に次の手へ（タイムアウト付き）
                     if (isAutoAnalysis) {
-                        delay(analysisTimeMs + 100)
+                        val timeout = analysisTimeMs + 2000L
+                        var elapsed = 0L
+                        while (!bestmoveReceived && elapsed < timeout) { delay(50); elapsed += 50 }
                         val next = node.children.firstOrNull()
                         if (next == null) isAutoAnalysis = false
                         else currentNode = next
@@ -251,6 +243,7 @@ class MainActivity : ComponentActivity() {
                                     .padding(horizontal = 8.dp, vertical = 4.dp)
                             ) {
                                 SliderControlSection(currentNode, currentPath, evalHistory) { currentNode = it }
+                                Spacer(modifier = Modifier.height(8.dp))
                                 Row(modifier = Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.spacedBy(8.dp), verticalAlignment = Alignment.CenterVertically) {
                                     val clipboard = LocalClipboardManager.current
                                     IconButton(onClick = { showMenu = true }) { Icon(Icons.Default.Menu, "メニュー") }
@@ -292,8 +285,8 @@ class MainActivity : ComponentActivity() {
                                                     parseKif(text, freshRoot, saveKifu)
                                             }
                                             val names = extractPlayerNames(text)
-                                            names.sente?.let { senteName = it }
-                                            names.gote?.let { goteName = it }
+                                            names.sente?.let { senteName = it; prefs.edit().putString("sente_name", it).apply() }
+                                            names.gote?.let { goteName = it; prefs.edit().putString("gote_name", it).apply() }
                                             pinnedPvList = emptyMap(); pinnedPvUsiList = emptyMap(); pvBranchPath = null; evalHistory.clear()
                                             if (newNode != null) { currentNode = newNode; saveKifu(freshRoot) }
                                         }
