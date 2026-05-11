@@ -255,10 +255,16 @@ class MainActivity : ComponentActivity() {
                                         DropdownMenuItem(
                                             text = { Text("リセット") },
                                             onClick = {
+                                                engine.sendCommand("stop")
+                                                isAnalysisMode = false; isAutoAnalysis = false
                                                 currentNode = initialNode
                                                 initialNode.children.clear()
-                                                senteName = "先手"
-                                                goteName = "後手"
+                                                senteName = "先手"; goteName = "後手"
+                                                pvList.clear(); pvUsiList.clear()
+                                                pinnedPvList = emptyMap(); pinnedPvUsiList = emptyMap()
+                                                pvBranchPath = null
+                                                evalHistory.clear(); analysisHistory.clear(); analysisUsiHistory.clear()
+                                                selectedSquare = null; selectedHandPiece = null
                                                 prefs.edit()
                                                     .remove("current_tree")
                                                     .remove("sente_name")

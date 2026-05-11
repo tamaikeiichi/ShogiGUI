@@ -22,6 +22,8 @@ import androidx.compose.ui.input.pointer.pointerInput
 import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
+import androidx.compose.ui.tooling.preview.Preview
+import com.example.shogigui.ui.theme.ShogiGUITheme
 import kotlinx.coroutines.delay
 import kotlinx.coroutines.launch
 
@@ -141,13 +143,13 @@ fun SliderControlSection(
                     val activeX = offset + currentIndex.toFloat() * stepX
 
                     // トラック（非アクティブ）
-                    drawLine(inactiveTrackColor.copy(alpha = 0.4f),
-                        androidx.compose.ui.geometry.Offset(0f, centerY),
-                        androidx.compose.ui.geometry.Offset(width, centerY), 4f)
-                    // トラック（アクティブ）
-                    if (currentIndex > 0) drawLine(activeTrackColor.copy(alpha = 0.6f),
-                        androidx.compose.ui.geometry.Offset(offset, centerY),
-                        androidx.compose.ui.geometry.Offset(activeX, centerY), 4f)
+//                    drawLine(inactiveTrackColor.copy(alpha = 0.4f),
+//                        androidx.compose.ui.geometry.Offset(0f, centerY),
+//                        androidx.compose.ui.geometry.Offset(width, centerY), 4f)
+//                    // トラック（アクティブ）
+//                    if (currentIndex > 0) drawLine(activeTrackColor.copy(alpha = 0.6f),
+//                        androidx.compose.ui.geometry.Offset(offset, centerY),
+//                        androidx.compose.ui.geometry.Offset(activeX, centerY), 4f)
 
                     // 評価値バー
                     evalHistory.forEach { (moveCount, score) ->
@@ -181,11 +183,12 @@ fun SliderControlSection(
                     steps = (maxIndex - 1).coerceAtLeast(0),
                     modifier = Modifier.fillMaxWidth(),
                     colors = SliderDefaults.colors(
-                        activeTrackColor = Color.Transparent,
-                        inactiveTrackColor = Color.Transparent,
-                        activeTickColor = Color.Transparent,
-                        inactiveTickColor = Color.Transparent,
-                    ))
+                        activeTrackColor = MaterialTheme.colorScheme.primary.copy(alpha = 0.2f),
+                        inactiveTrackColor = MaterialTheme.colorScheme.surfaceVariant.copy(alpha = 0.2f),
+                        activeTickColor = MaterialTheme.colorScheme.onPrimary.copy(alpha = 0.5f),
+                        inactiveTickColor = MaterialTheme.colorScheme.onSurfaceVariant.copy(alpha = 0.5f),
+                        thumbColor = MaterialTheme.colorScheme.primary.copy(alpha = 0.5f),
+                        ))
             }
 
             Box(
@@ -208,6 +211,23 @@ fun PlayerInfoContent(name: String, mark: String, isFlipped: Boolean = false) {
     ) {
         Text(text = "$mark ", style = MaterialTheme.typography.titleMedium.copy(fontSize = 14.sp), fontWeight = FontWeight.Bold, maxLines = 1)
         Text(text = name, style = MaterialTheme.typography.titleMedium.copy(fontSize = fontSize), maxLines = 1, softWrap = false, onTextLayout = { if (it.hasVisualOverflow && fontSize > 8.sp) fontSize *= 0.9f })
+    }
+}
+
+@Preview(showBackground = true)
+@Composable
+fun SliderControlSectionPreview() {
+    val emptyBoard = emptyMap<Pair<Int, Int>, Piece>()
+    val emptyHand = emptyMap<PieceType, Int>()
+    val root = KifuNode(emptyBoard, emptyHand, emptyHand, Player.SENTE, "開始局面")
+    val n1 = KifuNode(emptyBoard, emptyHand, emptyHand, Player.GOTE, "▲7六歩", root)
+    val n2 = KifuNode(emptyBoard, emptyHand, emptyHand, Player.SENTE, "△3四歩", n1)
+    val n3 = KifuNode(emptyBoard, emptyHand, emptyHand, Player.GOTE, "▲2六歩", n2, isPvBranch = true, pvColorIndex = 1)
+    val n4 = KifuNode(emptyBoard, emptyHand, emptyHand, Player.SENTE, "△8四歩", n3, isPvBranch = true, pvColorIndex = 2)
+    val path = listOf(root, n1, n2, n3, n4)
+    val evalHistory = mapOf(0 to 0, 1 to 30, 2 to -50, 3 to 120, 4 to -200)
+    ShogiGUITheme {
+        SliderControlSection(currentNode = n2, currentPath = path, evalHistory = evalHistory) {}
     }
 }
 
