@@ -131,14 +131,21 @@ fun SliderControlSection(
             Box(modifier = Modifier.weight(1f), contentAlignment = Alignment.Center) {
                 Canvas(modifier = Modifier.fillMaxWidth().height(64.dp).padding(horizontal = 10.dp)) {
                     val width = size.width; val height = size.height; val centerY = height / 2f
-                    val stepX = width / maxIndex.toFloat().coerceAtLeast(1f)
+                    // 棒の太さを計算（全体の幅 / 棒の数）最低2px
+                    val stroke = (width / (maxIndex + 1).toFloat().coerceAtLeast(1f)).coerceAtLeast(2f)
+                    // 描画の開始・終了位置を棒の太さ半分ずつ内側に入れる
+                    val usableWidth = width - stroke
+                    val stepX = usableWidth / maxIndex.toFloat().coerceAtLeast(1f)
+
                     drawLine(color = Color.Gray.copy(alpha = 0.2f),
                         start = androidx.compose.ui.geometry.Offset(0f, centerY),
                         end = androidx.compose.ui.geometry.Offset(width, centerY),
                         strokeWidth = 1f)
+
                     evalHistory.forEach { (moveCount, score) ->
                         if (moveCount <= maxIndex) {
-                            val x = moveCount * stepX; val normalized = (score.toFloat() / 2000f).coerceIn(-1f, 1f)
+                            val x = (moveCount * stepX) + (stroke / 2f)
+                            val normalized = (score.toFloat() / 2000f).coerceIn(-1f, 1f)
                             val y = centerY - (normalized * centerY)
                             Log.d("evalHistory_debug", "手数=$moveCount score=$score y=$y")
                             drawLine(color = if (score >= 0)
@@ -146,7 +153,7 @@ fun SliderControlSection(
                             else Color.Blue.copy(alpha = 0.4f),
                                 start = androidx.compose.ui.geometry.Offset(x, centerY),
                                 end = androidx.compose.ui.geometry.Offset(x, y),
-                                strokeWidth = stepX.coerceAtLeast(2f))
+                                strokeWidth = stroke)
                             //分岐で色を変えたいけど，うまくいかない
 //                        }
 //                    }
