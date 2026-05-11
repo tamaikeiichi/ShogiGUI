@@ -183,11 +183,11 @@ fun SliderControlSection(
                     steps = (maxIndex - 1).coerceAtLeast(0),
                     modifier = Modifier.fillMaxWidth(),
                     colors = SliderDefaults.colors(
-                        activeTrackColor = MaterialTheme.colorScheme.primary.copy(alpha = 0.2f),
-                        inactiveTrackColor = MaterialTheme.colorScheme.surfaceVariant.copy(alpha = 0.2f),
-                        activeTickColor = MaterialTheme.colorScheme.onPrimary.copy(alpha = 0.5f),
-                        inactiveTickColor = MaterialTheme.colorScheme.onSurfaceVariant.copy(alpha = 0.5f),
-                        thumbColor = MaterialTheme.colorScheme.primary.copy(alpha = 0.5f),
+                        activeTrackColor = MaterialTheme.colorScheme.primary.copy(alpha = 0.07f),
+                        inactiveTrackColor = MaterialTheme.colorScheme.surfaceVariant.copy(alpha = 0.1f),
+                        activeTickColor = MaterialTheme.colorScheme.onPrimary.copy(alpha = 0.07f),
+                        inactiveTickColor = MaterialTheme.colorScheme.onSurfaceVariant.copy(alpha = 0.07f),
+                        thumbColor = MaterialTheme.colorScheme.primary.copy(alpha = 0.7f),
                         ))
             }
 
