@@ -19,6 +19,7 @@ import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.tooling.preview.Preview
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
+import com.example.shogigui.ui.theme.ShogiGUITheme
 
 enum class PieceType(val label: String, val promotedLabel: String? = null) {
     KING("玉"), ROOK("飛", "龍"), BISHOP("角", "馬"), 
@@ -52,7 +53,8 @@ fun ShogiBoard(
         1 -> MaterialTheme.colorScheme.primaryContainer
         2 -> MaterialTheme.colorScheme.secondaryContainer
         3 -> MaterialTheme.colorScheme.tertiaryContainer
-        else -> if (pvColorIndex > 0) MaterialTheme.colorScheme.surfaceVariant else MaterialTheme.colorScheme.surface
+        else -> if (pvColorIndex > 0) MaterialTheme.colorScheme.surfaceVariant
+        else MaterialTheme.colorScheme.surfaceContainerLow
     }
     val highlightColor = MaterialTheme.colorScheme.tertiaryContainer.copy(alpha = 0.6f)
     val selectionColor = MaterialTheme.colorScheme.primaryContainer.copy(alpha = 0.7f)
@@ -213,33 +215,35 @@ fun HandView(
 
 
 
-@Preview(showBackground = true)
+@Preview(showBackground = true, name = "初期配置")
 @Composable
 fun ShogiBoardPreview() {
-    val sampleBoard = mutableMapOf<Pair<Int, Int>, Piece>().apply {
-        // 主要な駒の配置
-        put(Pair(8, 4), Piece(PieceType.KING, Player.SENTE))
-        put(Pair(0, 4), Piece(PieceType.KING, Player.GOTE))
-        put(Pair(7, 7), Piece(PieceType.ROOK, Player.SENTE))
-        put(Pair(1, 1), Piece(PieceType.ROOK, Player.GOTE))
-        put(Pair(7, 1), Piece(PieceType.BISHOP, Player.SENTE))
-        put(Pair(1, 7), Piece(PieceType.BISHOP, Player.GOTE))
-        
-        // 歩
-        for (i in 0 until 9) {
-            put(Pair(6, i), Piece(PieceType.PAWN, Player.SENTE))
-            put(Pair(2, i), Piece(PieceType.PAWN, Player.GOTE))
-        }
-        
-        // 成駒のサンプル
-        put(Pair(4, 4), Piece(PieceType.PAWN, Player.SENTE, isPromoted = true))
+    ShogiGUITheme {
+        ShogiBoard(
+            boardState = createInitialBoard(),
+            selectedSquare = null,
+            onSquareClick = { _, _ -> }
+        )
     }
+}
 
-    ShogiBoard(
-        boardState = sampleBoard,
-        selectedSquare = Pair(6, 4),
-        onSquareClick = { _, _ -> }
-    )
+@Preview(showBackground = true, name = "選択・最終手・成駒あり")
+@Composable
+fun ShogiBoardPreviewHighlight() {
+    val board = createInitialBoard().toMutableMap().apply {
+        remove(Pair(6, 4))
+        put(Pair(4, 4), Piece(PieceType.PAWN, Player.SENTE))
+        put(Pair(3, 4), Piece(PieceType.PAWN, Player.SENTE, isPromoted = true))
+    }
+    ShogiGUITheme {
+        ShogiBoard(
+            boardState = board,
+            selectedSquare = Pair(4, 4),
+            lastFrom = Pair(6, 4),
+            lastTo = Pair(4, 4),
+            onSquareClick = { _, _ -> }
+        )
+    }
 }
 
 @Composable

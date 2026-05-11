@@ -25,6 +25,7 @@ import com.example.shogigui.ui.theme.ShogiGUITheme
 import kotlinx.coroutines.delay
 import android.util.Log
 import androidx.compose.ui.unit.DpOffset
+import androidx.compose.ui.tooling.preview.Preview
 import kotlin.math.roundToInt
 
 class MainActivity : ComponentActivity() {
@@ -32,6 +33,7 @@ class MainActivity : ComponentActivity() {
     private var rootNode: KifuNode? = null
     private var savedSenteName: String = "先手"
     private var savedGoteName: String = "後手"
+    private var savedGameResult: String = ""
 
     @OptIn(ExperimentalMaterial3Api::class, ExperimentalMaterial3ExpressiveApi::class)
     override fun onCreate(savedInstanceState: Bundle?) {
@@ -43,6 +45,7 @@ class MainActivity : ComponentActivity() {
             val saved = prefs.getString("current_tree", null)
             savedSenteName = prefs.getString("sente_name", "先手") ?: "先手"
             savedGoteName = prefs.getString("gote_name", "後手") ?: "後手"
+            savedGameResult = prefs.getString("game_result", "") ?: ""
             rootNode = if (saved != null) {
                 try { jsonToKifuTree(JSONObject(saved)) }
                 catch (e: Exception) { KifuNode(createInitialBoard(), emptyMap(), emptyMap(), Player.SENTE) }
@@ -114,7 +117,7 @@ class MainActivity : ComponentActivity() {
 
                 var senteName by remember { mutableStateOf(savedSenteName) }
                 var goteName by remember { mutableStateOf(savedGoteName) }
-                var gameResult by remember { mutableStateOf("") }
+                var gameResult by remember { mutableStateOf(savedGameResult) }
                 
                 val engine = remember { UsiEngine() }
                 var engineOutput by remember { mutableStateOf("エンジン待機中...") }
@@ -233,6 +236,7 @@ class MainActivity : ComponentActivity() {
 
                 Scaffold(
                     modifier = Modifier.fillMaxSize(),
+                    containerColor = MaterialTheme.colorScheme.surfaceContainerLowest,
                     bottomBar = {
                         Surface(
                             color = MaterialTheme.colorScheme.surfaceContainer,
@@ -271,6 +275,7 @@ class MainActivity : ComponentActivity() {
                                                     .remove("current_tree")
                                                     .remove("sente_name")
                                                     .remove("gote_name")
+                                                    .remove("game_result")
                                                     .apply()
                                                 showMenu = false
                                             })
@@ -296,6 +301,7 @@ class MainActivity : ComponentActivity() {
                                             names.sente?.let { senteName = it; prefs.edit().putString("sente_name", it).apply() }
                                             names.gote?.let { goteName = it; prefs.edit().putString("gote_name", it).apply() }
                                             gameResult = extractGameResult(text) ?: ""
+                                            prefs.edit().putString("game_result", gameResult).apply()
                                             pinnedPvList = emptyMap(); pinnedPvUsiList = emptyMap(); pvBranchPath = null; evalHistory.clear()
                                             if (newNode != null) { currentNode = newNode; saveKifu(freshRoot) }
                                         }
@@ -613,6 +619,75 @@ class MainActivity : ComponentActivity() {
                             }
                         }
                     } else if (targetPiece?.owner == movingPiece?.owner) onUpdate(clickedPos, null, null, null)
+                }
+            }
+        }
+    }
+}
+
+@Preview(showBackground = true, showSystemUi = true)
+@Composable
+fun MainScreenPreview() {
+    val emptyHand = emptyMap<PieceType, Int>()
+    val senteHand = mapOf(PieceType.PAWN to 2, PieceType.GOLD to 1)
+    val board = createInitialBoard()
+    val root = KifuNode(board, emptyHand, emptyHand, Player.SENTE, "開始局面")
+    val n1 = KifuNode(board, emptyHand, emptyHand, Player.GOTE, "▲7六歩", root)
+    val n2 = KifuNode(board, senteHand, emptyHand, Player.SENTE, "△3四歩", n1)
+    val path = listOf(root, n1, n2)
+    val evalHistory = mapOf(0 to 0, 1 to 120, 2 to -80)
+    val pvText = "評価: +120 (先手指しやすい)\n読み筋: ▲2六歩 △3二金 ▲2五歩"
+
+    ShogiGUITheme {
+        Scaffold(
+            modifier = Modifier.fillMaxSize(),
+            bottomBar = {
+                Surface(
+                    color = MaterialTheme.colorScheme.surfaceContainer,
+                    modifier = Modifier.fillMaxWidth()
+                ) {
+                    Column(
+                        modifier = Modifier
+                            .fillMaxWidth()
+                            .padding(horizontal = 8.dp, vertical = 4.dp)
+                    ) {
+                        SliderControlSection(n1, path, evalHistory) {}
+                        Spacer(modifier = Modifier.height(8.dp))
+                        Row(
+                            modifier = Modifier.fillMaxWidth(),
+                            horizontalArrangement = Arrangement.spacedBy(8.dp),
+                            verticalAlignment = Alignment.CenterVertically
+                        ) {
+                            OutlinedButton(onClick = {}, modifier = Modifier.weight(0.3f).height(72.dp), shape = MaterialTheme.shapes.extraLarge) {
+                                Text("読込", style = MaterialTheme.typography.labelSmall)
+                            }
+                            OutlinedButton(onClick = {}, modifier = Modifier.weight(0.3f).height(72.dp), shape = MaterialTheme.shapes.extraLarge) {
+                                Text("解析", style = MaterialTheme.typography.labelSmall)
+                            }
+                            OutlinedButton(onClick = {}, modifier = Modifier.weight(0.3f).height(72.dp), shape = MaterialTheme.shapes.extraLarge) {
+                                Text("反転", style = MaterialTheme.typography.labelSmall)
+                            }
+                            OutlinedButton(onClick = {}, modifier = Modifier.weight(0.3f).height(72.dp), shape = MaterialTheme.shapes.extraLarge) {
+                                Text("本譜", style = MaterialTheme.typography.labelSmall)
+                            }
+                        }
+                    }
+                }
+            }
+        ) { innerPadding ->
+            Column(
+                modifier = Modifier
+                    .fillMaxSize()
+                    .padding(innerPadding)
+                    .verticalScroll(rememberScrollState()),
+                horizontalAlignment = Alignment.CenterHorizontally
+            ) {
+                PlayerStatusSection("後手太郎", "△", false, emptyHand, null, Player.SENTE, false, handOnTop = false, gameResult = "") {}
+                ShogiBoard(board, Pair(6, 4), { _, _ -> }, modifier = Modifier.padding(16.dp), lastFrom = Pair(6, 4), lastTo = Pair(4, 4))
+                PlayerStatusSection("先手花子", "▲", true, senteHand, null, Player.SENTE, false, handOnTop = true, gameResult = "") {}
+                Column(modifier = Modifier.padding(8.dp)) {
+                    PvInfoCard(1, pvText) {}
+                    PvInfoCard(2, "評価: +80 (互角)\n読み筋: ▲7八金 △8四歩") {}
                 }
             }
         }
