@@ -499,17 +499,17 @@ class MainActivity : ComponentActivity() {
                             TextButton(onClick = { 
                                 val usi = "${9 - move.from.second}${('a' + move.from.first)}${9 - move.to.second}${('a' + move.to.first)}+"
                                 val label = formatUsiMove(usi, boardState)
-                                executeMove(move.from, move.to, move.piece, move.captured, true, currentNode, label, true, saveKifu) { 
-                                    currentNode = it 
+                                executeMove(move.from, move.to, move.piece, move.captured, true, currentNode, label, false, saveKifu) {
+                                    currentNode = it
                                 }
-                                promotionPendingBy = null 
-                            }) { Text("成る") } 
+                                promotionPendingBy = null
+                            }) { Text("成る") }
                         },
-                        dismissButton = { 
-                            TextButton(onClick = { 
+                        dismissButton = {
+                            TextButton(onClick = {
                                 val usi = "${9 - move.from.second}${('a' + move.from.first)}${9 - move.to.second}${('a' + move.to.first)}"
                                 val label = formatUsiMove(usi, boardState)
-                                executeMove(move.from, move.to, move.piece, move.captured, false, currentNode, label, true, saveKifu) { 
+                                executeMove(move.from, move.to, move.piece, move.captured, false, currentNode, label, false, saveKifu) { 
                                     currentNode = it 
                                 }
                                 promotionPendingBy = null 
@@ -586,7 +586,7 @@ class MainActivity : ComponentActivity() {
             if (boardState[clickedPos] == null && selectedHandPiece.first == currentPlayer) {
                 val (player, type) = selectedHandPiece
                 val moveLabel = "${9 - col}${rowToKanji('a' + row)}${type.label}打"
-                executeMove(null, clickedPos, Piece(type, player), null, false, currentNode, moveLabel, true, onSaveRequested) { onUpdate(null, null, it, null) }
+                executeMove(null, clickedPos, Piece(type, player), null, false, currentNode, moveLabel, false, onSaveRequested) { onUpdate(null, null, it, null) }
             }
         } else {
             val currentSelected = selectedSquare
@@ -607,7 +607,7 @@ class MainActivity : ComponentActivity() {
                             if (canPromote && enteringZone) onUpdate(null, null, null, PendingMove(currentSelected, clickedPos, movingPiece, targetPiece))
                             else {
                                 val moveLabel = formatUsiMove("${9-currentSelected.second}${('a'+currentSelected.first)}${9-clickedPos.second}${('a'+clickedPos.first)}", boardState)
-                                executeMove(currentSelected, clickedPos, movingPiece, targetPiece, false, currentNode, moveLabel, true, onSaveRequested) { onUpdate(null, null, it, null) }
+                                executeMove(currentSelected, clickedPos, movingPiece, targetPiece, false, currentNode, moveLabel, false, onSaveRequested) { onUpdate(null, null, it, null) }
                             }
                         }
                     } else if (targetPiece?.owner == movingPiece?.owner) onUpdate(clickedPos, null, null, null)
