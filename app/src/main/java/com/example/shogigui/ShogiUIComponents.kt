@@ -69,6 +69,7 @@ fun PlayerStatusSection(
     currentPlayer: Player,
     isFlipped: Boolean = false,
     handOnTop: Boolean = false,
+    gameResult: String = "",
     onSelected: (Pair<Player, PieceType>?) -> Unit
 ) {
     val player = if (mark == "▲") Player.SENTE else Player.GOTE
@@ -82,7 +83,7 @@ fun PlayerStatusSection(
         )
     }
     val nameView: @Composable () -> Unit = {
-        PlayerInfoContent(name = playerName, mark = mark, isFlipped = isFlipped)
+        PlayerInfoContent(name = playerName, mark = mark, isFlipped = isFlipped, gameResult = if (mark == "▲") gameResult else "")
     }
     Column(modifier = Modifier.fillMaxWidth()) {
         if (handOnTop) { handView(); nameView() } else { nameView(); handView() }
@@ -201,16 +202,29 @@ fun SliderControlSection(
 }
 
 @Composable
-fun PlayerInfoContent(name: String, mark: String, isFlipped: Boolean = false) {
+fun PlayerInfoContent(name: String, mark: String, isFlipped: Boolean = false, gameResult: String = "") {
     val defaultFontSize = MaterialTheme.typography.titleMedium.fontSize
     var fontSize by remember(name) { mutableStateOf(defaultFontSize) }
-    Row(
-        modifier = Modifier.fillMaxWidth().padding(horizontal = 8.dp, vertical = 4.dp),
-        verticalAlignment = Alignment.CenterVertically,
-        horizontalArrangement = if(((mark == "▲") && !isFlipped) || ((mark == "△") && isFlipped)) Arrangement.End else Arrangement.Start
+    val isRight = ((mark == "▲") && !isFlipped) || ((mark == "△") && isFlipped)
+    Column(
+        modifier = Modifier.fillMaxWidth(),
+        horizontalAlignment = if (isRight) Alignment.End else Alignment.Start
     ) {
-        Text(text = "$mark ", style = MaterialTheme.typography.titleMedium.copy(fontSize = 14.sp), fontWeight = FontWeight.Bold, maxLines = 1)
-        Text(text = name, style = MaterialTheme.typography.titleMedium.copy(fontSize = fontSize), maxLines = 1, softWrap = false, onTextLayout = { if (it.hasVisualOverflow && fontSize > 8.sp) fontSize *= 0.9f })
+        Row(
+            modifier = Modifier.padding(horizontal = 8.dp, vertical = 4.dp),
+            verticalAlignment = Alignment.CenterVertically
+        ) {
+            Text(text = "$mark ", style = MaterialTheme.typography.titleMedium.copy(fontSize = 14.sp), fontWeight = FontWeight.Bold, maxLines = 1)
+            Text(text = name, style = MaterialTheme.typography.titleMedium.copy(fontSize = fontSize), maxLines = 1, softWrap = false, onTextLayout = { if (it.hasVisualOverflow && fontSize > 8.sp) fontSize *= 0.9f })
+        }
+        if (gameResult.isNotEmpty()) {
+            Text(
+                text = gameResult,
+                style = MaterialTheme.typography.labelSmall,
+                color = MaterialTheme.colorScheme.onSurfaceVariant,
+                modifier = Modifier.padding(horizontal = 8.dp)
+            )
+        }
     }
 }
 

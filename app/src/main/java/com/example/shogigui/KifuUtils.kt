@@ -43,19 +43,23 @@ fun parseInfo(
                         }
                         "mate" -> {
                             val v = value.toIntOrNull() ?: 0
-                            val winner = if (v > 0) {
-                                if (turn == Player.SENTE) "先手勝ち" else "後手勝ち"
-                            } else if (v < 0) {
-                                if (turn == Player.SENTE) "後手勝ち" else "先手勝ち"
-                            } else ""
-                            if (winner.isNotEmpty()) "${kotlin.math.abs(v)}手詰（$winner）" else "詰み"
+                            val isLosing = value.startsWith("-")  // "-0" や "-N" は手番側が負け
+                            val winner = when {
+                                v > 0 -> if (turn == Player.SENTE) "先手勝ち" else "後手勝ち"
+                                v < 0 -> if (turn == Player.SENTE) "後手勝ち" else "先手勝ち"
+                                isLosing -> if (turn == Player.SENTE) "後手勝ち" else "先手勝ち"
+                                else -> if (turn == Player.SENTE) "先手勝ち" else "後手勝ち"
+                            }
+                            val moves = kotlin.math.abs(v)
+                            if (moves > 0) "${moves}手詰\n$winner" else "詰み\n$winner"
                         }
                         else -> ""
                     }
                 }
             }
             "pv" -> {
-                val pvMoves = parts.drop(i + 1)
+                val usiMoveRegex = Regex("^([1-9][a-i][1-9][a-i][+]?|[PNSLGBR]\\*[1-9][a-i])$")
+                val pvMoves = parts.drop(i + 1).filter { usiMoveRegex.matches(it) }
                 if (pvMoves.isNotEmpty()) {
                     val formattedMoves = mutableListOf<String>()
                     var tempTurn = turn
@@ -286,6 +290,31 @@ fun jsonToKifuTree(json: JSONObject, parent: KifuNode? = null): KifuNode {
     val childrenJson = json.getJSONArray("children")
     for (i in 0 until childrenJson.length()) { node.children.add(jsonToKifuTree(childrenJson.getJSONObject(i), node)) }
     return node
+}
+
+fun extractGameResult(text: String): String? {
+    var lastTurn: Char? = null
+    for (line in text.lines()) {
+        val t = line.trim()
+        if (t.matches(Regex("[+-]\\d{4}[A-Z]{2}.*"))) lastTurn = t[0]
+        if (t.startsWith("結果：") || t.startsWith("結果:")) {
+            val v = t.substringAfterLast("：").substringAfterLast(":").trim()
+            if (v.isNotEmpty()) return v
+        }
+        val kifMatch = Regex("""まで\d+手で(先手|後手)の勝ち""").find(t)
+        if (kifMatch != null) return "${kifMatch.groupValues[1]}勝ち"
+        if (t == "%TORYO") return when (lastTurn) { '+' -> "先手勝ち"; '-' -> "後手勝ち"; else -> null }
+        if (t == "%KACHI") return when (lastTurn) { '+' -> "後手勝ち"; '-' -> "先手勝ち"; else -> null }
+        if (t.startsWith("'")) when {
+            t.contains("先手勝ち") -> return "先手勝ち"
+            t.contains("後手勝ち") -> return "後手勝ち"
+            t.contains("引き分け") -> return "引き分け"
+            t.contains("持将棋") -> return "持将棋"
+            t.contains("千日手") -> return "千日手"
+        }
+        if (t in listOf("持将棋", "千日手", "引き分け")) return t
+    }
+    return null
 }
 
 data class PlayerNames(val sente: String?, val gote: String?)

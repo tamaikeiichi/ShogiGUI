@@ -114,6 +114,7 @@ class MainActivity : ComponentActivity() {
 
                 var senteName by remember { mutableStateOf(savedSenteName) }
                 var goteName by remember { mutableStateOf(savedGoteName) }
+                var gameResult by remember { mutableStateOf("") }
                 
                 val engine = remember { UsiEngine() }
                 var engineOutput by remember { mutableStateOf("エンジン待機中...") }
@@ -125,6 +126,7 @@ class MainActivity : ComponentActivity() {
                     capturedMoveCount: Int ->
                     Log.d("callback_used", "手数=$capturedMoveCount turn=$capturedTurn line=$rawLine")
                     val line = rawLine.trim()
+                    Log.d("EngineOutput", line)
                     when {
                         line == "usiok" -> {
                             engine.sendCommand("setoption name Threads value $threadCount")
@@ -142,7 +144,7 @@ class MainActivity : ComponentActivity() {
                             }
                             val parsed = parseInfo(line, capturedBoard, capturedTurn)
 
-                            if (parsed.contains("評価") || parsed.contains("読み筋")) {
+                            if (parsed.isNotEmpty()) {
                                 pvList[rank] = parsed
                                 engineOutput = pvList.toSortedMap().values.joinToString("\n---\n")
                                 analysisHistory[capturedMoveCount] = pvList.toMap()
@@ -259,7 +261,7 @@ class MainActivity : ComponentActivity() {
                                                 isAnalysisMode = false; isAutoAnalysis = false
                                                 currentNode = initialNode
                                                 initialNode.children.clear()
-                                                senteName = "先手"; goteName = "後手"
+                                                senteName = "先手"; goteName = "後手"; gameResult = ""
                                                 pvList.clear(); pvUsiList.clear()
                                                 pinnedPvList = emptyMap(); pinnedPvUsiList = emptyMap()
                                                 pvBranchPath = null
@@ -293,6 +295,7 @@ class MainActivity : ComponentActivity() {
                                             val names = extractPlayerNames(text)
                                             names.sente?.let { senteName = it; prefs.edit().putString("sente_name", it).apply() }
                                             names.gote?.let { goteName = it; prefs.edit().putString("gote_name", it).apply() }
+                                            gameResult = extractGameResult(text) ?: ""
                                             pinnedPvList = emptyMap(); pinnedPvUsiList = emptyMap(); pvBranchPath = null; evalHistory.clear()
                                             if (newNode != null) { currentNode = newNode; saveKifu(freshRoot) }
                                         }
@@ -359,7 +362,7 @@ class MainActivity : ComponentActivity() {
 
                             Column(modifier = Modifier.weight(0.5f).verticalScroll(rememberScrollState()), horizontalAlignment = Alignment.CenterHorizontally, verticalArrangement = Arrangement.spacedBy(8.dp)) {
                                 val topP = if (isBoardFlipped) Player.SENTE else Player.GOTE; val botP = if (isBoardFlipped) Player.GOTE else Player.SENTE
-                                PlayerStatusSection(if(topP==Player.SENTE) senteName else goteName, if(topP==Player.SENTE) "▲" else "△", currentPlayer==topP, if(topP==Player.SENTE) senteHand else goteHand, selectedHandPiece, currentPlayer, isBoardFlipped, handOnTop = false) { selectedHandPiece = it; selectedSquare = null }
+                                PlayerStatusSection(if(topP==Player.SENTE) senteName else goteName, if(topP==Player.SENTE) "▲" else "△", currentPlayer==topP, if(topP==Player.SENTE) senteHand else goteHand, selectedHandPiece, currentPlayer, isBoardFlipped, handOnTop = false, gameResult = gameResult) { selectedHandPiece = it; selectedSquare = null }
                                 ShogiBoard(boardState, selectedSquare, { r, c ->
                                     handleSquareClick(r, c, boardState, currentPlayer, selectedSquare, selectedHandPiece, currentNode, saveKifu) { s, h, n, p ->
                                         selectedSquare = s; selectedHandPiece = h
@@ -367,7 +370,7 @@ class MainActivity : ComponentActivity() {
                                         if(p != null) promotionPendingBy = p
                                     }
                                 }, isBoardFlipped, Modifier.sizeIn(maxWidth = 500.dp, maxHeight = 500.dp), currentNode.lastFrom, currentNode.lastTo, currentNode.pvColorIndex)
-                                PlayerStatusSection(if(botP==Player.SENTE) senteName else goteName, if(botP==Player.SENTE) "▲" else "△", currentPlayer==botP, if(botP==Player.SENTE) senteHand else goteHand, selectedHandPiece, currentPlayer, isBoardFlipped, handOnTop = true) { selectedHandPiece = it; selectedSquare = null }
+                                PlayerStatusSection(if(botP==Player.SENTE) senteName else goteName, if(botP==Player.SENTE) "▲" else "△", currentPlayer==botP, if(botP==Player.SENTE) senteHand else goteHand, selectedHandPiece, currentPlayer, isBoardFlipped, handOnTop = true, gameResult = gameResult) { selectedHandPiece = it; selectedSquare = null }
                             }
                             Column(
                                 modifier = Modifier
@@ -402,7 +405,7 @@ class MainActivity : ComponentActivity() {
                         Column(modifier = Modifier.fillMaxSize().padding(innerPadding).verticalScroll(rememberScrollState()), horizontalAlignment = Alignment.CenterHorizontally) {
 
                             val topP = if (isBoardFlipped) Player.SENTE else Player.GOTE; val botP = if (isBoardFlipped) Player.GOTE else Player.SENTE
-                            PlayerStatusSection(if(topP==Player.SENTE) senteName else goteName, if(topP==Player.SENTE) "▲" else "△", currentPlayer==topP, if(topP==Player.SENTE) senteHand else goteHand, selectedHandPiece, currentPlayer, isBoardFlipped, handOnTop = false) { selectedHandPiece = it; selectedSquare = null }
+                            PlayerStatusSection(if(topP==Player.SENTE) senteName else goteName, if(topP==Player.SENTE) "▲" else "△", currentPlayer==topP, if(topP==Player.SENTE) senteHand else goteHand, selectedHandPiece, currentPlayer, isBoardFlipped, handOnTop = false, gameResult = gameResult) { selectedHandPiece = it; selectedSquare = null }
                             ShogiBoard(boardState, selectedSquare, { r, c ->
                                 handleSquareClick(r, c, boardState, currentPlayer, selectedSquare, selectedHandPiece, currentNode, saveKifu) { s, h, n, p ->
                                     selectedSquare = s; selectedHandPiece = h
@@ -410,7 +413,7 @@ class MainActivity : ComponentActivity() {
                                     if(p != null) promotionPendingBy = p
                                 }
                             }, isBoardFlipped, Modifier.padding(16.dp), currentNode.lastFrom, currentNode.lastTo, currentNode.pvColorIndex)
-                            PlayerStatusSection(if(botP==Player.SENTE) senteName else goteName, if(botP==Player.SENTE) "▲" else "△", currentPlayer==botP, if(botP==Player.SENTE) senteHand else goteHand, selectedHandPiece, currentPlayer, isBoardFlipped, handOnTop = true) { selectedHandPiece = it; selectedSquare = null }
+                            PlayerStatusSection(if(botP==Player.SENTE) senteName else goteName, if(botP==Player.SENTE) "▲" else "△", currentPlayer==botP, if(botP==Player.SENTE) senteHand else goteHand, selectedHandPiece, currentPlayer, isBoardFlipped, handOnTop = true, gameResult = gameResult) { selectedHandPiece = it; selectedSquare = null }
                             Column(modifier = Modifier.padding(8.dp)) {
                                 (if (pinnedPvList.isNotEmpty()) pinnedPvList else pvList.toMap()).entries
                                     .sortedBy { it.key }
