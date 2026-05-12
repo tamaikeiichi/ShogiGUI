@@ -83,7 +83,7 @@ fun PlayerStatusSection(
         )
     }
     val nameView: @Composable () -> Unit = {
-        PlayerInfoContent(name = playerName, mark = mark, isFlipped = isFlipped, gameResult = if (mark == "▲") gameResult else "")
+        PlayerInfoContent(name = playerName, mark = mark, isFlipped = isFlipped, gameResult = gameResult)
     }
     Column(modifier = Modifier.fillMaxWidth()) {
         if (handOnTop) { handView(); nameView() } else { nameView(); handView() }
@@ -217,7 +217,7 @@ fun PlayerInfoContent(name: String, mark: String, isFlipped: Boolean = false, ga
             Text(text = "$mark ", style = MaterialTheme.typography.titleMedium.copy(fontSize = 14.sp), fontWeight = FontWeight.Bold, maxLines = 1)
             Text(text = name, style = MaterialTheme.typography.titleMedium.copy(fontSize = fontSize), maxLines = 1, softWrap = false, onTextLayout = { if (it.hasVisualOverflow && fontSize > 8.sp) fontSize *= 0.9f })
         }
-        if (gameResult.isNotEmpty()) {
+        if (gameResult.isNotEmpty() && isRight) {
             Text(
                 text = gameResult,
                 style = MaterialTheme.typography.labelSmall,
