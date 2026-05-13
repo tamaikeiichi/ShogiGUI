@@ -1,6 +1,5 @@
-package com.example.shogigui
+package com.tksoft.shogigui
 
-import android.content.Context.MODE_PRIVATE
 import android.os.Bundle
 import androidx.activity.ComponentActivity
 import androidx.activity.compose.setContent
@@ -21,11 +20,16 @@ import androidx.compose.ui.platform.LocalClipboardManager
 import androidx.compose.ui.res.painterResource
 import androidx.compose.ui.unit.dp
 import org.json.JSONObject
-import com.example.shogigui.ui.theme.ShogiGUITheme
+import com.tksoft.shogigui.ui.theme.ShogiGUITheme
 import kotlinx.coroutines.delay
 import android.util.Log
+import androidx.compose.ui.text.SpanStyle
+import androidx.compose.ui.text.buildAnnotatedString
+import androidx.compose.ui.text.font.FontWeight
+import androidx.compose.ui.text.withStyle
 import androidx.compose.ui.unit.DpOffset
 import androidx.compose.ui.tooling.preview.Preview
+import androidx.compose.ui.unit.sp
 import kotlin.math.roundToInt
 
 class MainActivity : ComponentActivity() {
@@ -452,7 +456,22 @@ class MainActivity : ComponentActivity() {
                 }
 
                 if (showSettingsDialog) {
-                    AlertDialog(onDismissRequest = { showSettingsDialog = false }, title = { Text("設定") },
+                    AlertDialog(onDismissRequest = { showSettingsDialog = false }, title = { Text(
+                        text = buildAnnotatedString {
+                            // 通常のサイズで表示
+                            append("設定 ")
+
+                            // エンジン名の部分だけスタイルを変える
+                            withStyle(style = SpanStyle(
+                                fontSize = 10.sp,
+                                fontWeight = FontWeight.Normal
+                            )
+                            ) {
+                                append("Suisho5-YaneuraOu-v7.5.0")
+                            }
+                        },
+                        style = MaterialTheme.typography.bodyMedium // 全体のベースとなるスタイル
+                    ) },
                         text = {
                             Column(verticalArrangement = Arrangement.spacedBy(16.dp)) {
                                 // 思考時間

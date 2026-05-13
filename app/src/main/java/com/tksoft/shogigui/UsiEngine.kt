@@ -1,4 +1,4 @@
-package com.example.shogigui
+package com.tksoft.shogigui
 
 import android.os.Handler
 import android.os.Looper

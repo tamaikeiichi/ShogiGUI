@@ -1,6 +1,5 @@
-package com.example.shogigui
+package com.tksoft.shogigui
 
-import android.R.attr.tag
 import android.util.Log
 import androidx.compose.foundation.background
 import androidx.compose.foundation.border
@@ -19,7 +18,7 @@ import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.tooling.preview.Preview
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
-import com.example.shogigui.ui.theme.ShogiGUITheme
+import com.tksoft.shogigui.ui.theme.ShogiGUITheme
 
 enum class PieceType(val label: String, val promotedLabel: String? = null) {
     KING("玉"), ROOK("飛", "龍"), BISHOP("角", "馬"), 

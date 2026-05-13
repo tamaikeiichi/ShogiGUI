@@ -1,6 +1,5 @@
-package com.example.shogigui
+package com.tksoft.shogigui
 
-import android.content.SharedPreferences
 import android.util.Log
 import org.json.JSONArray
 import org.json.JSONObject

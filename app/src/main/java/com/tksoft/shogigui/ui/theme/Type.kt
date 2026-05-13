@@ -1,4 +1,4 @@
-package com.example.shogigui.ui.theme
+package com.tksoft.shogigui.ui.theme
 
 import androidx.compose.material3.Typography
 import androidx.compose.ui.text.TextStyle

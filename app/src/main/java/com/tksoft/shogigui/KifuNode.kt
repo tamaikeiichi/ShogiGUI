@@ -1,4 +1,4 @@
-package com.example.shogigui
+package com.tksoft.shogigui
 
 import androidx.compose.runtime.mutableStateListOf
 
