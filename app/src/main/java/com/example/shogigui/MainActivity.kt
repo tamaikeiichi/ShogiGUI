@@ -65,8 +65,9 @@ class MainActivity : ComponentActivity() {
                 }
 
                 // --- 状態管理 ---
+                var resetKey by remember { mutableIntStateOf(0) }
                 var pvBranchPath by remember { mutableStateOf<List<KifuNode>?>(null) }
-                val currentPath = remember(currentNode, initialNode, pvBranchPath) {
+                val currentPath = remember(currentNode, initialNode, pvBranchPath, resetKey) {
                     val path = mutableListOf<KifuNode>()
                     val pvPath = pvBranchPath
                     if (pvPath != null && pvPath.isNotEmpty()) {
@@ -271,6 +272,7 @@ class MainActivity : ComponentActivity() {
                                                 pvBranchPath = null
                                                 evalHistory.clear(); analysisHistory.clear(); analysisUsiHistory.clear()
                                                 selectedSquare = null; selectedHandPiece = null
+                                                resetKey++
                                                 prefs.edit()
                                                     .remove("current_tree")
                                                     .remove("sente_name")
@@ -282,6 +284,15 @@ class MainActivity : ComponentActivity() {
                                         DropdownMenuItem(
                                             text = { Text("現局面から最後まで解析") },
                                             onClick = { isAutoAnalysis = true; showMenu = false })
+                                        DropdownMenuItem(
+                                            text = { Text("本譜をエクスポート(CSA)") },
+                                            onClick = {
+                                                var root = currentNode
+                                                while (root.parent != null) root = root.parent!!
+                                                val csa = exportMainLineToCsa(root, senteName, goteName)
+                                                clipboard.setText(androidx.compose.ui.text.AnnotatedString(csa))
+                                                showMenu = false
+                                            })
                                         DropdownMenuItem(
                                             text = { Text("設定") },
                                             onClick = { showSettingsDialog = true; showMenu = false })

@@ -292,6 +292,71 @@ fun jsonToKifuTree(json: JSONObject, parent: KifuNode? = null): KifuNode {
     return node
 }
 
+private fun pieceTypeToCsa(type: PieceType, isPromoted: Boolean): String = when {
+    isPromoted -> when (type) {
+        PieceType.PAWN -> "TO"; PieceType.LANCE -> "NY"; PieceType.KNIGHT -> "NK"
+        PieceType.SILVER -> "NG"; PieceType.BISHOP -> "UM"; PieceType.ROOK -> "RY"
+        else -> "OU"
+    }
+    else -> when (type) {
+        PieceType.PAWN -> "FU"; PieceType.LANCE -> "KY"; PieceType.KNIGHT -> "KE"
+        PieceType.SILVER -> "GI"; PieceType.GOLD -> "KI"; PieceType.BISHOP -> "KA"
+        PieceType.ROOK -> "HI"; PieceType.KING -> "OU"
+    }
+}
+
+fun exportMainLineToCsa(rootNode: KifuNode, senteName: String, goteName: String): String {
+    val sb = StringBuilder()
+    sb.appendLine("V2.2")
+    sb.appendLine("N+$senteName")
+    sb.appendLine("N-$goteName")
+
+    for (rank in 0 until 9) {
+        sb.append("P${rank + 1}")
+        for (col in 0 until 9) {
+            val piece = rootNode.board[Pair(rank, col)]
+            if (piece == null) {
+                sb.append(" * ")
+            } else {
+                val sign = if (piece.owner == Player.SENTE) "+" else "-"
+                sb.append("$sign${pieceTypeToCsa(piece.type, piece.isPromoted)}")
+            }
+        }
+        sb.appendLine()
+    }
+    if (rootNode.senteHand.isNotEmpty()) {
+        sb.append("P+")
+        rootNode.senteHand.forEach { (type, count) -> repeat(count) { sb.append("00${pieceTypeToCsa(type, false)}") } }
+        sb.appendLine()
+    }
+    if (rootNode.goteHand.isNotEmpty()) {
+        sb.append("P-")
+        rootNode.goteHand.forEach { (type, count) -> repeat(count) { sb.append("00${pieceTypeToCsa(type, false)}") } }
+        sb.appendLine()
+    }
+    sb.appendLine(if (rootNode.currentPlayer == Player.SENTE) "+" else "-")
+
+    var node = rootNode
+    while (true) {
+        val next = node.children.firstOrNull { !it.isPvBranch } ?: break
+        val to = next.lastTo ?: break
+        val from = next.lastFrom
+        val turn = if (node.currentPlayer == Player.SENTE) "+" else "-"
+        val destPiece = next.board[to] ?: break
+        val toFile = 9 - to.second; val toRank = to.first + 1
+        val moveStr = if (from == null) {
+            "${turn}00${toFile}${toRank}${pieceTypeToCsa(destPiece.type, destPiece.isPromoted)}"
+        } else {
+            val fromFile = 9 - from.second; val fromRank = from.first + 1
+            "${turn}${fromFile}${fromRank}${toFile}${toRank}${pieceTypeToCsa(destPiece.type, destPiece.isPromoted)}"
+        }
+        sb.appendLine(moveStr)
+        node = next
+    }
+    sb.append("%TORYO")
+    return sb.toString()
+}
+
 fun extractGameResult(text: String): String? {
     var lastTurn: Char? = null
     for (line in text.lines()) {
