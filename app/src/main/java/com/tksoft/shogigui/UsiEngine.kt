@@ -23,11 +23,10 @@ class UsiEngine(private val dummyPath: String = "") {
     private external fun nativeSetWorkDir(path: String)
 
     fun start(workDir: String = "") {
-        Thread({
+        executor.execute {
             try {
-                if (workDir.isNotEmpty()) {
-                    nativeSetWorkDir(workDir)
-                }
+                if (workDir.isNotEmpty()) nativeSetWorkDir(workDir)
+                //nativeSendCommand("usi")
                 // 必要なコマンドを全部先に積んでおく
                 nativeSendCommand("usi")
                 nativeSendCommand("setoption name Threads value 4")
@@ -36,25 +35,23 @@ class UsiEngine(private val dummyPath: String = "") {
                 nativeSendCommand("isready")
                 nativeStart()
             } catch (e: Exception) {
-                mainHandler.post {
-                    onOutputReceived?.invoke("Error: " + e.message)
-                }
+                mainHandler.post { onOutputReceived?.invoke("Error: " + e.message) }
             }
-        }, "USI-Engine-Thread").start()
+        }//, "USI-Engine-Thread").start()
     }
 
     private val commandQueue = java.util.concurrent.LinkedBlockingQueue<String>()
 
     init {
-        Thread({
+        executor.execute {
             while (true) {
-                val command = commandQueue.take()  // コマンドが来るまで待機
+                val command = commandQueue.take()
                 try {
                     android.util.Log.d("ShogiJNI", "sendCommand: $command")
                     nativeSendCommand(command)
                 } catch (e: Exception) {}
             }
-        }, "USI-Command-Thread").start()
+        }
     }
 
     fun sendCommand(command: String) {
