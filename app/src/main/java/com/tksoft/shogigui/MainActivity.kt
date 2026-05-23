@@ -321,7 +321,7 @@ class MainActivity : ComponentActivity() {
                                             gameResult = extractGameResult(text) ?: ""
                                             prefs.edit().putString("game_result", gameResult).apply()
                                             pinnedPvList = emptyMap(); pinnedPvUsiList = emptyMap(); pvBranchPath = null; evalHistory.clear()
-                                            if (newNode != null) { currentNode = newNode; saveKifu(freshRoot) }
+                                            if (newNode != null) { currentNode = freshRoot; saveKifu(freshRoot) }
                                         }
                                     }, modifier = Modifier.weight(0.3f).height(72.dp),
                                         shape = MaterialTheme.shapes.extraLarge) {
