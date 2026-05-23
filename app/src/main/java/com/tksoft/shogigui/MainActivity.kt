@@ -162,6 +162,9 @@ class MainActivity : ComponentActivity() {
                                     val score = scoreLine?.substringAfter("評価:")?.trim()
                                         ?.split(" ")?.firstOrNull()?.replace("+", "")?.toIntOrNull()
                                     if (score != null) evalHistory[capturedMoveCount] = score  // ← 変更
+                                } else if (rank == 1 && (parsed.contains("手詰") || parsed.contains("詰み"))) {
+                                    val isSenteWin = parsed.contains("先手勝ち")
+                                    evalHistory[capturedMoveCount] = if (isSenteWin) 30000 else -30000
                                 }
                             }
                         }

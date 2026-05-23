@@ -153,9 +153,16 @@ fun SliderControlSection(
                     evalHistory.forEach { (moveCount, score) ->
                         if (moveCount <= maxIndex) {
                             val x = offset + moveCount * stepX
+                            val isMate = score > 10000 || score < -10000
                             val normalized = (score.toFloat() / 2000f).coerceIn(-1f, 1f)
                             val y = centerY - (normalized * centerY)
-                            drawLine(color = if (score >= 0) Color.Red.copy(alpha = 0.5f) else Color.Blue.copy(alpha = 0.5f),
+                            val barColor = when {
+                                isMate && score > 0 -> Color(0xFFAA0000)
+                                isMate && score < 0 -> Color(0xFF0000AA)
+                                score >= 0 -> Color.Red.copy(alpha = 0.5f)
+                                else -> Color.Blue.copy(alpha = 0.5f)
+                            }
+                            drawLine(color = barColor,
                                 start = androidx.compose.ui.geometry.Offset(x, centerY),
                                 end = androidx.compose.ui.geometry.Offset(x, y),
                                 strokeWidth = stroke)

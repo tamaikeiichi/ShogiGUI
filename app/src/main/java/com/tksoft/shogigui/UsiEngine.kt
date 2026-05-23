@@ -43,7 +43,7 @@ class UsiEngine(private val dummyPath: String = "") {
     private val commandQueue = java.util.concurrent.LinkedBlockingQueue<String>()
 
     init {
-        executor.execute {
+        Thread({
             while (true) {
                 val command = commandQueue.take()
                 try {
@@ -51,7 +51,7 @@ class UsiEngine(private val dummyPath: String = "") {
                     nativeSendCommand(command)
                 } catch (e: Exception) {}
             }
-        }
+        }, "USI-Command-Thread").start()
     }
 
     fun sendCommand(command: String) {

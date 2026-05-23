@@ -63,7 +63,7 @@ private:
 };
 
 extern "C" JNIEXPORT void JNICALL
-Java_com_example_shogigui_UsiEngine_nativeStart(JNIEnv* env, jobject thiz) {
+Java_com_tksoft_shogigui_UsiEngine_nativeStart(JNIEnv* env, jobject thiz) {
     env->GetJavaVM(&g_vm);
     {
         std::lock_guard<std::mutex> lock(g_mutex);
@@ -154,7 +154,7 @@ Java_com_example_shogigui_UsiEngine_nativeStart(JNIEnv* env, jobject thiz) {
 }
 
 extern "C" JNIEXPORT void JNICALL
-Java_com_example_shogigui_UsiEngine_nativeSendCommand(JNIEnv* env, jobject thiz, jstring command) {
+Java_com_tksoft_shogigui_UsiEngine_nativeSendCommand(JNIEnv* env, jobject thiz, jstring command) {
     const char* cmd = env->GetStringUTFChars(command, nullptr);
     __android_log_print(ANDROID_LOG_DEBUG, "ShogiJNI", "sendCommand called: %s", cmd);
     std_input.push(std::string(cmd));
@@ -163,12 +163,12 @@ Java_com_example_shogigui_UsiEngine_nativeSendCommand(JNIEnv* env, jobject thiz,
 }
 
 extern "C" JNIEXPORT void JNICALL
-Java_com_example_shogigui_UsiEngine_nativeStop(JNIEnv* env, jobject thiz) {
+Java_com_tksoft_shogigui_UsiEngine_nativeStop(JNIEnv* env, jobject thiz) {
     std_input.push("quit");
 }
 
 extern "C" JNIEXPORT void JNICALL
-Java_com_example_shogigui_UsiEngine_nativeSetWorkDir(JNIEnv* env, jobject thiz, jstring path) {
+Java_com_tksoft_shogigui_UsiEngine_nativeSetWorkDir(JNIEnv* env, jobject thiz, jstring path) {
     const char* p = env->GetStringUTFChars(path, nullptr);
     chdir(p);
     env->ReleaseStringUTFChars(path, p);
