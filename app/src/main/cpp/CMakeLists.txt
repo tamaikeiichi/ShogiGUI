@@ -10,10 +10,15 @@ add_library(yaneuraou SHARED ${ENGINE_SOURCES} native-lib.cpp)
 # コンパイルオプションとマクロ定義
 # CPUアーキテクチャに応じた最適化フラグの設定
 if(${ANDROID_ABI} STREQUAL "x86_64")
-    target_compile_definitions(yaneuraou PRIVATE USE_SSE42)
+    target_compile_definitions(yaneuraou PRIVATE USE_SSE42 COMPILED_ARCH="x86_64")
+    message(STATUS "Compiling for x86_64 (SSE4.2 enabled)")
 elseif(${ANDROID_ABI} STREQUAL "arm64-v8a")
     # ARM向けの定義（やねうら王の仕様に合わせる）
-    target_compile_definitions(yaneuraou PRIVATE NO_SSE)
+    target_compile_definitions(yaneuraou PRIVATE NO_SSE COMPILED_ARCH="arm64-v8a")
+    message(STATUS "Compiling for arm64-v8a (No SSE)")
+else()
+    target_compile_definitions(yaneuraou PRIVATE COMPILED_ARCH="${ANDROID_ABI}")
+    message(STATUS "Compiling for unknown ABI: ${ANDROID_ABI}")
 endif()
 
 target_compile_definitions(yaneuraou PRIVATE

@@ -39,6 +39,7 @@ private:
 
         // Logcat にも出力 (タグ: ShogiJNI)
         __android_log_print(ANDROID_LOG_DEBUG, "ShogiJNI", "Engine: %s", line.c_str());
+        __android_log_print(ANDROID_LOG_DEBUG, "ShogiGUI", "Compiled arch: %s", COMPILED_ARCH);
 
         std::lock_guard<std::mutex> lock(g_mutex);
         if (!g_obj || !g_vm) return;

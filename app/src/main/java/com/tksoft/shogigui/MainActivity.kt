@@ -101,6 +101,7 @@ class MainActivity : ComponentActivity() {
                 var pinnedPvList by remember { mutableStateOf<Map<Int, String>>(emptyMap()) }
                 var pinnedPvUsiList by remember { mutableStateOf<Map<Int, List<String>>>(emptyMap()) }
                 val evalHistory = remember { mutableStateMapOf<Int, Int>() }
+                var savedMainEvalHistory by remember { mutableStateOf<Map<Int, Int>>(emptyMap()) }
                 val analysisHistory = remember { mutableStateMapOf<Int, Map<Int, String>>() }
                 val analysisUsiHistory = remember { mutableStateMapOf<Int, Map<Int, List<String>>>() }
 
@@ -277,7 +278,7 @@ class MainActivity : ComponentActivity() {
                                                 pvList.clear(); pvUsiList.clear()
                                                 pinnedPvList = emptyMap(); pinnedPvUsiList = emptyMap()
                                                 pvBranchPath = null
-                                                evalHistory.clear(); analysisHistory.clear(); analysisUsiHistory.clear()
+                                                evalHistory.clear(); savedMainEvalHistory = emptyMap(); analysisHistory.clear(); analysisUsiHistory.clear()
                                                 selectedSquare = null; selectedHandPiece = null
                                                 resetKey++
                                                 prefs.edit()
@@ -290,7 +291,7 @@ class MainActivity : ComponentActivity() {
                                             })
                                         DropdownMenuItem(
                                             text = { Text("現局面から最後まで解析") },
-                                            onClick = { isAutoAnalysis = true; showMenu = false })
+                                            onClick = { isAutoAnalysis = true; pinnedPvList = emptyMap(); pinnedPvUsiList = emptyMap(); showMenu = false })
                                         DropdownMenuItem(
                                             text = { Text("本譜をエクスポート(CSA)") },
                                             onClick = {
@@ -320,7 +321,7 @@ class MainActivity : ComponentActivity() {
                                             names.gote?.let { goteName = it; prefs.edit().putString("gote_name", it).apply() }
                                             gameResult = extractGameResult(text) ?: ""
                                             prefs.edit().putString("game_result", gameResult).apply()
-                                            pinnedPvList = emptyMap(); pinnedPvUsiList = emptyMap(); pvBranchPath = null; evalHistory.clear()
+                                            pinnedPvList = emptyMap(); pinnedPvUsiList = emptyMap(); pvBranchPath = null; evalHistory.clear(); savedMainEvalHistory = emptyMap()
                                             if (newNode != null) { currentNode = freshRoot; saveKifu(freshRoot) }
                                         }
                                     }, modifier = Modifier.weight(0.3f).height(72.dp),
@@ -367,6 +368,11 @@ class MainActivity : ComponentActivity() {
                                             }
                                         }
                                         pinnedPvList = emptyMap(); pvBranchPath = null
+                                        if (savedMainEvalHistory.isNotEmpty()) {
+                                            evalHistory.clear()
+                                            evalHistory.putAll(savedMainEvalHistory)
+                                            savedMainEvalHistory = emptyMap()
+                                        }
                                     },
                                         modifier = Modifier.weight(0.3f).height(72.dp),
                                         shape = MaterialTheme.shapes.extraLarge
@@ -418,6 +424,12 @@ class MainActivity : ComponentActivity() {
                                                     pinnedPvList = pinned; pinnedPvUsiList = pinnedUsi
                                                     pvBranchPath = branchNodes
                                                     currentNode = lastNode; isAnalysisMode = analysisMode
+                                                    val branchPointMoveCount = branchNodes.firstOrNull()?.parent?.moveCount ?: 0
+                                                    if (savedMainEvalHistory.isEmpty()) {
+                                                        savedMainEvalHistory = evalHistory.toMap()
+                                                    }
+                                                    val keysToRemove = evalHistory.keys.filter { it > branchPointMoveCount }
+                                                    keysToRemove.forEach { evalHistory.remove(it) }
                                                 }
                                             }
                                         }
@@ -449,6 +461,12 @@ class MainActivity : ComponentActivity() {
                                                     pinnedPvList = pinned; pinnedPvUsiList = pinnedUsi
                                                     pvBranchPath = branchNodes
                                                     currentNode = lastNode; isAnalysisMode = analysisMode
+                                                    val branchPointMoveCount = branchNodes.firstOrNull()?.parent?.moveCount ?: 0
+                                                    if (savedMainEvalHistory.isEmpty()) {
+                                                        savedMainEvalHistory = evalHistory.toMap()
+                                                    }
+                                                    val keysToRemove = evalHistory.keys.filter { it > branchPointMoveCount }
+                                                    keysToRemove.forEach { evalHistory.remove(it) }
                                                 }
                                             }
                                         }
