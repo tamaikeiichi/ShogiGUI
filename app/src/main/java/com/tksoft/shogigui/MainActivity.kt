@@ -35,8 +35,8 @@ import kotlin.math.roundToInt
 class MainActivity : ComponentActivity() {
 
     private var rootNode: KifuNode? = null
-    private var savedSenteName: String = "先手"
-    private var savedGoteName: String = "後手"
+    private var savedSenteName: String = senteColorName
+    private var savedGoteName: String = goteColorName
     private var savedGameResult: String = ""
 
     @OptIn(ExperimentalMaterial3Api::class, ExperimentalMaterial3ExpressiveApi::class)
@@ -47,8 +47,8 @@ class MainActivity : ComponentActivity() {
         val prefs = getSharedPreferences("kifu_prefs", MODE_PRIVATE)
         if (rootNode == null) {
             val saved = prefs.getString("current_tree", null)
-            savedSenteName = prefs.getString("sente_name", "先手") ?: "先手"
-            savedGoteName = prefs.getString("gote_name", "後手") ?: "後手"
+            savedSenteName = prefs.getString("sente_name", senteColorName) ?: senteColorName
+            savedGoteName = prefs.getString("gote_name", goteColorName) ?: goteColorName
             savedGameResult = prefs.getString("game_result", "") ?: ""
             rootNode = if (saved != null) {
                 try { jsonToKifuTree(JSONObject(saved)) }

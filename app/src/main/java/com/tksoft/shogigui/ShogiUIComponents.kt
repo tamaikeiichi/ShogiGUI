@@ -79,8 +79,9 @@ fun PlayerStatusSection(
             isFlipped = isFlipped
         )
     }
+    val nameColor = if (mark == "▲") senteNameColor else goteNameColor
     val nameView: @Composable () -> Unit = {
-        PlayerInfoContent(name = playerName, mark = mark, isFlipped = isFlipped, gameResult = gameResult)
+        PlayerInfoContent(name = playerName, mark = mark, isFlipped = isFlipped, gameResult = gameResult, nameColor = nameColor)
     }
     Column(modifier = Modifier.fillMaxWidth()) {
         if (handOnTop) { handView(); nameView() } else { nameView(); handView() }
@@ -157,10 +158,10 @@ fun SliderControlSection(
                             val normalized = (score.toFloat() / 2000f).coerceIn(-1f, 1f)
                             val y = centerY - (normalized * centerY)
                             val barColor = when {
-                                isMate && score > 0 -> Color(0xFFAA0000)
-                                isMate && score < 0 -> Color(0xFF0000AA)
-                                score >= 0 -> Color.Red.copy(alpha = 0.5f)
-                                else -> Color.Blue.copy(alpha = 0.5f)
+                                isMate && score > 0 -> senteMateColor
+                                isMate && score < 0 -> goteMateColor
+                                score >= 0 -> senteBarColor
+                                else -> goteBarColor
                             }
                             drawLine(color = barColor,
                                 start = androidx.compose.ui.geometry.Offset(x, centerY),
@@ -206,7 +207,7 @@ fun SliderControlSection(
 }
 
 @Composable
-fun PlayerInfoContent(name: String, mark: String, isFlipped: Boolean = false, gameResult: String = "") {
+fun PlayerInfoContent(name: String, mark: String, isFlipped: Boolean = false, gameResult: String = "", nameColor: androidx.compose.ui.graphics.Color = androidx.compose.ui.graphics.Color.Unspecified) {
     val defaultFontSize = MaterialTheme.typography.titleMedium.fontSize
     var fontSize by remember(name) { mutableStateOf(defaultFontSize) }
     val isRight = ((mark == "▲") && !isFlipped) || ((mark == "△") && isFlipped)
@@ -218,8 +219,8 @@ fun PlayerInfoContent(name: String, mark: String, isFlipped: Boolean = false, ga
             modifier = Modifier.padding(horizontal = 8.dp, vertical = 4.dp),
             verticalAlignment = Alignment.CenterVertically
         ) {
-            Text(text = "$mark ", style = MaterialTheme.typography.titleMedium.copy(fontSize = 14.sp), fontWeight = FontWeight.Bold, maxLines = 1)
-            Text(text = name, style = MaterialTheme.typography.titleMedium.copy(fontSize = fontSize), maxLines = 1, softWrap = false, onTextLayout = { if (it.hasVisualOverflow && fontSize > 8.sp) fontSize *= 0.9f })
+            Text(text = "$mark ", style = MaterialTheme.typography.titleMedium.copy(fontSize = 14.sp), fontWeight = FontWeight.Bold, color = nameColor, maxLines = 1)
+            Text(text = name, style = MaterialTheme.typography.titleMedium.copy(fontSize = fontSize), color = nameColor, maxLines = 1, softWrap = false, onTextLayout = { if (it.hasVisualOverflow && fontSize > 8.sp) fontSize *= 0.9f })
         }
         if (gameResult.isNotEmpty() && isRight) {
             Text(
