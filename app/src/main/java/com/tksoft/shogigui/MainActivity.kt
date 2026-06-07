@@ -125,7 +125,10 @@ class MainActivity : ComponentActivity() {
                 var goteName by remember { mutableStateOf(savedGoteName) }
                 var gameResult by remember { mutableStateOf(savedGameResult) }
                 
-                val engine = remember { UsiEngine() }
+                val selectedEngine = prefs.getString("selected_engine", "suisho5")
+                val engine: UsiEngineInterface = remember {
+                    if (selectedEngine == "aoba") AobaEngine() else UsiEngine()
+                }
                 var engineOutput by remember { mutableStateOf("エンジン待機中...") }
 
                 val processOutput = {
@@ -140,6 +143,9 @@ class MainActivity : ComponentActivity() {
                         line == "usiok" -> {
                             engine.sendCommand("setoption name Threads value $threadCount")
                             engine.sendCommand("setoption name MultiPV value $multiPvCount")
+                            if (engine is AobaEngine) {
+                                engine.sendCommand("setoption name EvalDir value aoba_eval")
+                            }
                             engine.sendCommand("isready")
                         }
                         line == "readyok" -> isEngineReady = true
@@ -201,6 +207,9 @@ class MainActivity : ComponentActivity() {
 
                     kotlinx.coroutines.withContext(kotlinx.coroutines.Dispatchers.IO) {
                         copyAssetsToFileDir("nn.bin", "eval", filesDir, assets)
+                        if (engine is AobaEngine) {
+                            copyAssetsToFileDir("aoba_nn.bin", "aoba_eval", filesDir, assets, targetName = "nn.bin")
+                        }
                     }
                     engine.start(filesDir.absolutePath)
                 }
@@ -477,24 +486,31 @@ class MainActivity : ComponentActivity() {
                 }
 
                 if (showSettingsDialog) {
+                    var pendingEngine by remember { mutableStateOf(selectedEngine ?: "suisho5") }
                     AlertDialog(onDismissRequest = { showSettingsDialog = false }, title = { Text(
                         text = buildAnnotatedString {
-                            // 通常のサイズで表示
                             append("設定 ")
-
-                            // エンジン名の部分だけスタイルを変える
                             withStyle(style = SpanStyle(
                                 fontSize = 10.sp,
                                 fontWeight = FontWeight.Normal
-                            )
-                            ) {
-                                append("Suisho5-YaneuraOu-v7.5.0")
+                            )) {
+                                append(if ((selectedEngine ?: "suisho5") == "aoba") "AobaNNUE" else "Suisho5-YaneuraOu-v7.5.0")
                             }
                         },
-                        style = MaterialTheme.typography.bodyMedium // 全体のベースとなるスタイル
+                        style = MaterialTheme.typography.bodyMedium
                     ) },
                         text = {
                             Column(verticalArrangement = Arrangement.spacedBy(16.dp)) {
+                                // エンジン選択
+                                Column {
+                                    Text("エンジン (再起動で反映)", style = MaterialTheme.typography.labelMedium)
+                                    Row(verticalAlignment = Alignment.CenterVertically) {
+                                        RadioButton(selected = pendingEngine == "suisho5", onClick = { pendingEngine = "suisho5" })
+                                        Text("Suisho5", modifier = Modifier.weight(1f))
+                                        RadioButton(selected = pendingEngine == "aoba", onClick = { pendingEngine = "aoba" })
+                                        Text("AobaNNUE", modifier = Modifier.weight(1f))
+                                    }
+                                }
                                 // 思考時間
                                 Column {
                                     Text("思考時間: ${analysisTimeMs}ms", style = MaterialTheme.typography.labelMedium)
@@ -536,18 +552,19 @@ class MainActivity : ComponentActivity() {
                                 }
                             }
                         },
-                        confirmButton = { 
-                            TextButton(onClick = { 
+                        confirmButton = {
+                            TextButton(onClick = {
                                 prefs.edit().putLong("analysis_time", analysisTimeMs)
                                     .putInt("multi_pv", multiPvCount)
                                     .putInt("thread_count", threadCount)
+                                    .putString("selected_engine", pendingEngine)
                                     .apply()
-                                if(isEngineReady){ 
+                                if(isEngineReady){
                                     engine.sendCommand("setoption name MultiPV value $multiPvCount")
                                     engine.sendCommand("setoption name Threads value $threadCount")
                                 }
-                                showSettingsDialog = false 
-                            }) { Text("保存") } 
+                                showSettingsDialog = false
+                            }) { Text("保存") }
                         }
                     )
                 }
@@ -592,7 +609,7 @@ class MainActivity : ComponentActivity() {
         pinnedPvUsiList: Map<Int, List<String>>,
         pvBranchPath: List<KifuNode>?,
         currentNode: KifuNode,
-        engine: UsiEngine,
+        engine: UsiEngineInterface,
         onUpdate: (Map<Int, String>, Map<Int, List<String>>, KifuNode, List<KifuNode>, Boolean) -> Unit
     ) {
         val activePvList: Map<Int, String>

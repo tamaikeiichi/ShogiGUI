@@ -131,15 +131,21 @@ fun formatUsiMove(usiMove: String, board: Map<Pair<Int, Int>, Piece>? = null): S
     } catch (e: Exception) { usiMove }
 }
 
-fun copyAssetsToFileDir(filename: String, subDir: String = "", baseDir: java.io.File, assetManager: android.content.res.AssetManager) {
+fun copyAssetsToFileDir(
+    assetName: String,
+    subDir: String = "",
+    baseDir: java.io.File,
+    assetManager: android.content.res.AssetManager,
+    targetName: String = assetName
+) {
     val targetDir = if (subDir.isNotEmpty()) {
         val dir = java.io.File(baseDir, subDir)
         if (!dir.exists()) dir.mkdirs()
         dir
     } else baseDir
-    val file = java.io.File(targetDir, filename)
+    val file = java.io.File(targetDir, targetName)
     try {
-        assetManager.open(filename).use { inputStream ->
+        assetManager.open(assetName).use { inputStream ->
             file.outputStream().use { outputStream -> inputStream.copyTo(outputStream) }
         }
     } catch (e: Exception) { Log.e("ShogiGUI", "Copy failed: ${e.message}") }

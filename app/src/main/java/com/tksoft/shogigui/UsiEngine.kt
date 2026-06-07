@@ -4,11 +4,11 @@ import android.os.Handler
 import android.os.Looper
 import java.util.concurrent.Executors
 
-class UsiEngine(private val dummyPath: String = "") {
+class UsiEngine(private val dummyPath: String = "") : UsiEngineInterface {
     private val executor = Executors.newSingleThreadExecutor()
     private val mainHandler = Handler(Looper.getMainLooper())
 
-    var onOutputReceived: ((String) -> Unit)? = null
+    override var onOutputReceived: ((String) -> Unit)? = null
 
     companion object {
         init {
@@ -22,7 +22,7 @@ class UsiEngine(private val dummyPath: String = "") {
     private external fun nativeStop()
     private external fun nativeSetWorkDir(path: String)
 
-    fun start(workDir: String = "") {
+    override fun start(workDir: String) {
         executor.execute {
             try {
                 if (workDir.isNotEmpty()) nativeSetWorkDir(workDir)
@@ -54,11 +54,11 @@ class UsiEngine(private val dummyPath: String = "") {
         }, "USI-Command-Thread").start()
     }
 
-    fun sendCommand(command: String) {
+    override fun sendCommand(command: String) {
         commandQueue.put(command)
     }
 
-    fun stop() {
+    override fun stop() {
         nativeStop()
     }
 
