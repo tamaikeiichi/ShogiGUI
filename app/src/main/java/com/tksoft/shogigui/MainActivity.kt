@@ -1,0 +1,782 @@
+package com.tksoft.shogigui
+
+import android.os.Bundle
+import androidx.activity.ComponentActivity
+import androidx.activity.compose.setContent
+import androidx.activity.enableEdgeToEdge
+import androidx.compose.foundation.layout.*
+import androidx.compose.foundation.rememberScrollState
+import androidx.compose.foundation.verticalScroll
+import androidx.compose.material.icons.Icons
+import androidx.compose.material.icons.filled.ContentPaste
+import androidx.compose.material.icons.filled.Menu
+import androidx.compose.material3.*
+import androidx.compose.runtime.*
+import androidx.compose.ui.Alignment
+import androidx.compose.ui.Modifier
+import androidx.compose.ui.graphics.Color
+import androidx.compose.ui.graphics.graphicsLayer
+import androidx.compose.ui.platform.LocalClipboardManager
+import androidx.compose.ui.res.painterResource
+import androidx.compose.ui.unit.dp
+import org.json.JSONObject
+import com.tksoft.shogigui.ui.theme.ShogiGUITheme
+import kotlinx.coroutines.delay
+import android.util.Log
+import androidx.compose.ui.text.SpanStyle
+import androidx.compose.ui.text.buildAnnotatedString
+import androidx.compose.ui.text.font.FontWeight
+import androidx.compose.ui.text.withStyle
+import androidx.compose.ui.unit.DpOffset
+import androidx.compose.ui.tooling.preview.Preview
+import androidx.compose.ui.unit.sp
+import kotlin.math.roundToInt
+
+class MainActivity : ComponentActivity() {
+
+    private var rootNode: KifuNode? = null
+    private var savedSenteName: String = senteColorName
+    private var savedGoteName: String = goteColorName
+    private var savedGameResult: String = ""
+
+    @OptIn(ExperimentalMaterial3Api::class, ExperimentalMaterial3ExpressiveApi::class)
+    override fun onCreate(savedInstanceState: Bundle?) {
+        super.onCreate(savedInstanceState)
+        enableEdgeToEdge()
+
+        val prefs = getSharedPreferences("kifu_prefs", MODE_PRIVATE)
+        if (rootNode == null) {
+            val saved = prefs.getString("current_tree", null)
+            savedSenteName = prefs.getString("sente_name", senteColorName) ?: senteColorName
+            savedGoteName = prefs.getString("gote_name", goteColorName) ?: goteColorName
+            savedGameResult = prefs.getString("game_result", "") ?: ""
+            rootNode = if (saved != null) {
+                try { jsonToKifuTree(JSONObject(saved)) }
+                catch (e: Exception) { KifuNode(createInitialBoard(), emptyMap(), emptyMap(), Player.SENTE) }
+            } else {
+                KifuNode(createInitialBoard(), emptyMap(), emptyMap(), Player.SENTE)
+            }
+        }
+
+        setContent {
+            ShogiGUITheme {
+                val initialNode by remember { mutableStateOf(rootNode!!) }
+                var currentNode by remember { mutableStateOf(initialNode) }
+                
+                val saveKifu = { node: KifuNode ->
+                    val root = getRootNode(node)
+                    prefs.edit().putString("current_tree", kifuTreeToJson(root).toString()).apply()
+                }
+
+                // --- 状態管理 ---
+                var resetKey by remember { mutableIntStateOf(0) }
+                var pvBranchPath by remember { mutableStateOf<List<KifuNode>?>(null) }
+                val currentPath = remember(currentNode, initialNode, pvBranchPath, resetKey) {
+                    val path = mutableListOf<KifuNode>()
+                    val pvPath = pvBranchPath
+                    if (pvPath != null && pvPath.isNotEmpty()) {
+                        val backward = mutableListOf<KifuNode>()
+                        var p: KifuNode? = pvPath[0].parent
+                        while (p != null) { backward.add(0, p); p = p.parent }
+                        path.addAll(backward)
+                        path.addAll(pvPath)
+                    } else {
+                        var p: KifuNode? = currentNode
+                        while (p != null) { path.add(0, p); p = p.parent }
+                        var c = currentNode.children.firstOrNull()
+                        while (c != null) { path.add(c); c = c.children.firstOrNull() }
+                    }
+                    path
+                }
+
+                val boardState = currentNode.board
+                val senteHand = currentNode.senteHand
+                val goteHand = currentNode.goteHand
+                val currentPlayer = currentNode.currentPlayer
+
+                var isBoardFlipped by remember { mutableStateOf(false) }
+                var isAutoAnalysis by remember { mutableStateOf(false) }
+                val pvList = remember { mutableStateMapOf<Int, String>() }
+                val pvUsiList = remember { mutableStateMapOf<Int, List<String>>() }
+                var pinnedPvList by remember { mutableStateOf<Map<Int, String>>(emptyMap()) }
+                var pinnedPvUsiList by remember { mutableStateOf<Map<Int, List<String>>>(emptyMap()) }
+                val evalHistory = remember { mutableStateMapOf<Int, Int>() }
+                var savedMainEvalHistory by remember { mutableStateOf<Map<Int, Int>>(emptyMap()) }
+                val analysisHistory = remember { mutableStateMapOf<Int, Map<Int, String>>() }
+                val analysisUsiHistory = remember { mutableStateMapOf<Int, Map<Int, List<String>>>() }
+
+                var bestmoveReceived by remember { mutableStateOf(false) }
+
+                var selectedSquare by remember { mutableStateOf<Pair<Int, Int>?>(null) }
+                var selectedHandPiece by remember { mutableStateOf<Pair<Player, PieceType>?>(null) }
+                var promotionPendingBy by remember { mutableStateOf<PendingMove?>(null) }
+                
+                var showMenu by remember { mutableStateOf(false) }
+                var isAnalysisMode by remember { mutableStateOf(false) }
+                var isEngineReady by remember { mutableStateOf(false) }
+                var isPvStale by remember { mutableStateOf(false) }
+
+                var analysisTimeMs by remember { mutableLongStateOf(prefs.getLong("analysis_time", 1000L)) }
+                var multiPvCount by remember { mutableIntStateOf(prefs.getInt("multi_pv", 3)) }
+                var threadCount by remember { mutableIntStateOf(prefs.getInt("thread_count", 4)) }
+                var showSettingsDialog by remember { mutableStateOf(false) }
+
+                var senteName by remember { mutableStateOf(savedSenteName) }
+                var goteName by remember { mutableStateOf(savedGoteName) }
+                var gameResult by remember { mutableStateOf(savedGameResult) }
+                
+                var selectedEngine by remember { mutableStateOf(prefs.getString("selected_engine", "suisho5") ?: "suisho5") }
+                var engine by remember { mutableStateOf<UsiEngineInterface>(
+                    if (selectedEngine == "aoba") AobaEngine() else UsiEngine()
+                ) }
+                var engineOutput by remember { mutableStateOf("エンジン待機中...") }
+
+                val processOutput = {
+                    rawLine: String,
+                    capturedBoard: Map<Pair<Int, Int>, Piece>,
+                    capturedTurn: Player,
+                    capturedMoveCount: Int ->
+                    Log.d("callback_used", "手数=$capturedMoveCount turn=$capturedTurn line=$rawLine")
+                    val line = rawLine.trim()
+                    Log.d("EngineOutput", line)
+                    when {
+                        line == "usiok" -> {
+                            engine.sendCommand("setoption name Threads value $threadCount")
+                            engine.sendCommand("setoption name MultiPV value $multiPvCount")
+                            if (engine is AobaEngine) {
+                                engine.sendCommand("setoption name EvalDir value aoba_eval")
+                            }
+                            engine.sendCommand("isready")
+                        }
+                        line == "readyok" -> isEngineReady = true
+                        line.startsWith("info") -> {
+                            if (isPvStale) { pvList.clear(); isPvStale = false }
+                            val rank = Regex("multipv (\\d+)").find(line)?.groupValues?.get(1)?.toInt() ?: 1
+                            val infoParts = line.split(Regex("\\s+"))
+                            val pvIdx = infoParts.indexOf("pv")
+                            if (pvIdx >= 0 && pvIdx + 1 < infoParts.size) {
+                                pvUsiList[rank] = infoParts.drop(pvIdx + 1)
+                            }
+                            val parsed = parseInfo(line, capturedBoard, capturedTurn)
+
+                            if (parsed.isNotEmpty()) {
+                                pvList[rank] = parsed
+                                engineOutput = pvList.toSortedMap().values.joinToString("\n---\n")
+                                analysisHistory[capturedMoveCount] = pvList.toMap()
+                                analysisUsiHistory[capturedMoveCount] = pvUsiList.toMap()
+                                if (rank == 1 && parsed.contains("評価")) {
+                                    val scoreLine = parsed.lines().find { it.startsWith("評価:") }
+                                    val score = scoreLine?.substringAfter("評価:")?.trim()
+                                        ?.split(" ")?.firstOrNull()?.replace("+", "")?.toIntOrNull()
+                                    if (score != null) evalHistory[capturedMoveCount] = score  // ← 変更
+                                } else if (rank == 1 && (parsed.contains("手詰") || parsed.contains("詰み"))) {
+                                    val isSenteWin = parsed.contains("先手勝ち")
+                                    evalHistory[capturedMoveCount] = if (isSenteWin) 30000 else -30000
+                                }
+                            }
+                        }
+                        line.startsWith("bestmove") -> {
+                            bestmoveReceived = true
+                        }
+                    }
+                }
+
+                LaunchedEffect(currentNode) {
+                    val moveCount = currentNode.moveCount
+                    val savedPv = analysisHistory[moveCount]
+                    val savedUsi = analysisUsiHistory[moveCount]
+                    if (savedPv != null && savedUsi != null) {
+                        pvList.clear()
+                        pvList.putAll(savedPv)
+                        pvUsiList.clear()
+                        pvUsiList.putAll(savedUsi)
+                        engineOutput = pvList.toSortedMap().values.joinToString("\n---\n")
+                    } else if (!(isAnalysisMode || isAutoAnalysis)) {
+                        pvList.clear()
+                        pvUsiList.clear()
+                        engineOutput = ""
+                    }
+                }
+
+                LaunchedEffect(engine) {
+                    delay(1000)
+                    isEngineReady = false
+                    engine.onOutputReceived = { rawLine ->
+                        runOnUiThread { processOutput(rawLine, emptyMap(), Player.SENTE, 0) }
+                    }
+
+                    kotlinx.coroutines.withContext(kotlinx.coroutines.Dispatchers.IO) {
+                        copyAssetsToFileDir("nn.bin", "eval", filesDir, assets)
+                        if (engine is AobaEngine) {
+                            copyAssetsToFileDir("aoba_nn.bin", "aoba_eval", filesDir, assets, targetName = "nn.bin")
+                        }
+                    }
+                    engine.start(filesDir.absolutePath)
+                }
+
+                LaunchedEffect(isAutoAnalysis, isAnalysisMode, isEngineReady, currentNode) {
+                    if (!(isAnalysisMode || isAutoAnalysis) || !isEngineReady) return@LaunchedEffect
+                    //engine.sendCommand("stop")  // ← 先にstopを送る
+                    val node = currentNode  // ← var不要、currentNodeをそのまま使う
+
+                    val capturedBoard = node.board
+                    val capturedTurn = node.currentPlayer
+                    val capturedMoveCount = node.moveCount
+
+                    engine.onOutputReceived = { rawLine ->
+                        runOnUiThread { processOutput(rawLine, capturedBoard, capturedTurn, capturedMoveCount) }
+                    }
+                    Log.d("callback_set", "手数=$capturedMoveCount turn=$capturedTurn")
+                    engine.sendCommand("stop")
+                    bestmoveReceived = false
+                    pvList.clear()
+                    pvUsiList.clear()
+
+                    val posCmd = buildPositionCommand(initialNode, node)
+                        ?: boardToSfen(node.board, node.currentPlayer, node.senteHand, node.goteHand)
+                            .takeIf { it.isNotEmpty() }?.let { "position sfen $it" }
+                    if (posCmd != null) {
+                        engine.sendCommand(posCmd)
+                        Log.d("posCmd", posCmd)
+                        engine.sendCommand("go movetime $analysisTimeMs")
+                    }
+
+                    // 自動解析：bestmove を受け取ったら即座に次の手へ（タイムアウト付き）
+                    if (isAutoAnalysis) {
+                        val timeout = analysisTimeMs + 2000L
+                        var elapsed = 0L
+                        while (!bestmoveReceived && elapsed < timeout) { delay(50); elapsed += 50 }
+                        val next = node.children.firstOrNull()
+                        if (next == null) isAutoAnalysis = false
+                        else currentNode = next
+                    }
+                }
+
+                Scaffold(
+                    modifier = Modifier.fillMaxSize(),
+                    containerColor = MaterialTheme.colorScheme.surfaceContainerLowest,
+                    bottomBar = {
+                        Surface(
+                            color = MaterialTheme.colorScheme.surfaceContainer,
+                            modifier = Modifier.fillMaxWidth()
+                        ) {
+                            Column(
+                                modifier = Modifier
+                                    .fillMaxWidth()
+                                    .navigationBarsPadding()
+                                    .padding(horizontal = 8.dp, vertical = 4.dp)
+                            ) {
+                                SliderControlSection(currentNode, currentPath, evalHistory) { currentNode = it }
+                                Spacer(modifier = Modifier.height(8.dp))
+                                Row(modifier = Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.spacedBy(8.dp), verticalAlignment = Alignment.CenterVertically) {
+                                    val clipboard = LocalClipboardManager.current
+                                    IconButton(onClick = { showMenu = true }) { Icon(Icons.Default.Menu, "メニュー") }
+                                    DropdownMenu(
+                                        expanded = showMenu,
+                                        onDismissRequest = { showMenu = false },
+                                        offset = DpOffset(x = 0.dp, y = 0.dp),
+                                    ) {
+                                        DropdownMenuItem(
+                                            text = { Text("リセット") },
+                                            onClick = {
+                                                engine.sendCommand("stop")
+                                                isAnalysisMode = false; isAutoAnalysis = false
+                                                currentNode = initialNode
+                                                initialNode.children.clear()
+                                                senteName = "先手"; goteName = "後手"; gameResult = ""
+                                                pvList.clear(); pvUsiList.clear()
+                                                pinnedPvList = emptyMap(); pinnedPvUsiList = emptyMap()
+                                                pvBranchPath = null
+                                                evalHistory.clear(); savedMainEvalHistory = emptyMap(); analysisHistory.clear(); analysisUsiHistory.clear()
+                                                selectedSquare = null; selectedHandPiece = null
+                                                resetKey++
+                                                prefs.edit()
+                                                    .remove("current_tree")
+                                                    .remove("sente_name")
+                                                    .remove("gote_name")
+                                                    .remove("game_result")
+                                                    .apply()
+                                                showMenu = false
+                                            })
+                                        DropdownMenuItem(
+                                            text = { Text("現局面から最後まで解析") },
+                                            onClick = { isAutoAnalysis = true; pinnedPvList = emptyMap(); pinnedPvUsiList = emptyMap(); showMenu = false })
+                                        DropdownMenuItem(
+                                            text = { Text("本譜をエクスポート(CSA)") },
+                                            onClick = {
+                                                var root = currentNode
+                                                while (root.parent != null) root = root.parent!!
+                                                val csa = exportMainLineToCsa(root, senteName, goteName)
+                                                clipboard.setText(androidx.compose.ui.text.AnnotatedString(csa))
+                                                showMenu = false
+                                            })
+                                        DropdownMenuItem(
+                                            text = { Text("設定") },
+                                            onClick = { showSettingsDialog = true; showMenu = false })
+                                    }
+                                    OutlinedButton(onClick = {
+                                        clipboard.getText()?.text?.let { text ->
+                                            val freshRoot = KifuNode(createInitialBoard(), emptyMap(), emptyMap(), Player.SENTE)
+                                            val newNode = when {
+                                                text.lines().any { Regex("^[+-]\\d{4}[A-Z]{2}").containsMatchIn(it.trim()) } ->
+                                                    parseCsa(text, freshRoot, saveKifu)
+                                                text.contains("moves") || text.lines().any { Regex("^[1-9][a-i][1-9][a-i][+]?$").matches(it.trim()) } ->
+                                                    parseKifu(text, freshRoot, saveKifu)
+                                                else ->
+                                                    parseKif(text, freshRoot, saveKifu)
+                                            }
+                                            val names = extractPlayerNames(text)
+                                            names.sente?.let { senteName = it; prefs.edit().putString("sente_name", it).apply() }
+                                            names.gote?.let { goteName = it; prefs.edit().putString("gote_name", it).apply() }
+                                            gameResult = extractGameResult(text) ?: ""
+                                            prefs.edit().putString("game_result", gameResult).apply()
+                                            pinnedPvList = emptyMap(); pinnedPvUsiList = emptyMap(); pvBranchPath = null; evalHistory.clear(); savedMainEvalHistory = emptyMap()
+                                            if (newNode != null) { currentNode = freshRoot; saveKifu(freshRoot) }
+                                        }
+                                    }, modifier = Modifier.weight(0.3f).height(72.dp),
+                                        shape = MaterialTheme.shapes.extraLarge) {
+                                        Column(horizontalAlignment = Alignment.CenterHorizontally) { Icon(Icons.Default.ContentPaste, "読込"); Text("読込", style = MaterialTheme.typography.labelSmall) }
+                                    }
+
+                                    OutlinedButton(onClick = {
+                                        if (isAnalysisMode || isAutoAnalysis) { isAnalysisMode = false; isAutoAnalysis = false; engine.sendCommand("stop") }
+                                        else { pinnedPvList = emptyMap(); pinnedPvUsiList = emptyMap(); isAnalysisMode = true }
+                                    }, modifier = Modifier.weight(0.3f).height(72.dp),
+                                        enabled = isEngineReady,
+                                        shape = MaterialTheme.shapes.extraLarge,
+                                        colors = ButtonDefaults.outlinedButtonColors(containerColor = if (isAnalysisMode || isAutoAnalysis) MaterialTheme.colorScheme.tertiaryContainer else Color.Transparent)) {
+                                        Column(horizontalAlignment = Alignment.CenterHorizontally) {
+                                            Icon(painterResource(if (isAnalysisMode || isAutoAnalysis) R.drawable.stop_circle_24px else R.drawable.network_intelligence_24px), "解析")
+                                            Text(
+                                                when {
+                                                    !isEngineReady -> "準備中"
+                                                    isAnalysisMode || isAutoAnalysis -> "停止"
+                                                    else -> "解析"
+                                                },
+                                                style = MaterialTheme.typography.labelSmall
+                                            )
+                                        }
+                                    }
+
+                                    OutlinedButton(onClick = { isBoardFlipped = !isBoardFlipped },
+                                        modifier = Modifier.weight(0.3f).height(72.dp),
+                                        shape = MaterialTheme.shapes.extraLarge
+                                    ) {
+                                        Column(horizontalAlignment = Alignment.CenterHorizontally) { Icon(painterResource(R.drawable.rotate_right_24px), "反転"); Text("反転", style = MaterialTheme.typography.labelSmall) }
+                                    }
+
+                                    OutlinedButton(onClick = {
+                                        fun clearPv(n: KifuNode) { n.children.removeIf { it.isPvBranch }; n.children.forEach { clearPv(it) } }
+                                        val pvBranchPoint = pvBranchPath?.firstOrNull()?.parent
+                                        // currentNodeが属する実際のルートを取得してPV除去
+                                        var treeRoot: KifuNode = currentNode
+                                        while (treeRoot.parent != null) { treeRoot = treeRoot.parent!! }
+                                        clearPv(treeRoot)
+                                        if (pvBranchPoint != null) {
+                                            currentNode = pvBranchPoint
+                                        } else {
+                                            // 親を辿り、自分が最初の非PV子でない最初の祖先（分岐点）へジャンプ
+                                            var p: KifuNode? = currentNode
+                                            while (p?.parent != null) {
+                                                val parent = p.parent!!
+                                                if (parent.children.firstOrNull { !it.isPvBranch } != p) {
+                                                    currentNode = parent; break
+                                                }
+                                                p = parent
+                                            }
+                                        }
+                                        pinnedPvList = emptyMap(); pvBranchPath = null
+                                        if (savedMainEvalHistory.isNotEmpty()) {
+                                            evalHistory.clear()
+                                            evalHistory.putAll(savedMainEvalHistory)
+                                            savedMainEvalHistory = emptyMap()
+                                        }
+                                    },
+                                        modifier = Modifier.weight(0.3f).height(72.dp),
+                                        shape = MaterialTheme.shapes.extraLarge
+                                    ) {
+                                        Column(horizontalAlignment = Alignment.CenterHorizontally) { Icon(painterResource(R.drawable.undo_24px), "本譜"); Text("本譜", style = MaterialTheme.typography.labelSmall) }
+                                    }
+
+
+                                }
+                            }
+                        }
+                    }
+                ) { innerPadding ->
+                    val isWide = androidx.compose.ui.platform.LocalConfiguration.current.screenWidthDp >= 840
+                    if (isWide) {
+                        Row(modifier = Modifier.fillMaxSize().padding(innerPadding).padding(16.dp), horizontalArrangement = Arrangement.spacedBy(24.dp)) {
+
+                            Column(modifier = Modifier.weight(0.5f).verticalScroll(rememberScrollState()), horizontalAlignment = Alignment.CenterHorizontally, verticalArrangement = Arrangement.spacedBy(8.dp)) {
+                                val topP = if (isBoardFlipped) Player.SENTE else Player.GOTE; val botP = if (isBoardFlipped) Player.GOTE else Player.SENTE
+                                PlayerStatusSection(if(topP==Player.SENTE) senteName else goteName, if(topP==Player.SENTE) "▲" else "△", currentPlayer==topP, if(topP==Player.SENTE) senteHand else goteHand, selectedHandPiece, currentPlayer, isBoardFlipped, handOnTop = false, gameResult = gameResult) { selectedHandPiece = it; selectedSquare = null }
+                                ShogiBoard(boardState, selectedSquare, { r, c ->
+                                    handleSquareClick(r, c, boardState, currentPlayer, selectedSquare, selectedHandPiece, currentNode, saveKifu) { s, h, n, p ->
+                                        selectedSquare = s; selectedHandPiece = h
+                                        if(n != null) currentNode = n
+                                        if(p != null) promotionPendingBy = p
+                                    }
+                                }, isBoardFlipped, Modifier.sizeIn(maxWidth = 500.dp, maxHeight = 500.dp), currentNode.lastFrom, currentNode.lastTo, currentNode.pvColorIndex)
+                                PlayerStatusSection(if(botP==Player.SENTE) senteName else goteName, if(botP==Player.SENTE) "▲" else "△", currentPlayer==botP, if(botP==Player.SENTE) senteHand else goteHand, selectedHandPiece, currentPlayer, isBoardFlipped, handOnTop = true, gameResult = gameResult) { selectedHandPiece = it; selectedSquare = null }
+                            }
+                            Column(
+                                modifier = Modifier
+                                    .weight(0.5f).fillMaxHeight()
+                                    .verticalScroll(rememberScrollState())
+                            ) {
+                                (pinnedPvList
+                                    .ifEmpty {
+                                        pvList.toMap()
+                                    })
+                                    .entries
+                                    .sortedBy { it.key }
+                                    .forEach { (rank, pvText) ->
+                                        val alpha = if (isPvStale && pinnedPvList.isEmpty()) 0.5f else 1f
+                                        Box(modifier = Modifier.graphicsLayer { this.alpha = alpha }) {
+                                            PvInfoCard(rank, pvText) {
+                                                playPvBranch(
+                                                    rank, pvList.toMap(), pvUsiList.toMap(), pinnedPvList,
+                                                    pinnedPvUsiList, pvBranchPath, currentNode, engine) {
+                                                        pinned, pinnedUsi, lastNode, branchNodes, analysisMode ->
+                                                    pinnedPvList = pinned; pinnedPvUsiList = pinnedUsi
+                                                    pvBranchPath = branchNodes
+                                                    currentNode = lastNode; isAnalysisMode = analysisMode
+                                                    val branchPointMoveCount = branchNodes.firstOrNull()?.parent?.moveCount ?: 0
+                                                    if (savedMainEvalHistory.isEmpty()) {
+                                                        savedMainEvalHistory = evalHistory.toMap()
+                                                    }
+                                                    val keysToRemove = evalHistory.keys.filter { it > branchPointMoveCount }
+                                                    keysToRemove.forEach { evalHistory.remove(it) }
+                                                }
+                                            }
+                                        }
+                                    }
+                            }
+                        }
+                    }
+                    else {
+                        Column(modifier = Modifier.fillMaxSize().padding(innerPadding).verticalScroll(rememberScrollState()), horizontalAlignment = Alignment.CenterHorizontally) {
+
+                            val topP = if (isBoardFlipped) Player.SENTE else Player.GOTE; val botP = if (isBoardFlipped) Player.GOTE else Player.SENTE
+                            PlayerStatusSection(if(topP==Player.SENTE) senteName else goteName, if(topP==Player.SENTE) "▲" else "△", currentPlayer==topP, if(topP==Player.SENTE) senteHand else goteHand, selectedHandPiece, currentPlayer, isBoardFlipped, handOnTop = false, gameResult = gameResult) { selectedHandPiece = it; selectedSquare = null }
+                            ShogiBoard(boardState, selectedSquare, { r, c ->
+                                handleSquareClick(r, c, boardState, currentPlayer, selectedSquare, selectedHandPiece, currentNode, saveKifu) { s, h, n, p ->
+                                    selectedSquare = s; selectedHandPiece = h
+                                    if(n != null) currentNode = n
+                                    if(p != null) promotionPendingBy = p
+                                }
+                            }, isBoardFlipped, Modifier.padding(16.dp), currentNode.lastFrom, currentNode.lastTo, currentNode.pvColorIndex)
+                            PlayerStatusSection(if(botP==Player.SENTE) senteName else goteName, if(botP==Player.SENTE) "▲" else "△", currentPlayer==botP, if(botP==Player.SENTE) senteHand else goteHand, selectedHandPiece, currentPlayer, isBoardFlipped, handOnTop = true, gameResult = gameResult) { selectedHandPiece = it; selectedSquare = null }
+                            Column(modifier = Modifier.padding(8.dp)) {
+                                (if (pinnedPvList.isNotEmpty()) pinnedPvList else pvList.toMap()).entries
+                                    .sortedBy { it.key }
+                                    .forEach { (rank, pvText) ->
+                                        val alpha = if (isPvStale && pinnedPvList.isEmpty()) 0.5f else 1f
+                                        Box(modifier = Modifier.graphicsLayer { this.alpha = alpha }) {
+                                            PvInfoCard(rank, pvText) {
+                                                playPvBranch(rank, pvList.toMap(), pvUsiList.toMap(), pinnedPvList, pinnedPvUsiList, pvBranchPath, currentNode, engine) { pinned, pinnedUsi, lastNode, branchNodes, analysisMode ->
+                                                    pinnedPvList = pinned; pinnedPvUsiList = pinnedUsi
+                                                    pvBranchPath = branchNodes
+                                                    currentNode = lastNode; isAnalysisMode = analysisMode
+                                                    val branchPointMoveCount = branchNodes.firstOrNull()?.parent?.moveCount ?: 0
+                                                    if (savedMainEvalHistory.isEmpty()) {
+                                                        savedMainEvalHistory = evalHistory.toMap()
+                                                    }
+                                                    val keysToRemove = evalHistory.keys.filter { it > branchPointMoveCount }
+                                                    keysToRemove.forEach { evalHistory.remove(it) }
+                                                }
+                                            }
+                                        }
+                                    }
+                            }
+                        }
+                    }
+                }
+
+                if (showSettingsDialog) {
+                    var pendingEngine by remember { mutableStateOf(selectedEngine) }
+                    AlertDialog(onDismissRequest = { showSettingsDialog = false }, title = { Text(
+                        text = buildAnnotatedString {
+                            append("設定 ")
+                            withStyle(style = SpanStyle(
+                                fontSize = 10.sp,
+                                fontWeight = FontWeight.Normal
+                            )) {
+                                append(if (selectedEngine == "aoba") "AobaNNUE" else "Suisho5-YaneuraOu-v7.5.0")
+                            }
+                        },
+                        style = MaterialTheme.typography.bodyMedium
+                    ) },
+                        text = {
+                            Column(verticalArrangement = Arrangement.spacedBy(16.dp)) {
+                                // エンジン選択
+                                Column {
+                                    Text("エンジン", style = MaterialTheme.typography.labelMedium)
+                                    Row(verticalAlignment = Alignment.CenterVertically) {
+                                        RadioButton(selected = pendingEngine == "suisho5", onClick = { pendingEngine = "suisho5" })
+                                        Text("Suisho5", modifier = Modifier.weight(1f))
+                                        RadioButton(selected = pendingEngine == "aoba", onClick = { pendingEngine = "aoba" })
+                                        Text("AobaNNUE", modifier = Modifier.weight(1f))
+                                    }
+                                }
+                                // 思考時間
+                                Column {
+                                    Text("思考時間: ${analysisTimeMs}ms", style = MaterialTheme.typography.labelMedium)
+                                    Slider(
+                                        value = analysisTimeMs.toFloat(),
+                                        onValueChange = { analysisTimeMs = it.roundToInt().toLong() },
+                                        valueRange = 100f..5000f
+                                    )
+                                }
+                                
+                                // 候補手 (MultiPV)
+                                Column {
+                                    Row(verticalAlignment = Alignment.Bottom) {
+                                        Text("候補手 (MultiPV)", style = MaterialTheme.typography.labelMedium)
+                                        Spacer(modifier = Modifier.width(8.dp))
+                                        Text(text = multiPvCount.toString(), style = MaterialTheme.typography.titleLarge, color = MaterialTheme.colorScheme.primary)
+                                    }
+                                    Slider(
+                                        value = multiPvCount.toFloat(),
+                                        onValueChange = { multiPvCount = it.roundToInt() },
+                                        valueRange = 1f..3f,
+                                        steps = 1
+                                    )
+                                }
+                                
+                                // スレッド数
+                                Column {
+                                    Row(verticalAlignment = Alignment.Bottom) {
+                                        Text("スレッド数", style = MaterialTheme.typography.labelMedium)
+                                        Spacer(modifier = Modifier.width(8.dp))
+                                        Text(text = threadCount.toString(), style = MaterialTheme.typography.titleLarge, color = MaterialTheme.colorScheme.primary)
+                                    }
+                                    Slider(
+                                        value = threadCount.toFloat(),
+                                        onValueChange = { threadCount = it.roundToInt() },
+                                        valueRange = 1f..8f,
+                                        steps = 6
+                                    )
+                                }
+                            }
+                        },
+                        confirmButton = {
+                            TextButton(onClick = {
+                                prefs.edit().putLong("analysis_time", analysisTimeMs)
+                                    .putInt("multi_pv", multiPvCount)
+                                    .putInt("thread_count", threadCount)
+                                    .putString("selected_engine", pendingEngine)
+                                    .apply()
+                                if (pendingEngine != selectedEngine) {
+                                    isAnalysisMode = false
+                                    isAutoAnalysis = false
+                                    isEngineReady = false
+                                    engine.onOutputReceived = null
+                                    engine.stop()
+                                    selectedEngine = pendingEngine
+                                    engine = if (pendingEngine == "aoba") AobaEngine() else UsiEngine()
+                                } else {
+                                    if (isEngineReady) {
+                                        engine.sendCommand("setoption name MultiPV value $multiPvCount")
+                                        engine.sendCommand("setoption name Threads value $threadCount")
+                                    }
+                                }
+                                showSettingsDialog = false
+                            }) { Text("保存") }
+                        }
+                    )
+                }
+
+                promotionPendingBy?.let { move ->
+                    AlertDialog(onDismissRequest = {}, title = { Text("成り") }, text = { Text("成りますか？") },
+                        confirmButton = { 
+                            TextButton(onClick = { 
+                                val usi = "${9 - move.from.second}${('a' + move.from.first)}${9 - move.to.second}${('a' + move.to.first)}+"
+                                val label = formatUsiMove(usi, boardState)
+                                executeMove(move.from, move.to, move.piece, move.captured, true, currentNode, label, false, saveKifu) {
+                                    currentNode = it
+                                }
+                                promotionPendingBy = null
+                            }) { Text("成る") }
+                        },
+                        dismissButton = {
+                            TextButton(onClick = {
+                                val usi = "${9 - move.from.second}${('a' + move.from.first)}${9 - move.to.second}${('a' + move.to.first)}"
+                                val label = formatUsiMove(usi, boardState)
+                                executeMove(move.from, move.to, move.piece, move.captured, false, currentNode, label, false, saveKifu) { 
+                                    currentNode = it 
+                                }
+                                promotionPendingBy = null 
+                            }) { Text("不成") } 
+                        }
+                    )
+                }
+            }
+        }
+    }
+
+    private fun getRootNode(node: KifuNode): KifuNode {
+        var p = node; while (p.parent != null) p = p.parent!!; return p
+    }
+
+    private fun playPvBranch(
+        rank: Int,
+        pvList: Map<Int, String>,
+        pvUsiList: Map<Int, List<String>>,
+        pinnedPvList: Map<Int, String>,
+        pinnedPvUsiList: Map<Int, List<String>>,
+        pvBranchPath: List<KifuNode>?,
+        currentNode: KifuNode,
+        engine: UsiEngineInterface,
+        onUpdate: (Map<Int, String>, Map<Int, List<String>>, KifuNode, List<KifuNode>, Boolean) -> Unit
+    ) {
+        val activePvList: Map<Int, String>
+        val activeUsiList: Map<Int, List<String>>
+        val branchPoint: KifuNode
+
+        if (pinnedPvList.isEmpty()) {
+            // 初回タップ：現在の解析結果をピンしてcurrentNodeを分岐起点にする
+            activePvList = pvList.toMap()
+            activeUsiList = pvUsiList.toMap()
+            branchPoint = currentNode
+            engine.sendCommand("stop")
+        } else {
+            // 別カードへ切替：ピン済みデータを使い、元の分岐起点から作り直す
+            activePvList = pinnedPvList
+            activeUsiList = pinnedPvUsiList
+            branchPoint = pvBranchPath?.firstOrNull()?.parent ?: currentNode
+        }
+
+        val usi = activeUsiList[rank] ?: return
+        var p = branchPoint
+        val branchNodes = mutableListOf<KifuNode>()
+
+        usi.forEach { m ->
+            val b = applyUsiMove(m, p.board, p.currentPlayer)
+            val l = formatUsiMove(m, p.board)
+            val sym = if (p.currentPlayer == Player.SENTE) "▲" else "△"
+            val lastFrom = if (m.length >= 4 && m[1] != '*') Pair(m[1] - 'a', 9 - (m[0] - '0')) else null
+            val lastTo   = if (m.length >= 4) Pair(m[3] - 'a', 9 - (m[2] - '0')) else null
+
+            // 同じrankのPVノードのみ再利用（別rankは別ノードで色を維持）
+            val existing = p.children.find { it.moveLabel == "$sym$l" && it.pvColorIndex == rank && it.isPvBranch }
+            val n = existing ?: KifuNode(b, p.senteHand, p.goteHand, if (p.currentPlayer == Player.SENTE) Player.GOTE else Player.SENTE, "$sym$l", p, lastFrom, lastTo, isPvBranch = true, pvColorIndex = rank).also { p.children.add(it) }
+            branchNodes.add(n)
+            p = n
+        }
+        // 最初の1手目へジャンプ
+        val targetNode = branchNodes.firstOrNull() ?: branchPoint
+        onUpdate(activePvList, activeUsiList, targetNode, branchNodes.toList(), false)
+    }
+
+    private fun handleSquareClick(
+        row: Int, col: Int, boardState: Map<Pair<Int, Int>, Piece>, currentPlayer: Player,
+        selectedSquare: Pair<Int, Int>?, selectedHandPiece: Pair<Player, PieceType>?, currentNode: KifuNode,
+        onSaveRequested: (KifuNode) -> Unit,
+        onUpdate: (Pair<Int, Int>?, Pair<Player, PieceType>?, KifuNode?, PendingMove?) -> Unit
+    ) {
+        val clickedPos = Pair(row, col)
+        if (selectedHandPiece != null) {
+            if (boardState[clickedPos] == null && selectedHandPiece.first == currentPlayer) {
+                val (player, type) = selectedHandPiece
+                val moveLabel = "${9 - col}${rowToKanji('a' + row)}${type.label}打"
+                executeMove(null, clickedPos, Piece(type, player), null, false, currentNode, moveLabel, false, onSaveRequested) { onUpdate(null, null, it, null) }
+            }
+        } else {
+            val currentSelected = selectedSquare
+            if (currentSelected == null) {
+                val piece = boardState[clickedPos]
+                if (piece != null && piece.owner == currentPlayer) onUpdate(clickedPos, null, null, null)
+            } else {
+                if (currentSelected == clickedPos) onUpdate(null, null, null, null)
+                else {
+                    val movingPiece = boardState[currentSelected]
+                    val targetPiece = boardState[clickedPos]
+                    if (movingPiece != null && movingPiece.owner == currentPlayer && movingPiece.owner != targetPiece?.owner) {
+                        if (isValidMovePattern(currentSelected, clickedPos, movingPiece, boardState)) {
+                            val canPromote = !movingPiece.isPromoted && movingPiece.type.promotedLabel != null
+                            val isSenteZone = clickedPos.first <= 2 || currentSelected.first <= 2
+                            val isGoteZone = clickedPos.first >= 6 || currentSelected.first >= 6
+                            val enteringZone = if (movingPiece.owner == Player.SENTE) isSenteZone else isGoteZone
+                            if (canPromote && enteringZone) onUpdate(null, null, null, PendingMove(currentSelected, clickedPos, movingPiece, targetPiece))
+                            else {
+                                val moveLabel = formatUsiMove("${9-currentSelected.second}${('a'+currentSelected.first)}${9-clickedPos.second}${('a'+clickedPos.first)}", boardState)
+                                executeMove(currentSelected, clickedPos, movingPiece, targetPiece, false, currentNode, moveLabel, false, onSaveRequested) { onUpdate(null, null, it, null) }
+                            }
+                        }
+                    } else if (targetPiece?.owner == movingPiece?.owner) onUpdate(clickedPos, null, null, null)
+                }
+            }
+        }
+    }
+}
+
+@Preview(showBackground = true, showSystemUi = true)
+@Composable
+fun MainScreenPreview() {
+    val emptyHand = emptyMap<PieceType, Int>()
+    val senteHand = mapOf(PieceType.PAWN to 2, PieceType.GOLD to 1)
+    val board = createInitialBoard()
+    val root = KifuNode(board, emptyHand, emptyHand, Player.SENTE, "開始局面")
+    val n1 = KifuNode(board, emptyHand, emptyHand, Player.GOTE, "▲7六歩", root)
+    val n2 = KifuNode(board, senteHand, emptyHand, Player.SENTE, "△3四歩", n1)
+    val path = listOf(root, n1, n2)
+    val evalHistory = mapOf(0 to 0, 1 to 120, 2 to -80)
+    val pvText = "評価: +120 (先手指しやすい)\n読み筋: ▲2六歩 △3二金 ▲2五歩"
+
+    ShogiGUITheme {
+        Scaffold(
+            modifier = Modifier.fillMaxSize(),
+            bottomBar = {
+                Surface(
+                    color = MaterialTheme.colorScheme.surfaceContainer,
+                    modifier = Modifier.fillMaxWidth()
+                ) {
+                    Column(
+                        modifier = Modifier
+                            .fillMaxWidth()
+                            .padding(horizontal = 8.dp, vertical = 4.dp)
+                    ) {
+                        SliderControlSection(n1, path, evalHistory) {}
+                        Spacer(modifier = Modifier.height(8.dp))
+                        Row(
+                            modifier = Modifier.fillMaxWidth(),
+                            horizontalArrangement = Arrangement.spacedBy(8.dp),
+                            verticalAlignment = Alignment.CenterVertically
+                        ) {
+                            OutlinedButton(onClick = {}, modifier = Modifier.weight(0.3f).height(72.dp), shape = MaterialTheme.shapes.extraLarge) {
+                                Text("読込", style = MaterialTheme.typography.labelSmall)
+                            }
+                            OutlinedButton(onClick = {}, modifier = Modifier.weight(0.3f).height(72.dp), shape = MaterialTheme.shapes.extraLarge) {
+                                Text("解析", style = MaterialTheme.typography.labelSmall)
+                            }
+                            OutlinedButton(onClick = {}, modifier = Modifier.weight(0.3f).height(72.dp), shape = MaterialTheme.shapes.extraLarge) {
+                                Text("反転", style = MaterialTheme.typography.labelSmall)
+                            }
+                            OutlinedButton(onClick = {}, modifier = Modifier.weight(0.3f).height(72.dp), shape = MaterialTheme.shapes.extraLarge) {
+                                Text("本譜", style = MaterialTheme.typography.labelSmall)
+                            }
+                        }
+                    }
+                }
+            }
+        ) { innerPadding ->
+            Column(
+                modifier = Modifier
+                    .fillMaxSize()
+                    .padding(innerPadding)
+                    .verticalScroll(rememberScrollState()),
+                horizontalAlignment = Alignment.CenterHorizontally
+            ) {
+                PlayerStatusSection("後手太郎", "△", false, emptyHand, null, Player.SENTE, false, handOnTop = false, gameResult = "") {}
+                ShogiBoard(board, Pair(6, 4), { _, _ -> }, modifier = Modifier.padding(16.dp), lastFrom = Pair(6, 4), lastTo = Pair(4, 4))
+                PlayerStatusSection("先手花子", "▲", true, senteHand, null, Player.SENTE, false, handOnTop = true, gameResult = "") {}
+                Column(modifier = Modifier.padding(8.dp)) {
+                    PvInfoCard(1, pvText) {}
+                    PvInfoCard(2, "評価: +80 (互角)\n読み筋: ▲7八金 △8四歩") {}
+                }
+            }
+        }
+    }
+}
