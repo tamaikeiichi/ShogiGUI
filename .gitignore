@@ -13,3 +13,9 @@
 .externalNativeBuild
 .cxx
 local.properties
+# 巨大な評価関数ファイルを除外
+*.bin
+*.nnue
+
+# リリース用バイナリを除外
+app/release/

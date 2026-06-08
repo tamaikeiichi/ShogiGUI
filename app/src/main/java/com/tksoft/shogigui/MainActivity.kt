@@ -125,10 +125,10 @@ class MainActivity : ComponentActivity() {
                 var goteName by remember { mutableStateOf(savedGoteName) }
                 var gameResult by remember { mutableStateOf(savedGameResult) }
                 
-                val selectedEngine = prefs.getString("selected_engine", "suisho5")
-                val engine: UsiEngineInterface = remember {
+                var selectedEngine by remember { mutableStateOf(prefs.getString("selected_engine", "suisho5") ?: "suisho5") }
+                var engine by remember { mutableStateOf<UsiEngineInterface>(
                     if (selectedEngine == "aoba") AobaEngine() else UsiEngine()
-                }
+                ) }
                 var engineOutput by remember { mutableStateOf("エンジン待機中...") }
 
                 val processOutput = {
@@ -198,9 +198,9 @@ class MainActivity : ComponentActivity() {
                     }
                 }
 
-                LaunchedEffect(Unit) {
+                LaunchedEffect(engine) {
                     delay(1000)
-                    // usiok/readyok を受け取るための初期コールバック
+                    isEngineReady = false
                     engine.onOutputReceived = { rawLine ->
                         runOnUiThread { processOutput(rawLine, emptyMap(), Player.SENTE, 0) }
                     }
@@ -339,14 +339,23 @@ class MainActivity : ComponentActivity() {
                                     }
 
                                     OutlinedButton(onClick = {
-                                        if (isEngineReady) {
-                                            if (isAnalysisMode || isAutoAnalysis) { isAnalysisMode = false; isAutoAnalysis = false; engine.sendCommand("stop") }
-                                            else { pinnedPvList = emptyMap(); pinnedPvUsiList = emptyMap(); isAnalysisMode = true }
-                                        }
+                                        if (isAnalysisMode || isAutoAnalysis) { isAnalysisMode = false; isAutoAnalysis = false; engine.sendCommand("stop") }
+                                        else { pinnedPvList = emptyMap(); pinnedPvUsiList = emptyMap(); isAnalysisMode = true }
                                     }, modifier = Modifier.weight(0.3f).height(72.dp),
+                                        enabled = isEngineReady,
                                         shape = MaterialTheme.shapes.extraLarge,
                                         colors = ButtonDefaults.outlinedButtonColors(containerColor = if (isAnalysisMode || isAutoAnalysis) MaterialTheme.colorScheme.tertiaryContainer else Color.Transparent)) {
-                                        Column(horizontalAlignment = Alignment.CenterHorizontally) { Icon(painterResource(if (isAnalysisMode || isAutoAnalysis) R.drawable.stop_circle_24px else R.drawable.network_intelligence_24px), "解析"); Text(if (isAnalysisMode || isAutoAnalysis) "停止" else "解析", style = MaterialTheme.typography.labelSmall) }
+                                        Column(horizontalAlignment = Alignment.CenterHorizontally) {
+                                            Icon(painterResource(if (isAnalysisMode || isAutoAnalysis) R.drawable.stop_circle_24px else R.drawable.network_intelligence_24px), "解析")
+                                            Text(
+                                                when {
+                                                    !isEngineReady -> "準備中"
+                                                    isAnalysisMode || isAutoAnalysis -> "停止"
+                                                    else -> "解析"
+                                                },
+                                                style = MaterialTheme.typography.labelSmall
+                                            )
+                                        }
                                     }
 
                                     OutlinedButton(onClick = { isBoardFlipped = !isBoardFlipped },
@@ -486,7 +495,7 @@ class MainActivity : ComponentActivity() {
                 }
 
                 if (showSettingsDialog) {
-                    var pendingEngine by remember { mutableStateOf(selectedEngine ?: "suisho5") }
+                    var pendingEngine by remember { mutableStateOf(selectedEngine) }
                     AlertDialog(onDismissRequest = { showSettingsDialog = false }, title = { Text(
                         text = buildAnnotatedString {
                             append("設定 ")
@@ -494,7 +503,7 @@ class MainActivity : ComponentActivity() {
                                 fontSize = 10.sp,
                                 fontWeight = FontWeight.Normal
                             )) {
-                                append(if ((selectedEngine ?: "suisho5") == "aoba") "AobaNNUE" else "Suisho5-YaneuraOu-v7.5.0")
+                                append(if (selectedEngine == "aoba") "AobaNNUE" else "Suisho5-YaneuraOu-v7.5.0")
                             }
                         },
                         style = MaterialTheme.typography.bodyMedium
@@ -503,7 +512,7 @@ class MainActivity : ComponentActivity() {
                             Column(verticalArrangement = Arrangement.spacedBy(16.dp)) {
                                 // エンジン選択
                                 Column {
-                                    Text("エンジン (再起動で反映)", style = MaterialTheme.typography.labelMedium)
+                                    Text("エンジン", style = MaterialTheme.typography.labelMedium)
                                     Row(verticalAlignment = Alignment.CenterVertically) {
                                         RadioButton(selected = pendingEngine == "suisho5", onClick = { pendingEngine = "suisho5" })
                                         Text("Suisho5", modifier = Modifier.weight(1f))
@@ -559,9 +568,19 @@ class MainActivity : ComponentActivity() {
                                     .putInt("thread_count", threadCount)
                                     .putString("selected_engine", pendingEngine)
                                     .apply()
-                                if(isEngineReady){
-                                    engine.sendCommand("setoption name MultiPV value $multiPvCount")
-                                    engine.sendCommand("setoption name Threads value $threadCount")
+                                if (pendingEngine != selectedEngine) {
+                                    isAnalysisMode = false
+                                    isAutoAnalysis = false
+                                    isEngineReady = false
+                                    engine.onOutputReceived = null
+                                    engine.stop()
+                                    selectedEngine = pendingEngine
+                                    engine = if (pendingEngine == "aoba") AobaEngine() else UsiEngine()
+                                } else {
+                                    if (isEngineReady) {
+                                        engine.sendCommand("setoption name MultiPV value $multiPvCount")
+                                        engine.sendCommand("setoption name Threads value $threadCount")
+                                    }
                                 }
                                 showSettingsDialog = false
                             }) { Text("保存") }

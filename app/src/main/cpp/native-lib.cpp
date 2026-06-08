@@ -17,7 +17,7 @@
 static JavaVM* g_vm = nullptr;
 static jobject g_obj = nullptr;
 static jmethodID g_mid = nullptr;
-static std::mutex g_mutex;
+static std::mutex& g_mutex = *new std::mutex();
 
 // Redirect std::cout to Kotlin callback
 class UsiBuf : public std::streambuf {
@@ -152,6 +152,8 @@ Java_com_tksoft_shogigui_UsiEngine_nativeStart(JNIEnv* env, jobject thiz) {
         env->DeleteGlobalRef(g_obj);
         g_obj = nullptr;
     }
+
+    running.store(false);
 }
 
 extern "C" JNIEXPORT void JNICALL
