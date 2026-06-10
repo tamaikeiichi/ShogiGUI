@@ -4,6 +4,7 @@ import android.os.Bundle
 import androidx.activity.ComponentActivity
 import androidx.activity.compose.setContent
 import androidx.activity.enableEdgeToEdge
+import androidx.compose.foundation.basicMarquee
 import androidx.compose.foundation.layout.*
 import androidx.compose.foundation.rememberScrollState
 import androidx.compose.foundation.verticalScroll
@@ -353,7 +354,9 @@ class MainActivity : ComponentActivity() {
                                                     isAnalysisMode || isAutoAnalysis -> "停止"
                                                     else -> "解析"
                                                 },
-                                                style = MaterialTheme.typography.labelSmall
+                                                style = MaterialTheme.typography.labelSmall,
+                                                maxLines = 1,
+                                                modifier = Modifier.basicMarquee()
                                             )
                                         }
                                     }
