@@ -487,6 +487,32 @@ fun parseKifu(text: String, root: KifuNode, onSaveRequested: (KifuNode) -> Unit)
     return if (tempNode != root) tempNode else null
 }
 
+fun applyUsiMoveToNode(
+    usiMove: String,
+    parentNode: KifuNode,
+    onSaveRequested: (KifuNode) -> Unit,
+    onUpdate: (KifuNode) -> Unit
+) {
+    try {
+        if (usiMove.length < 4) return
+        if (usiMove[1] == '*') {
+            val type = when (usiMove[0]) {
+                'P' -> PieceType.PAWN; 'L' -> PieceType.LANCE; 'N' -> PieceType.KNIGHT
+                'S' -> PieceType.SILVER; 'G' -> PieceType.GOLD; 'B' -> PieceType.BISHOP
+                'R' -> PieceType.ROOK; else -> return
+            }
+            val toPos = Pair(usiMove[3] - 'a', 9 - (usiMove[2] - '0'))
+            val rowKanji = when (toPos.first) { 0->"一";1->"二";2->"三";3->"四";4->"五";5->"六";6->"七";7->"八";8->"九";else->"" }
+            executeMove(null, toPos, Piece(type, parentNode.currentPlayer), null, false, parentNode, "${usiMove[2]}${rowKanji}${type.label}打", false, onSaveRequested, onUpdate)
+        } else {
+            val fromPos = Pair(usiMove[1] - 'a', 9 - (usiMove[0] - '0'))
+            val toPos = Pair(usiMove[3] - 'a', 9 - (usiMove[2] - '0'))
+            val piece = parentNode.board[fromPos] ?: return
+            executeMove(fromPos, toPos, piece, parentNode.board[toPos], usiMove.endsWith("+"), parentNode, formatUsiMove(usiMove, parentNode.board), false, onSaveRequested, onUpdate)
+        }
+    } catch (e: Exception) { Log.e("ShogiGUI", "applyUsiMoveToNode: ${e.message}") }
+}
+
 fun applyUsiMove(
     usiMove: String,
     board: Map<Pair<Int, Int>, Piece>,

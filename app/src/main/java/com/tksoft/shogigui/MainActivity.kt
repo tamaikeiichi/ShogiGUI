@@ -32,6 +32,8 @@ import androidx.compose.ui.unit.DpOffset
 import androidx.compose.ui.tooling.preview.Preview
 import androidx.compose.ui.unit.sp
 import kotlin.math.roundToInt
+import androidx.compose.ui.window.Popup
+import androidx.compose.ui.window.PopupProperties
 
 class MainActivity : ComponentActivity() {
 
@@ -72,6 +74,19 @@ class MainActivity : ComponentActivity() {
                 // --- 状態管理 ---
                 var resetKey by remember { mutableIntStateOf(0) }
                 var pvBranchPath by remember { mutableStateOf<List<KifuNode>?>(null) }
+                val isOnMainLine = remember(currentNode, pvBranchPath) {
+                    if (pvBranchPath != null) false
+                    else {
+                        var p: KifuNode? = currentNode
+                        var onMain = true
+                        while (p?.parent != null) {
+                            val parent = p.parent!!
+                            if (parent.children.firstOrNull { !it.isPvBranch } != p) { onMain = false; break }
+                            p = parent
+                        }
+                        onMain
+                    }
+                }
                 val currentPath = remember(currentNode, initialNode, pvBranchPath, resetKey) {
                     val path = mutableListOf<KifuNode>()
                     val pvPath = pvBranchPath
@@ -107,6 +122,7 @@ class MainActivity : ComponentActivity() {
                 val analysisUsiHistory = remember { mutableStateMapOf<Int, Map<Int, List<String>>>() }
 
                 var bestmoveReceived by remember { mutableStateOf(false) }
+                var humanPlayer by remember { mutableStateOf<Player?>(null) }
 
                 var selectedSquare by remember { mutableStateOf<Pair<Int, Int>?>(null) }
                 var selectedHandPiece by remember { mutableStateOf<Pair<Player, PieceType>?>(null) }
@@ -253,6 +269,37 @@ class MainActivity : ComponentActivity() {
                     }
                 }
 
+                LaunchedEffect(humanPlayer, currentNode, isEngineReady) {
+                    val hp = humanPlayer ?: return@LaunchedEffect
+                    if (!isEngineReady) return@LaunchedEffect
+                    if (currentNode.currentPlayer == hp) return@LaunchedEffect
+                    val node = currentNode
+                    val capturedBoard = node.board
+                    val capturedTurn = node.currentPlayer
+                    val capturedMoveCount = node.moveCount
+                    engine.onOutputReceived = { rawLine ->
+                        runOnUiThread {
+                            processOutput(rawLine, capturedBoard, capturedTurn, capturedMoveCount)
+                            if (rawLine.trim().startsWith("bestmove") && humanPlayer != null) {
+                                val moveStr = rawLine.trim().split(Regex("\\s+")).getOrNull(1)
+                                if (moveStr != null && moveStr != "(none)") {
+                                    applyUsiMoveToNode(moveStr, node, saveKifu) { currentNode = it }
+                                }
+                            }
+                        }
+                    }
+                    engine.sendCommand("stop")
+                    bestmoveReceived = false
+                    pvList.clear(); pvUsiList.clear()
+                    val posCmd = buildPositionCommand(initialNode, node)
+                        ?: boardToSfen(node.board, node.currentPlayer, node.senteHand, node.goteHand)
+                            .takeIf { it.isNotEmpty() }?.let { "position sfen $it" }
+                    if (posCmd != null) {
+                        engine.sendCommand(posCmd)
+                        engine.sendCommand("go movetime $analysisTimeMs")
+                    }
+                }
+
                 Scaffold(
                     modifier = Modifier.fillMaxSize(),
                     containerColor = MaterialTheme.colorScheme.surfaceContainerLowest,
@@ -281,7 +328,7 @@ class MainActivity : ComponentActivity() {
                                             text = { Text("リセット") },
                                             onClick = {
                                                 engine.sendCommand("stop")
-                                                isAnalysisMode = false; isAutoAnalysis = false
+                                                isAnalysisMode = false; isAutoAnalysis = false; humanPlayer = null
                                                 currentNode = initialNode
                                                 initialNode.children.clear()
                                                 senteName = "先手"; goteName = "後手"; gameResult = ""
@@ -312,6 +359,22 @@ class MainActivity : ComponentActivity() {
                                                 showMenu = false
                                             })
                                         DropdownMenuItem(
+                                            text = { Text("先手番を持って対局") },
+                                            onClick = {
+                                                isAnalysisMode = false; isAutoAnalysis = false
+                                                engine.sendCommand("stop")
+                                                humanPlayer = Player.SENTE
+                                                showMenu = false
+                                            })
+                                        DropdownMenuItem(
+                                            text = { Text("後手番を持って対局") },
+                                            onClick = {
+                                                isAnalysisMode = false; isAutoAnalysis = false
+                                                engine.sendCommand("stop")
+                                                humanPlayer = Player.GOTE
+                                                showMenu = false
+                                            })
+                                        DropdownMenuItem(
                                             text = { Text("設定") },
                                             onClick = { showSettingsDialog = true; showMenu = false })
                                     }
@@ -332,6 +395,7 @@ class MainActivity : ComponentActivity() {
                                             gameResult = extractGameResult(text) ?: ""
                                             prefs.edit().putString("game_result", gameResult).apply()
                                             pinnedPvList = emptyMap(); pinnedPvUsiList = emptyMap(); pvBranchPath = null; evalHistory.clear(); savedMainEvalHistory = emptyMap()
+                                            humanPlayer = null
                                             if (newNode != null) { currentNode = freshRoot; saveKifu(freshRoot) }
                                         }
                                     }, modifier = Modifier.weight(0.3f).height(72.dp),
@@ -340,16 +404,22 @@ class MainActivity : ComponentActivity() {
                                     }
 
                                     OutlinedButton(onClick = {
-                                        if (isAnalysisMode || isAutoAnalysis) { isAnalysisMode = false; isAutoAnalysis = false; engine.sendCommand("stop") }
-                                        else { pinnedPvList = emptyMap(); pinnedPvUsiList = emptyMap(); isAnalysisMode = true }
+                                        if (humanPlayer != null) {
+                                            humanPlayer = null; engine.sendCommand("stop")
+                                        } else if (isAnalysisMode || isAutoAnalysis) {
+                                            isAnalysisMode = false; isAutoAnalysis = false; engine.sendCommand("stop")
+                                        } else {
+                                            pinnedPvList = emptyMap(); pinnedPvUsiList = emptyMap(); isAnalysisMode = true
+                                        }
                                     }, modifier = Modifier.weight(0.3f).height(72.dp),
                                         enabled = isEngineReady,
                                         shape = MaterialTheme.shapes.extraLarge,
-                                        colors = ButtonDefaults.outlinedButtonColors(containerColor = if (isAnalysisMode || isAutoAnalysis) MaterialTheme.colorScheme.tertiaryContainer else Color.Transparent)) {
+                                        colors = ButtonDefaults.outlinedButtonColors(containerColor = if (humanPlayer != null || isAnalysisMode || isAutoAnalysis) MaterialTheme.colorScheme.tertiaryContainer else Color.Transparent)) {
                                         Column(horizontalAlignment = Alignment.CenterHorizontally) {
-                                            Icon(painterResource(if (isAnalysisMode || isAutoAnalysis) R.drawable.stop_circle_24px else R.drawable.network_intelligence_24px), "解析")
+                                            Icon(painterResource(if (humanPlayer != null || isAnalysisMode || isAutoAnalysis) R.drawable.stop_circle_24px else R.drawable.network_intelligence_24px), "解析")
                                             Text(
                                                 when {
+                                                    humanPlayer != null -> "対局中止"
                                                     !isEngineReady -> "準備中"
                                                     isAnalysisMode || isAutoAnalysis -> "停止"
                                                     else -> "解析"
@@ -371,6 +441,7 @@ class MainActivity : ComponentActivity() {
                                     OutlinedButton(onClick = {
                                         fun clearPv(n: KifuNode) { n.children.removeIf { it.isPvBranch }; n.children.forEach { clearPv(it) } }
                                         val pvBranchPoint = pvBranchPath?.firstOrNull()?.parent
+
                                         // currentNodeが属する実際のルートを取得してPV除去
                                         var treeRoot: KifuNode = currentNode
                                         while (treeRoot.parent != null) { treeRoot = treeRoot.parent!! }
@@ -395,6 +466,7 @@ class MainActivity : ComponentActivity() {
                                             savedMainEvalHistory = emptyMap()
                                         }
                                     },
+                                        enabled = !isOnMainLine,
                                         modifier = Modifier.weight(0.3f).height(72.dp),
                                         shape = MaterialTheme.shapes.extraLarge
                                     ) {
@@ -413,15 +485,16 @@ class MainActivity : ComponentActivity() {
 
                             Column(modifier = Modifier.weight(0.5f).verticalScroll(rememberScrollState()), horizontalAlignment = Alignment.CenterHorizontally, verticalArrangement = Arrangement.spacedBy(8.dp)) {
                                 val topP = if (isBoardFlipped) Player.SENTE else Player.GOTE; val botP = if (isBoardFlipped) Player.GOTE else Player.SENTE
-                                PlayerStatusSection(if(topP==Player.SENTE) senteName else goteName, if(topP==Player.SENTE) "▲" else "△", currentPlayer==topP, if(topP==Player.SENTE) senteHand else goteHand, selectedHandPiece, currentPlayer, isBoardFlipped, handOnTop = false, gameResult = gameResult) { selectedHandPiece = it; selectedSquare = null }
+                                val isHumanTurn = humanPlayer == null || currentPlayer == humanPlayer
+                                PlayerStatusSection(if(topP==Player.SENTE) senteName else goteName, if(topP==Player.SENTE) "▲" else "△", currentPlayer==topP, if(topP==Player.SENTE) senteHand else goteHand, selectedHandPiece, currentPlayer, isBoardFlipped, handOnTop = false, gameResult = gameResult) { if (isHumanTurn) { selectedHandPiece = it; selectedSquare = null } }
                                 ShogiBoard(boardState, selectedSquare, { r, c ->
-                                    handleSquareClick(r, c, boardState, currentPlayer, selectedSquare, selectedHandPiece, currentNode, saveKifu) { s, h, n, p ->
+                                    if (isHumanTurn) handleSquareClick(r, c, boardState, currentPlayer, selectedSquare, selectedHandPiece, currentNode, saveKifu) { s, h, n, p ->
                                         selectedSquare = s; selectedHandPiece = h
                                         if(n != null) currentNode = n
                                         if(p != null) promotionPendingBy = p
                                     }
                                 }, isBoardFlipped, Modifier.sizeIn(maxWidth = 500.dp, maxHeight = 500.dp), currentNode.lastFrom, currentNode.lastTo, currentNode.pvColorIndex)
-                                PlayerStatusSection(if(botP==Player.SENTE) senteName else goteName, if(botP==Player.SENTE) "▲" else "△", currentPlayer==botP, if(botP==Player.SENTE) senteHand else goteHand, selectedHandPiece, currentPlayer, isBoardFlipped, handOnTop = true, gameResult = gameResult) { selectedHandPiece = it; selectedSquare = null }
+                                PlayerStatusSection(if(botP==Player.SENTE) senteName else goteName, if(botP==Player.SENTE) "▲" else "△", currentPlayer==botP, if(botP==Player.SENTE) senteHand else goteHand, selectedHandPiece, currentPlayer, isBoardFlipped, handOnTop = true, gameResult = gameResult) { if (isHumanTurn) { selectedHandPiece = it; selectedSquare = null } }
                             }
                             Column(
                                 modifier = Modifier
@@ -462,15 +535,16 @@ class MainActivity : ComponentActivity() {
                         Column(modifier = Modifier.fillMaxSize().padding(innerPadding).verticalScroll(rememberScrollState()), horizontalAlignment = Alignment.CenterHorizontally) {
 
                             val topP = if (isBoardFlipped) Player.SENTE else Player.GOTE; val botP = if (isBoardFlipped) Player.GOTE else Player.SENTE
-                            PlayerStatusSection(if(topP==Player.SENTE) senteName else goteName, if(topP==Player.SENTE) "▲" else "△", currentPlayer==topP, if(topP==Player.SENTE) senteHand else goteHand, selectedHandPiece, currentPlayer, isBoardFlipped, handOnTop = false, gameResult = gameResult) { selectedHandPiece = it; selectedSquare = null }
+                            val isHumanTurn = humanPlayer == null || currentPlayer == humanPlayer
+                            PlayerStatusSection(if(topP==Player.SENTE) senteName else goteName, if(topP==Player.SENTE) "▲" else "△", currentPlayer==topP, if(topP==Player.SENTE) senteHand else goteHand, selectedHandPiece, currentPlayer, isBoardFlipped, handOnTop = false, gameResult = gameResult) { if (isHumanTurn) { selectedHandPiece = it; selectedSquare = null } }
                             ShogiBoard(boardState, selectedSquare, { r, c ->
-                                handleSquareClick(r, c, boardState, currentPlayer, selectedSquare, selectedHandPiece, currentNode, saveKifu) { s, h, n, p ->
+                                if (isHumanTurn) handleSquareClick(r, c, boardState, currentPlayer, selectedSquare, selectedHandPiece, currentNode, saveKifu) { s, h, n, p ->
                                     selectedSquare = s; selectedHandPiece = h
                                     if(n != null) currentNode = n
                                     if(p != null) promotionPendingBy = p
                                 }
                             }, isBoardFlipped, Modifier.padding(16.dp), currentNode.lastFrom, currentNode.lastTo, currentNode.pvColorIndex)
-                            PlayerStatusSection(if(botP==Player.SENTE) senteName else goteName, if(botP==Player.SENTE) "▲" else "△", currentPlayer==botP, if(botP==Player.SENTE) senteHand else goteHand, selectedHandPiece, currentPlayer, isBoardFlipped, handOnTop = true, gameResult = gameResult) { selectedHandPiece = it; selectedSquare = null }
+                            PlayerStatusSection(if(botP==Player.SENTE) senteName else goteName, if(botP==Player.SENTE) "▲" else "△", currentPlayer==botP, if(botP==Player.SENTE) senteHand else goteHand, selectedHandPiece, currentPlayer, isBoardFlipped, handOnTop = true, gameResult = gameResult) { if (isHumanTurn) { selectedHandPiece = it; selectedSquare = null } }
                             Column(modifier = Modifier.padding(8.dp)) {
                                 (if (pinnedPvList.isNotEmpty()) pinnedPvList else pvList.toMap()).entries
                                     .sortedBy { it.key }
@@ -592,28 +666,39 @@ class MainActivity : ComponentActivity() {
                 }
 
                 promotionPendingBy?.let { move ->
-                    AlertDialog(onDismissRequest = {}, title = { Text("成り") }, text = { Text("成りますか？") },
-                        confirmButton = { 
-                            TextButton(onClick = { 
-                                val usi = "${9 - move.from.second}${('a' + move.from.first)}${9 - move.to.second}${('a' + move.to.first)}+"
-                                val label = formatUsiMove(usi, boardState)
-                                executeMove(move.from, move.to, move.piece, move.captured, true, currentNode, label, false, saveKifu) {
-                                    currentNode = it
-                                }
-                                promotionPendingBy = null
-                            }) { Text("成る") }
-                        },
-                        dismissButton = {
-                            TextButton(onClick = {
-                                val usi = "${9 - move.from.second}${('a' + move.from.first)}${9 - move.to.second}${('a' + move.to.first)}"
-                                val label = formatUsiMove(usi, boardState)
-                                executeMove(move.from, move.to, move.piece, move.captured, false, currentNode, label, false, saveKifu) { 
-                                    currentNode = it 
-                                }
-                                promotionPendingBy = null 
-                            }) { Text("不成") } 
+                    Popup(alignment = Alignment.Center, properties = PopupProperties(focusable = true)) {
+                        Surface(
+                            shape = MaterialTheme.shapes.extraLarge,
+                            tonalElevation = 6.dp,
+                            shadowElevation = 6.dp
+                        ) {
+                            Row(
+                                modifier = Modifier.padding(12.dp),
+                                horizontalArrangement = Arrangement.spacedBy(8.dp)
+                            ) {
+                                Button(
+                                    onClick = {
+                                        val usi = "${9 - move.from.second}${('a' + move.from.first)}${9 - move.to.second}${('a' + move.to.first)}+"
+                                        val label = formatUsiMove(usi, boardState)
+                                        executeMove(move.from, move.to, move.piece, move.captured, true, currentNode, label, false, saveKifu) { currentNode = it }
+                                        promotionPendingBy = null
+                                    },
+                                    shape = MaterialTheme.shapes.large,
+                                    modifier = Modifier.size(width = 100.dp, height = 56.dp)
+                                ) { Text("成", style = MaterialTheme.typography.titleMedium) }
+                                FilledTonalButton(
+                                    onClick = {
+                                        val usi = "${9 - move.from.second}${('a' + move.from.first)}${9 - move.to.second}${('a' + move.to.first)}"
+                                        val label = formatUsiMove(usi, boardState)
+                                        executeMove(move.from, move.to, move.piece, move.captured, false, currentNode, label, false, saveKifu) { currentNode = it }
+                                        promotionPendingBy = null
+                                    },
+                                    shape = MaterialTheme.shapes.large,
+                                    modifier = Modifier.size(width = 100.dp, height = 56.dp)
+                                ) { Text("不成", style = MaterialTheme.typography.titleMedium) }
+                            }
                         }
-                    )
+                    }
                 }
             }
         }
