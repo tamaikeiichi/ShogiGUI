@@ -255,7 +255,11 @@ class MainActivity : ComponentActivity() {
                     if (posCmd != null) {
                         engine.sendCommand(posCmd)
                         Log.d("posCmd", posCmd)
-                        engine.sendCommand("go movetime $analysisTimeMs")
+                        if (isAutoAnalysis) {
+                            engine.sendCommand("go movetime $analysisTimeMs")
+                        } else {
+                            engine.sendCommand("go infinite")
+                        }
                     }
 
                     // 自動解析：bestmove を受け取ったら即座に次の手へ（タイムアウト付き）
