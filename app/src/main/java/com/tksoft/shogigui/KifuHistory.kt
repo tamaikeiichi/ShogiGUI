@@ -99,7 +99,7 @@ object KifuHistoryManager {
 
         if (entries.size > MAX_ENTRIES) {
             entries.subList(MAX_ENTRIES, entries.size).forEach { kifuFile(context, it.id).delete() }
-            while (entries.size > MAX_ENTRIES) entries.removeLast()
+            while (entries.size > MAX_ENTRIES) entries.removeAt(entries.lastIndex)
         }
         saveIndex(context, entries)
     }
