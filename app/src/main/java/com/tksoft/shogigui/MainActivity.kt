@@ -991,7 +991,7 @@ fun MainScreenPreview() {
                             verticalAlignment = Alignment.CenterVertically
                         ) {
                             OutlinedButton(onClick = {}, modifier = Modifier.weight(0.3f).height(72.dp), shape = MaterialTheme.shapes.extraLarge) {
-                                Text("読込", style = MaterialTheme.typography.labelSmall)
+                                Text("クリップボードから読込", style = MaterialTheme.typography.labelSmall, maxLines = 1, modifier = Modifier.basicMarquee())
                             }
                             OutlinedButton(onClick = {}, modifier = Modifier.weight(0.3f).height(72.dp), shape = MaterialTheme.shapes.extraLarge) {
                                 Text("解析", style = MaterialTheme.typography.labelSmall)
