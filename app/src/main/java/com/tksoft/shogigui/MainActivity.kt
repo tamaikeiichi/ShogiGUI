@@ -6,6 +6,8 @@ import androidx.activity.compose.setContent
 import androidx.activity.enableEdgeToEdge
 import androidx.compose.foundation.basicMarquee
 import androidx.compose.foundation.layout.*
+import androidx.compose.foundation.lazy.LazyColumn
+import androidx.compose.foundation.lazy.items
 import androidx.compose.foundation.rememberScrollState
 import androidx.compose.foundation.verticalScroll
 import androidx.compose.material.icons.Icons
@@ -22,11 +24,15 @@ import androidx.compose.ui.res.painterResource
 import androidx.compose.ui.unit.dp
 import org.json.JSONObject
 import com.tksoft.shogigui.ui.theme.ShogiGUITheme
+import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.delay
+import kotlinx.coroutines.launch
+import kotlinx.coroutines.withContext
 import android.util.Log
 import androidx.compose.ui.text.SpanStyle
 import androidx.compose.ui.text.buildAnnotatedString
 import androidx.compose.ui.text.font.FontWeight
+import androidx.compose.ui.text.style.TextOverflow
 import androidx.compose.ui.text.withStyle
 import androidx.compose.ui.unit.DpOffset
 import androidx.compose.ui.tooling.preview.Preview
@@ -137,6 +143,8 @@ class MainActivity : ComponentActivity() {
                 var multiPvCount by remember { mutableIntStateOf(prefs.getInt("multi_pv", 3)) }
                 var threadCount by remember { mutableIntStateOf(prefs.getInt("thread_count", 4)) }
                 var showSettingsDialog by remember { mutableStateOf(false) }
+                var showHistoryDialog by remember { mutableStateOf(false) }
+                val coroutineScope = rememberCoroutineScope()
 
                 var senteName by remember { mutableStateOf(savedSenteName) }
                 var goteName by remember { mutableStateOf(savedGoteName) }
@@ -381,6 +389,9 @@ class MainActivity : ComponentActivity() {
                                         DropdownMenuItem(
                                             text = { Text("設定") },
                                             onClick = { showSettingsDialog = true; showMenu = false })
+                                        DropdownMenuItem(
+                                            text = { Text("過去の棋譜") },
+                                            onClick = { showHistoryDialog = true; showMenu = false })
                                     }
                                     OutlinedButton(onClick = {
                                         clipboard.getText()?.text?.let { text ->
@@ -400,7 +411,19 @@ class MainActivity : ComponentActivity() {
                                             prefs.edit().putString("game_result", gameResult).apply()
                                             pinnedPvList = emptyMap(); pinnedPvUsiList = emptyMap(); pvBranchPath = null; evalHistory.clear(); savedMainEvalHistory = emptyMap()
                                             humanPlayer = null
-                                            if (newNode != null) { currentNode = freshRoot; saveKifu(freshRoot) }
+                                            if (newNode != null) {
+                                                currentNode = freshRoot; saveKifu(freshRoot)
+                                                val capturedSente = names.sente ?: senteName
+                                                val capturedGote = names.gote ?: goteName
+                                                val capturedResult = gameResult
+                                                val gameDate = extractGameDate(text)
+                                                coroutineScope.launch(Dispatchers.IO) {
+                                                    KifuHistoryManager.saveKifu(
+                                                        this@MainActivity, freshRoot,
+                                                        capturedSente, capturedGote, capturedResult, gameDate
+                                                    )
+                                                }
+                                            }
                                         }
                                     }, modifier = Modifier.weight(0.3f).height(72.dp),
                                         shape = MaterialTheme.shapes.extraLarge) {
@@ -665,6 +688,105 @@ class MainActivity : ComponentActivity() {
                                 }
                                 showSettingsDialog = false
                             }) { Text("保存") }
+                        }
+                    )
+                }
+
+                if (showHistoryDialog) {
+                    val historyEntries = remember { mutableStateListOf<KifuHistoryEntry>() }
+                    LaunchedEffect(Unit) {
+                        val loaded = withContext(Dispatchers.IO) {
+                            KifuHistoryManager.loadIndex(this@MainActivity)
+                        }
+                        historyEntries.clear()
+                        historyEntries.addAll(loaded)
+                    }
+                    AlertDialog(
+                        onDismissRequest = { showHistoryDialog = false },
+                        title = { Text("過去の棋譜") },
+                        text = {
+                            if (historyEntries.isEmpty()) {
+                                Box(
+                                    modifier = Modifier.fillMaxWidth().padding(vertical = 16.dp),
+                                    contentAlignment = Alignment.Center
+                                ) {
+                                    Text("棋譜がありません",
+                                        style = MaterialTheme.typography.bodyMedium,
+                                        color = MaterialTheme.colorScheme.onSurfaceVariant)
+                                }
+                            } else {
+                                LazyColumn(
+                                    modifier = Modifier.fillMaxWidth().heightIn(max = 400.dp),
+                                    verticalArrangement = Arrangement.spacedBy(4.dp)
+                                ) {
+                                    items(historyEntries) { entry ->
+                                        Surface(
+                                            onClick = {
+                                                coroutineScope.launch {
+                                                    val root = withContext(Dispatchers.IO) {
+                                                        KifuHistoryManager.loadKifu(this@MainActivity, entry.id)
+                                                    }
+                                                    if (root != null) {
+                                                        engine.sendCommand("stop")
+                                                        isAnalysisMode = false; isAutoAnalysis = false; humanPlayer = null
+                                                        currentNode = root
+                                                        senteName = entry.senteName
+                                                        goteName = entry.goteName
+                                                        gameResult = entry.gameResult
+                                                        pvList.clear(); pvUsiList.clear()
+                                                        pinnedPvList = emptyMap(); pinnedPvUsiList = emptyMap()
+                                                        pvBranchPath = null
+                                                        evalHistory.clear(); savedMainEvalHistory = emptyMap()
+                                                        analysisHistory.clear(); analysisUsiHistory.clear()
+                                                        selectedSquare = null; selectedHandPiece = null
+                                                        prefs.edit()
+                                                            .putString("current_tree", kifuTreeToJson(root).toString())
+                                                            .putString("sente_name", entry.senteName)
+                                                            .putString("gote_name", entry.goteName)
+                                                            .putString("game_result", entry.gameResult)
+                                                            .apply()
+                                                        showHistoryDialog = false
+                                                    }
+                                                }
+                                            },
+                                            modifier = Modifier.fillMaxWidth(),
+                                            shape = MaterialTheme.shapes.medium,
+                                            color = MaterialTheme.colorScheme.surfaceVariant
+                                        ) {
+                                            Column(modifier = Modifier.padding(horizontal = 12.dp, vertical = 8.dp)) {
+                                                Text(
+                                                    "▲${entry.senteName}　△${entry.goteName}",
+                                                    style = MaterialTheme.typography.bodyMedium,
+                                                    fontWeight = FontWeight.SemiBold,
+                                                    maxLines = 1,
+                                                    overflow = TextOverflow.Ellipsis
+                                                )
+                                                Row(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
+                                                    val dateStr = entry.gameDate
+                                                        ?.let { KifuHistoryManager.formatGameDate(it) }
+                                                        ?: KifuHistoryManager.formatDate(entry.savedAt)
+                                                    Text(dateStr,
+                                                        style = MaterialTheme.typography.bodySmall,
+                                                        color = MaterialTheme.colorScheme.onSurfaceVariant)
+                                                    if (entry.moveCount > 0) {
+                                                        Text("${entry.moveCount}手",
+                                                            style = MaterialTheme.typography.bodySmall,
+                                                            color = MaterialTheme.colorScheme.onSurfaceVariant)
+                                                    }
+                                                    if (entry.gameResult.isNotEmpty()) {
+                                                        Text(entry.gameResult,
+                                                            style = MaterialTheme.typography.bodySmall,
+                                                            color = MaterialTheme.colorScheme.primary)
+                                                    }
+                                                }
+                                            }
+                                        }
+                                    }
+                                }
+                            }
+                        },
+                        confirmButton = {
+                            TextButton(onClick = { showHistoryDialog = false }) { Text("閉じる") }
                         }
                     )
                 }

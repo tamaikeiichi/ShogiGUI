@@ -541,6 +541,23 @@ fun applyUsiMove(
     } catch (e: Exception) { board }
 }
 
+fun extractGameDate(text: String): String? {
+    for (line in text.lines()) {
+        val t = line.trim()
+        when {
+            t.startsWith("開始日時：") || t.startsWith("開始日時:") -> {
+                val v = t.substringAfterLast("：").substringAfterLast(":").trim()
+                if (v.isNotEmpty()) return v
+            }
+            t.startsWith("\$START_TIME:") -> {
+                val v = t.substringAfter(":").trim()
+                if (v.isNotEmpty()) return v
+            }
+        }
+    }
+    return null
+}
+
 fun rowToKanji(c: Char) = when (c) {
     'a' -> "一"; 'b' -> "二"; 'c' -> "三"; 'd' -> "四"; 'e' -> "五"
     'f' -> "六"; 'g' -> "七"; 'h' -> "八"; 'i' -> "九"
