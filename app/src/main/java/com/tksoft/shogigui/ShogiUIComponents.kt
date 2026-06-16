@@ -67,6 +67,7 @@ fun PlayerStatusSection(
     isFlipped: Boolean = false,
     handOnTop: Boolean = false,
     gameResult: String = "",
+    remainingMs: Long? = null,
     onSelected: (Pair<Player, PieceType>?) -> Unit
 ) {
     val player = if (mark == "▲") Player.SENTE else Player.GOTE
@@ -81,7 +82,7 @@ fun PlayerStatusSection(
     }
     val nameColor = if (mark == "▲") senteNameColor else goteNameColor
     val nameView: @Composable () -> Unit = {
-        PlayerInfoContent(name = playerName, mark = mark, isFlipped = isFlipped, gameResult = gameResult, nameColor = nameColor)
+        PlayerInfoContent(name = playerName, mark = mark, isFlipped = isFlipped, gameResult = gameResult, nameColor = nameColor, remainingMs = remainingMs)
     }
     Column(modifier = Modifier.fillMaxWidth()) {
         if (handOnTop) { handView(); nameView() } else { nameView(); handView() }
@@ -207,7 +208,7 @@ fun SliderControlSection(
 }
 
 @Composable
-fun PlayerInfoContent(name: String, mark: String, isFlipped: Boolean = false, gameResult: String = "", nameColor: androidx.compose.ui.graphics.Color = androidx.compose.ui.graphics.Color.Unspecified) {
+fun PlayerInfoContent(name: String, mark: String, isFlipped: Boolean = false, gameResult: String = "", nameColor: androidx.compose.ui.graphics.Color = androidx.compose.ui.graphics.Color.Unspecified, remainingMs: Long? = null) {
     val defaultFontSize = MaterialTheme.typography.titleMedium.fontSize
     var fontSize by remember(name) { mutableStateOf(defaultFontSize) }
     val isRight = ((mark == "▲") && !isFlipped) || ((mark == "△") && isFlipped)
@@ -217,10 +218,21 @@ fun PlayerInfoContent(name: String, mark: String, isFlipped: Boolean = false, ga
     ) {
         Row(
             modifier = Modifier.padding(horizontal = 8.dp, vertical = 4.dp),
-            verticalAlignment = Alignment.CenterVertically
+            verticalAlignment = Alignment.CenterVertically,
+            horizontalArrangement = Arrangement.spacedBy(8.dp)
         ) {
             Text(text = "$mark ", style = MaterialTheme.typography.titleMedium.copy(fontSize = 14.sp), fontWeight = FontWeight.Bold, color = nameColor, maxLines = 1)
             Text(text = name, style = MaterialTheme.typography.titleMedium.copy(fontSize = fontSize), color = nameColor, maxLines = 1, softWrap = false, onTextLayout = { if (it.hasVisualOverflow && fontSize > 8.sp) fontSize *= 0.9f })
+            if (remainingMs != null) {
+                Text(
+                    text = formatRemainingTime(remainingMs),
+                    style = MaterialTheme.typography.titleMedium.copy(fontSize = 14.sp),
+                    color = if (remainingMs < 60_000L) MaterialTheme.colorScheme.error
+                            else MaterialTheme.colorScheme.onSurfaceVariant,
+                    fontWeight = FontWeight.Medium,
+                    maxLines = 1
+                )
+            }
         }
         if (gameResult.isNotEmpty() && isRight) {
             Text(

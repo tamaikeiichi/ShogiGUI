@@ -199,6 +199,15 @@ fun boardToSfen(board: Map<Pair<Int, Int>, Piece>, turn: Player, senteHand: Map<
     return sfen.toString()
 }
 
+fun formatRemainingTime(ms: Long): String {
+    val totalSecs = ms.coerceAtLeast(0L) / 1000L
+    val h = totalSecs / 3600
+    val m = (totalSecs % 3600) / 60
+    val s = totalSecs % 60
+    return if (h > 0) "$h:${m.toString().padStart(2, '0')}:${s.toString().padStart(2, '0')}"
+    else "${m}:${s.toString().padStart(2, '0')}"
+}
+
 fun createInitialBoard(): Map<Pair<Int, Int>, Piece> {
     val board = mutableMapOf<Pair<Int, Int>, Piece>()
     val firstRowTypes = listOf(PieceType.LANCE, PieceType.KNIGHT, PieceType.SILVER, PieceType.GOLD, PieceType.KING, PieceType.GOLD, PieceType.SILVER, PieceType.KNIGHT, PieceType.LANCE)
@@ -385,8 +394,24 @@ fun extractGameResult(text: String): String? {
         }
         val kifMatch = Regex("""まで\d+手で(先手|後手)の勝ち""").find(t)
         if (kifMatch != null) return "${kifMatch.groupValues[1]}勝ち"
-        if (t == "%TORYO") return when (lastTurn) { '+' -> "先手勝ち"; '-' -> "後手勝ち"; else -> null }
-        if (t == "%KACHI") return when (lastTurn) { '+' -> "後手勝ち"; '-' -> "先手勝ち"; else -> null }
+        // %TORYO/%TIME_UP/%ILLEGAL_MOVE: 手番側（lastTurnの相手）が負け
+        // %KACHI/%TSUMI: 最後に指した側が勝ち
+        when (t) {
+            "%TORYO"          -> return when (lastTurn) { '+' -> "先手勝ち（投了）";      '-' -> "後手勝ち（投了）";      else -> null }
+            "%TIME_UP"        -> return when (lastTurn) { '+' -> "先手勝ち（時間切れ）";  '-' -> "後手勝ち（時間切れ）";  else -> null }
+            "%ILLEGAL_MOVE"   -> return when (lastTurn) { '+' -> "先手勝ち（反則負け）";  '-' -> "後手勝ち（反則負け）";  else -> null }
+            "%KACHI"          -> return when (lastTurn) { '+' -> "後手勝ち（入玉宣言）";  '-' -> "先手勝ち（入玉宣言）";  else -> null }
+            "%TSUMI"          -> return when (lastTurn) { '+' -> "先手勝ち（詰み）";      '-' -> "後手勝ち（詰み）";      else -> null }
+            "%+ILLEGAL_ACTION"-> return "後手勝ち（先手反則）"
+            "%-ILLEGAL_ACTION"-> return "先手勝ち（後手反則）"
+            "%HIKIWAKE"       -> return "引き分け（入玉）"
+            "%SENNICHITE"     -> return "千日手"
+            "%JISHOGI"        -> return "持将棋"
+            "%CHUDAN"         -> return "中断"
+            "%MAX_MOVES"      -> return "最大手数"
+            "%FUZUMI"         -> return "不詰"
+            "%ERROR"          -> return "エラー"
+        }
         if (t.startsWith("'")) when {
             t.contains("先手勝ち") -> return "先手勝ち"
             t.contains("後手勝ち") -> return "後手勝ち"
@@ -417,12 +442,36 @@ fun extractPlayerNames(text: String): PlayerNames {
 
 fun parseKif(text: String, root: KifuNode, onSaveRequested: (KifuNode) -> Unit): KifuNode? {
     var tempNode = root; var lastToPos: Pair<Int, Int>? = null
+
+    // ヘッダーから持ち時間を抽出（指し手行が来る前まで走査）
+    var initialMs: Long? = null
+    for (line in text.lines()) {
+        val t = line.trim()
+        if (t.isNotEmpty() && t[0].isDigit()) break  // 指し手セクション開始
+        Regex("""持ち時間[：:][各両]?(\d+)分""").find(t)?.let { m ->
+            initialMs = m.groupValues[1].toLong() * 60000L
+        }
+        Regex("""\${'$'}TIME_LIMIT:(\d+):(\d+)""").find(t)?.let { m ->
+            initialMs = (m.groupValues[1].toLong() * 60 + m.groupValues[2].toLong()) * 60000L
+        }
+    }
+    var senteConsumedMs = 0L
+    var goteConsumedMs = 0L
+
+    val moveLineRegex = Regex("""^\d+\s+(.+?)(?:\s*\(\d+:\d+/(\d+):(\d+):(\d+)\))?\s*$""")
     text.lines().forEach { rawLine ->
         val line = rawLine.trim()
         if (line.startsWith("*") || line.startsWith("#")) return@forEach
         if (listOf("中断", "投了", "持将棋", "千日手", "切れ負け", "詰み", "まで").any { line.contains(it) }) return@forEach
-        val lineMatch = Regex("""^\d+\s+(.+?)(?:\s*\(\d+:\d+/[\d:]+\))?\s*$""").find(line) ?: return@forEach
+        val lineMatch = moveLineRegex.find(line) ?: return@forEach
         val movePart = lineMatch.groupValues[1].trim()
+
+        // 累計消費時間（HH:MM:SS）の抽出
+        val cumH = lineMatch.groupValues[2].toLongOrNull()
+        val cumM = lineMatch.groupValues[3].toLongOrNull()
+        val cumS = lineMatch.groupValues[4].toLongOrNull()
+        val cumulativeMs = if (cumH != null && cumM != null && cumS != null)
+            (cumH * 3600 + cumM * 60 + cumS) * 1000L else null
         try {
             val toPos = if (movePart.startsWith("同")) lastToPos ?: return@forEach else {
                 val col = "１２３４５６７８９".indexOf(movePart[0]); val row = "一二三四五六七八九".indexOf(movePart[1])
@@ -455,16 +504,71 @@ fun parseKif(text: String, root: KifuNode, onSaveRequested: (KifuNode) -> Unit):
             }
 
             executeMove(fromPos, toPos, piece, tempNode.board[toPos], promote, tempNode, label, false, onSaveRequested) { tempNode = it }
+
+            // 残り時間をノードにセット（指した側 = tempNode.currentPlayer の反対）
+            if (cumulativeMs != null && initialMs != null) {
+                if (tempNode.currentPlayer == Player.GOTE) {
+                    // 先手が指した
+                    senteConsumedMs = cumulativeMs
+                } else {
+                    // 後手が指した
+                    goteConsumedMs = cumulativeMs
+                }
+                tempNode.senteRemainingMs = initialMs - senteConsumedMs
+                tempNode.goteRemainingMs = initialMs - goteConsumedMs
+            }
         } catch (e: Exception) { Log.e("parseKif", "Error: ${e.message}, line: $line") }
     }
     return if (tempNode != root) tempNode else null
 }
 
 fun parseCsa(text: String, root: KifuNode, onSaveRequested: (KifuNode) -> Unit): KifuNode? {
-    var tempNode = root; val moveRegex = Regex("^[+-](\\d{2})(\\d{2})([A-Z]{2})")
+    var tempNode = root
+    val moveRegex = Regex("^[+-](\\d{2})(\\d{2})([A-Z]{2})")
+
+    // ヘッダーから持ち時間を抽出
+    var initialMs: Long? = null
+    for (line in text.lines()) {
+        val t = line.trim()
+        Regex("""\${'$'}TIME_LIMIT:(\d+):(\d+)(?:\+\d+)?""").find(t)?.let { m ->
+            initialMs = (m.groupValues[1].toLong() * 60 + m.groupValues[2].toLong()) * 60000L
+        }
+        if (t.startsWith("\$TOTAL_TIME:")) {
+            t.substringAfter(":").trim().toLongOrNull()?.let { initialMs = it * 1000L }
+        }
+        if (initialMs != null) break
+    }
+
+    var senteRemainingMs = initialMs
+    var goteRemainingMs = initialMs
+    var lastMovedPlayer: Player? = null
+
     text.lines().forEach { line ->
-        moveRegex.find(line.trim())?.let { match ->
+        val t = line.trim()
+
+        // T行：直前の指し手の消費時間（秒）
+        Regex("^T(\\d+)$").find(t)?.let { m ->
+            val consumed = m.groupValues[1].toLong() * 1000L
+            when (lastMovedPlayer) {
+                Player.SENTE -> {
+                    senteRemainingMs = senteRemainingMs?.minus(consumed)
+                    tempNode.senteRemainingMs = senteRemainingMs
+                    tempNode.goteRemainingMs = goteRemainingMs
+                }
+                Player.GOTE -> {
+                    goteRemainingMs = goteRemainingMs?.minus(consumed)
+                    tempNode.senteRemainingMs = senteRemainingMs
+                    tempNode.goteRemainingMs = goteRemainingMs
+                }
+                else -> {}
+            }
+            lastMovedPlayer = null
+            return@forEach
+        }
+
+        moveRegex.find(t)?.let { match ->
             try {
+                val movedPlayer = if (t[0] == '+') Player.SENTE else Player.GOTE
                 val fromStr = match.groupValues[1]; val toStr = match.groupValues[2]; val pieceStr = match.groupValues[3]
                 val fromCol = if (fromStr == "00") null else 9 - (fromStr[0] - '0'); val fromRow = if (fromStr == "00") null else (fromStr[1] - '0') - 1
                 val toCol = 9 - (toStr[0] - '0'); val toRow = (toStr[1] - '0') - 1
@@ -475,6 +579,7 @@ fun parseCsa(text: String, root: KifuNode, onSaveRequested: (KifuNode) -> Unit):
                 val movingPiece = if (fromPos == null) Piece(type, tempNode.currentPlayer) else tempNode.board[fromPos] ?: return@let
                 val label = if (fromPos == null) "${toStr[0]}${when(toRow){0->"一";1->"二";2->"三";3->"四";4->"五";5->"六";6->"七";7->"八";8->"九";else->""}}${type.label}打" else formatUsiMove("${fromStr[0]}${('a' + fromRow!!)}${toStr[0]}${('a' + toRow)}${if (isPromoted && !movingPiece.isPromoted) "+" else ""}", tempNode.board, tempNode.lastTo)
                 executeMove(fromPos, Pair(toRow, toCol), movingPiece, tempNode.board[Pair(toRow, toCol)], isPromoted && !movingPiece.isPromoted, tempNode, label, false, onSaveRequested) { tempNode = it }
+                lastMovedPlayer = movedPlayer
             } catch (e: Exception) {}
         }
     }

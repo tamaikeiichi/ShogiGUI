@@ -517,7 +517,7 @@ class MainActivity : ComponentActivity() {
                             Column(modifier = Modifier.weight(0.5f).verticalScroll(rememberScrollState()), horizontalAlignment = Alignment.CenterHorizontally, verticalArrangement = Arrangement.spacedBy(8.dp)) {
                                 val topP = if (isBoardFlipped) Player.SENTE else Player.GOTE; val botP = if (isBoardFlipped) Player.GOTE else Player.SENTE
                                 val isHumanTurn = humanPlayer == null || currentPlayer == humanPlayer
-                                PlayerStatusSection(if(topP==Player.SENTE) senteName else goteName, if(topP==Player.SENTE) "▲" else "△", currentPlayer==topP, if(topP==Player.SENTE) senteHand else goteHand, selectedHandPiece, currentPlayer, isBoardFlipped, handOnTop = false, gameResult = gameResult) { if (isHumanTurn) { selectedHandPiece = it; selectedSquare = null } }
+                                PlayerStatusSection(if(topP==Player.SENTE) senteName else goteName, if(topP==Player.SENTE) "▲" else "△", currentPlayer==topP, if(topP==Player.SENTE) senteHand else goteHand, selectedHandPiece, currentPlayer, isBoardFlipped, handOnTop = false, gameResult = gameResult, remainingMs = if(topP==Player.SENTE) currentNode.senteRemainingMs else currentNode.goteRemainingMs) { if (isHumanTurn) { selectedHandPiece = it; selectedSquare = null } }
                                 ShogiBoard(boardState, selectedSquare, { r, c ->
                                     if (isHumanTurn) handleSquareClick(r, c, boardState, currentPlayer, selectedSquare, selectedHandPiece, currentNode, saveKifu) { s, h, n, p ->
                                         selectedSquare = s; selectedHandPiece = h
@@ -525,7 +525,7 @@ class MainActivity : ComponentActivity() {
                                         if(p != null) promotionPendingBy = p
                                     }
                                 }, isBoardFlipped, Modifier.sizeIn(maxWidth = 500.dp, maxHeight = 500.dp), currentNode.lastFrom, currentNode.lastTo, currentNode.pvColorIndex)
-                                PlayerStatusSection(if(botP==Player.SENTE) senteName else goteName, if(botP==Player.SENTE) "▲" else "△", currentPlayer==botP, if(botP==Player.SENTE) senteHand else goteHand, selectedHandPiece, currentPlayer, isBoardFlipped, handOnTop = true, gameResult = gameResult) { if (isHumanTurn) { selectedHandPiece = it; selectedSquare = null } }
+                                PlayerStatusSection(if(botP==Player.SENTE) senteName else goteName, if(botP==Player.SENTE) "▲" else "△", currentPlayer==botP, if(botP==Player.SENTE) senteHand else goteHand, selectedHandPiece, currentPlayer, isBoardFlipped, handOnTop = true, gameResult = gameResult, remainingMs = if(botP==Player.SENTE) currentNode.senteRemainingMs else currentNode.goteRemainingMs) { if (isHumanTurn) { selectedHandPiece = it; selectedSquare = null } }
                             }
                             Column(
                                 modifier = Modifier
@@ -567,7 +567,7 @@ class MainActivity : ComponentActivity() {
 
                             val topP = if (isBoardFlipped) Player.SENTE else Player.GOTE; val botP = if (isBoardFlipped) Player.GOTE else Player.SENTE
                             val isHumanTurn = humanPlayer == null || currentPlayer == humanPlayer
-                            PlayerStatusSection(if(topP==Player.SENTE) senteName else goteName, if(topP==Player.SENTE) "▲" else "△", currentPlayer==topP, if(topP==Player.SENTE) senteHand else goteHand, selectedHandPiece, currentPlayer, isBoardFlipped, handOnTop = false, gameResult = gameResult) { if (isHumanTurn) { selectedHandPiece = it; selectedSquare = null } }
+                            PlayerStatusSection(if(topP==Player.SENTE) senteName else goteName, if(topP==Player.SENTE) "▲" else "△", currentPlayer==topP, if(topP==Player.SENTE) senteHand else goteHand, selectedHandPiece, currentPlayer, isBoardFlipped, handOnTop = false, gameResult = gameResult, remainingMs = if(topP==Player.SENTE) currentNode.senteRemainingMs else currentNode.goteRemainingMs) { if (isHumanTurn) { selectedHandPiece = it; selectedSquare = null } }
                             ShogiBoard(boardState, selectedSquare, { r, c ->
                                 if (isHumanTurn) handleSquareClick(r, c, boardState, currentPlayer, selectedSquare, selectedHandPiece, currentNode, saveKifu) { s, h, n, p ->
                                     selectedSquare = s; selectedHandPiece = h
@@ -575,7 +575,7 @@ class MainActivity : ComponentActivity() {
                                     if(p != null) promotionPendingBy = p
                                 }
                             }, isBoardFlipped, Modifier.padding(16.dp), currentNode.lastFrom, currentNode.lastTo, currentNode.pvColorIndex)
-                            PlayerStatusSection(if(botP==Player.SENTE) senteName else goteName, if(botP==Player.SENTE) "▲" else "△", currentPlayer==botP, if(botP==Player.SENTE) senteHand else goteHand, selectedHandPiece, currentPlayer, isBoardFlipped, handOnTop = true, gameResult = gameResult) { if (isHumanTurn) { selectedHandPiece = it; selectedSquare = null } }
+                            PlayerStatusSection(if(botP==Player.SENTE) senteName else goteName, if(botP==Player.SENTE) "▲" else "△", currentPlayer==botP, if(botP==Player.SENTE) senteHand else goteHand, selectedHandPiece, currentPlayer, isBoardFlipped, handOnTop = true, gameResult = gameResult, remainingMs = if(botP==Player.SENTE) currentNode.senteRemainingMs else currentNode.goteRemainingMs) { if (isHumanTurn) { selectedHandPiece = it; selectedSquare = null } }
                             Column(modifier = Modifier.padding(8.dp)) {
                                 (if (pinnedPvList.isNotEmpty()) pinnedPvList else pvList.toMap()).entries
                                     .sortedByDescending { (_, pvText) -> extractScore(pvText, currentPlayer) }
