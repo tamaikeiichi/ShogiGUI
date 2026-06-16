@@ -458,7 +458,7 @@ fun parseKif(text: String, root: KifuNode, onSaveRequested: (KifuNode) -> Unit):
     var senteConsumedMs = 0L
     var goteConsumedMs = 0L
 
-    val moveLineRegex = Regex("""^\d+\s+(.+?)(?:\s*\(\d+:\d+/(\d+):(\d+):(\d+)\))?\s*$""")
+    val moveLineRegex = Regex("""^\d+\s+(.+?)(?:\s*\(\s*\d+:\d+\s*/\s*(\d+):(\d+):(\d+)\s*\))?\s*$""")
     text.lines().forEach { rawLine ->
         val line = rawLine.trim()
         if (line.startsWith("*") || line.startsWith("#")) return@forEach
@@ -526,29 +526,52 @@ fun parseCsa(text: String, root: KifuNode, onSaveRequested: (KifuNode) -> Unit):
     var tempNode = root
     val moveRegex = Regex("^[+-](\\d{2})(\\d{2})([A-Z]{2})")
 
-    // ヘッダーから持ち時間を抽出
-    var initialMs: Long? = null
+    // ヘッダーから持ち時間を抽出（ヘッダー全行を走査して優先度順に上書き）
+    var initialSenteMs: Long? = null
+    var initialGoteMs: Long? = null
     for (line in text.lines()) {
         val t = line.trim()
+        // 指し手行（+/-で始まる）またはゲーム内容に入ったら終了
+        if (t.matches(Regex("[+-]\\d{4}[A-Z]{2}.*")) || t.startsWith("%")) break
+
+        // V2.2: $TIME_LIMIT:HH:MM+SS（HH=時間、MM=分）
         Regex("""\${'$'}TIME_LIMIT:(\d+):(\d+)(?:\+\d+)?""").find(t)?.let { m ->
-            initialMs = (m.groupValues[1].toLong() * 60 + m.groupValues[2].toLong()) * 60000L
+            val ms = (m.groupValues[1].toLong() * 60 + m.groupValues[2].toLong()) * 60000L
+            if (initialSenteMs == null) initialSenteMs = ms
+            if (initialGoteMs == null) initialGoteMs = ms
         }
+        // V3.0: $TIME:initial+byoyomi+fisher（秒単位、小数あり）共通
+        Regex("""\${'$'}TIME:([\d.]+)\+[\d.]+\+[\d.]+""").find(t)?.let { m ->
+            val ms = (m.groupValues[1].toDoubleOrNull() ?: 0.0).times(1000).toLong()
+            initialSenteMs = ms; initialGoteMs = ms
+        }
+        // V3.0: $TIME+: 先手個別
+        Regex("""\${'$'}TIME\+:([\d.]+)\+""").find(t)?.let { m ->
+            initialSenteMs = (m.groupValues[1].toDoubleOrNull() ?: 0.0).times(1000).toLong()
+        }
+        // V3.0: $TIME-: 後手個別
+        Regex("""\${'$'}TIME-:([\d.]+)\+""").find(t)?.let { m ->
+            initialGoteMs = (m.groupValues[1].toDoubleOrNull() ?: 0.0).times(1000).toLong()
+        }
+        // 旧形式フォールバック: $TOTAL_TIME:秒数
         if (t.startsWith("\$TOTAL_TIME:")) {
-            t.substringAfter(":").trim().toLongOrNull()?.let { initialMs = it * 1000L }
+            t.substringAfter(":").trim().toLongOrNull()?.let {
+                if (initialSenteMs == null) initialSenteMs = it * 1000L
+                if (initialGoteMs == null) initialGoteMs = it * 1000L
+            }
         }
-        if (initialMs != null) break
     }
 
-    var senteRemainingMs = initialMs
-    var goteRemainingMs = initialMs
+    var senteRemainingMs = initialSenteMs
+    var goteRemainingMs = initialGoteMs
     var lastMovedPlayer: Player? = null
 
     text.lines().forEach { line ->
         val t = line.trim()
 
-        // T行：直前の指し手の消費時間（秒）
-        Regex("^T(\\d+)$").find(t)?.let { m ->
-            val consumed = m.groupValues[1].toLong() * 1000L
+        // T行：直前の指し手の消費時間（秒、小数ミリ秒対応）
+        Regex("^T(\\d+(?:\\.\\d{1,3})?)$").find(t)?.let { m ->
+            val consumed = (m.groupValues[1].toDoubleOrNull() ?: 0.0).times(1000).toLong()
             when (lastMovedPlayer) {
                 Player.SENTE -> {
                     senteRemainingMs = senteRemainingMs?.minus(consumed)
