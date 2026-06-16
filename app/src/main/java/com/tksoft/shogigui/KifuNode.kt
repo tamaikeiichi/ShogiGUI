@@ -17,6 +17,9 @@ class KifuNode(
 ) {
     val children = mutableStateListOf<KifuNode>()
     val moveCount: Int = (parent?.moveCount ?: -1) + 1
+    // ファイル読み込み時のみ設定される残り時間（null = 情報なし）
+    var senteRemainingMs: Long? = null
+    var goteRemainingMs: Long? = null
 }
 
 data class PendingMove(
