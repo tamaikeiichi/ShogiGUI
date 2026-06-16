@@ -321,7 +321,7 @@ class MainActivity : ComponentActivity() {
                     containerColor = MaterialTheme.colorScheme.surfaceContainerLowest,
                     bottomBar = {
                         Surface(
-                            color = MaterialTheme.colorScheme.surfaceContainer,
+                            color = MaterialTheme.colorScheme.surfaceContainer.copy(alpha = 0.85f),
                             modifier = Modifier.fillMaxWidth()
                         ) {
                             Column(
@@ -512,7 +512,7 @@ class MainActivity : ComponentActivity() {
                 ) { innerPadding ->
                     val isWide = androidx.compose.ui.platform.LocalConfiguration.current.screenWidthDp >= 840
                     if (isWide) {
-                        Row(modifier = Modifier.fillMaxSize().padding(innerPadding).padding(16.dp), horizontalArrangement = Arrangement.spacedBy(24.dp)) {
+                        Row(modifier = Modifier.fillMaxSize().padding(top = innerPadding.calculateTopPadding() + 16.dp, start = 16.dp, end = 16.dp), horizontalArrangement = Arrangement.spacedBy(24.dp)) {
 
                             Column(modifier = Modifier.weight(0.5f).verticalScroll(rememberScrollState()), horizontalAlignment = Alignment.CenterHorizontally, verticalArrangement = Arrangement.spacedBy(8.dp)) {
                                 val topP = if (isBoardFlipped) Player.SENTE else Player.GOTE; val botP = if (isBoardFlipped) Player.GOTE else Player.SENTE
@@ -563,7 +563,7 @@ class MainActivity : ComponentActivity() {
                         }
                     }
                     else {
-                        Column(modifier = Modifier.fillMaxSize().padding(innerPadding).verticalScroll(rememberScrollState()), horizontalAlignment = Alignment.CenterHorizontally) {
+                        Column(modifier = Modifier.fillMaxSize().padding(top = innerPadding.calculateTopPadding()).verticalScroll(rememberScrollState()), horizontalAlignment = Alignment.CenterHorizontally) {
 
                             val topP = if (isBoardFlipped) Player.SENTE else Player.GOTE; val botP = if (isBoardFlipped) Player.GOTE else Player.SENTE
                             val isHumanTurn = humanPlayer == null || currentPlayer == humanPlayer
@@ -598,6 +598,7 @@ class MainActivity : ComponentActivity() {
                                         }
                                     }
                             }
+                            Spacer(modifier = Modifier.height(innerPadding.calculateBottomPadding()))
                         }
                     }
                 }
@@ -978,7 +979,7 @@ fun MainScreenPreview() {
             modifier = Modifier.fillMaxSize(),
             bottomBar = {
                 Surface(
-                    color = MaterialTheme.colorScheme.surfaceContainer,
+                    color = MaterialTheme.colorScheme.surfaceContainer.copy(alpha = 0.85f),
                     modifier = Modifier.fillMaxWidth()
                 ) {
                     Column(
