@@ -161,7 +161,8 @@ class MainActivity : ComponentActivity() {
                     rawLine: String,
                     capturedBoard: Map<Pair<Int, Int>, Piece>,
                     capturedTurn: Player,
-                    capturedMoveCount: Int ->
+                    capturedMoveCount: Int,
+                    capturedLastTo: Pair<Int, Int>? ->
                     Log.d("callback_used", "手数=$capturedMoveCount turn=$capturedTurn line=$rawLine")
                     val line = rawLine.trim()
                     Log.d("EngineOutput", line)
@@ -183,7 +184,7 @@ class MainActivity : ComponentActivity() {
                             if (pvIdx >= 0 && pvIdx + 1 < infoParts.size) {
                                 pvUsiList[rank] = infoParts.drop(pvIdx + 1)
                             }
-                            val parsed = parseInfo(line, capturedBoard, capturedTurn)
+                            val parsed = parseInfo(line, capturedBoard, capturedTurn, capturedLastTo)
 
                             if (parsed.isNotEmpty()) {
                                 pvList[rank] = parsed
@@ -228,7 +229,7 @@ class MainActivity : ComponentActivity() {
                     delay(1000)
                     isEngineReady = false
                     engine.onOutputReceived = { rawLine ->
-                        runOnUiThread { processOutput(rawLine, emptyMap(), Player.SENTE, 0) }
+                        runOnUiThread { processOutput(rawLine, emptyMap(), Player.SENTE, 0, null) }
                     }
 
                     kotlinx.coroutines.withContext(kotlinx.coroutines.Dispatchers.IO) {
@@ -248,9 +249,10 @@ class MainActivity : ComponentActivity() {
                     val capturedBoard = node.board
                     val capturedTurn = node.currentPlayer
                     val capturedMoveCount = node.moveCount
+                    val capturedLastTo = node.lastTo
 
                     engine.onOutputReceived = { rawLine ->
-                        runOnUiThread { processOutput(rawLine, capturedBoard, capturedTurn, capturedMoveCount) }
+                        runOnUiThread { processOutput(rawLine, capturedBoard, capturedTurn, capturedMoveCount, capturedLastTo) }
                     }
                     Log.d("callback_set", "手数=$capturedMoveCount turn=$capturedTurn")
                     engine.sendCommand("stop")
@@ -290,9 +292,10 @@ class MainActivity : ComponentActivity() {
                     val capturedBoard = node.board
                     val capturedTurn = node.currentPlayer
                     val capturedMoveCount = node.moveCount
+                    val capturedLastTo2 = node.lastTo
                     engine.onOutputReceived = { rawLine ->
                         runOnUiThread {
-                            processOutput(rawLine, capturedBoard, capturedTurn, capturedMoveCount)
+                            processOutput(rawLine, capturedBoard, capturedTurn, capturedMoveCount, capturedLastTo2)
                             if (rawLine.trim().startsWith("bestmove") && humanPlayer != null) {
                                 val moveStr = rawLine.trim().split(Regex("\\s+")).getOrNull(1)
                                 if (moveStr != null && moveStr != "(none)") {
@@ -836,7 +839,7 @@ class MainActivity : ComponentActivity() {
                                 Button(
                                     onClick = {
                                         val usi = "${9 - move.from.second}${('a' + move.from.first)}${9 - move.to.second}${('a' + move.to.first)}+"
-                                        val label = formatUsiMove(usi, boardState)
+                                        val label = formatUsiMove(usi, boardState, currentNode.lastTo)
                                         executeMove(move.from, move.to, move.piece, move.captured, true, currentNode, label, false, saveKifu) { currentNode = it }
                                         promotionPendingBy = null
                                     },
@@ -846,7 +849,7 @@ class MainActivity : ComponentActivity() {
                                 FilledTonalButton(
                                     onClick = {
                                         val usi = "${9 - move.from.second}${('a' + move.from.first)}${9 - move.to.second}${('a' + move.to.first)}"
-                                        val label = formatUsiMove(usi, boardState)
+                                        val label = formatUsiMove(usi, boardState, currentNode.lastTo)
                                         executeMove(move.from, move.to, move.piece, move.captured, false, currentNode, label, false, saveKifu) { currentNode = it }
                                         promotionPendingBy = null
                                     },
@@ -899,7 +902,7 @@ class MainActivity : ComponentActivity() {
 
         usi.forEach { m ->
             val b = applyUsiMove(m, p.board, p.currentPlayer)
-            val l = formatUsiMove(m, p.board)
+            val l = formatUsiMove(m, p.board, p.lastTo)
             val sym = if (p.currentPlayer == Player.SENTE) "▲" else "△"
             val lastFrom = if (m.length >= 4 && m[1] != '*') Pair(m[1] - 'a', 9 - (m[0] - '0')) else null
             val lastTo   = if (m.length >= 4) Pair(m[3] - 'a', 9 - (m[2] - '0')) else null
@@ -946,7 +949,7 @@ class MainActivity : ComponentActivity() {
                             val enteringZone = if (movingPiece.owner == Player.SENTE) isSenteZone else isGoteZone
                             if (canPromote && enteringZone) onUpdate(null, null, null, PendingMove(currentSelected, clickedPos, movingPiece, targetPiece))
                             else {
-                                val moveLabel = formatUsiMove("${9-currentSelected.second}${('a'+currentSelected.first)}${9-clickedPos.second}${('a'+clickedPos.first)}", boardState)
+                                val moveLabel = formatUsiMove("${9-currentSelected.second}${('a'+currentSelected.first)}${9-clickedPos.second}${('a'+clickedPos.first)}", boardState, currentNode.lastTo)
                                 executeMove(currentSelected, clickedPos, movingPiece, targetPiece, false, currentNode, moveLabel, false, onSaveRequested) { onUpdate(null, null, it, null) }
                             }
                         }

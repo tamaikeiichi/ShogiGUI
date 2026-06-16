@@ -8,7 +8,8 @@ import org.json.JSONObject
 fun parseInfo(
     line: String,
     currentBoard: Map<Pair<Int, Int>, Piece>,
-    turn: Player
+    turn: Player,
+    lastTo: Pair<Int, Int>? = null
 ): String {
     val parts = line.split(Regex("\\s+"))
     var score = ""
@@ -63,11 +64,14 @@ fun parseInfo(
                     val formattedMoves = mutableListOf<String>()
                     var tempTurn = turn
                     var tempBoard = currentBoard
+                    var tempLastTo = lastTo
                     pvMoves.take(6).forEach { moveStr ->
                         Log.d("pv_move", "move=$moveStr turn=$tempTurn")
                         val symbol = if (tempTurn == Player.SENTE) "▲" else "△"
-                        val formatted = formatUsiMove(moveStr, tempBoard)
+                        val formatted = formatUsiMove(moveStr, tempBoard, tempLastTo)
                         formattedMoves.add("$symbol$formatted")
+                        tempLastTo = if (moveStr.length >= 4 && moveStr[1] != '*')
+                            Pair(moveStr[3] - 'a', 9 - (moveStr[2] - '0')) else null
                         tempBoard = applyUsiMove(moveStr, tempBoard, tempTurn)
                         tempTurn = if (tempTurn == Player.SENTE) Player.GOTE else Player.SENTE
                     }
@@ -85,9 +89,12 @@ fun parseInfo(
 }
 
 fun extractScore(pvText: String, turn: Player): Int {
-    val mateLine = pvText.lines().find { it.contains("手詰") }
-    if (mateLine != null) {
-        val isSenteWin = mateLine.contains("先手勝ち")
+    val lines = pvText.lines()
+    val mateIdx = lines.indexOfFirst { it.contains("手詰") || it == "詰み" }
+    if (mateIdx >= 0) {
+        // winner line is either the mate line itself or the next line
+        val winnerText = lines.drop(mateIdx).take(2).joinToString("\n")
+        val isSenteWin = winnerText.contains("先手勝ち")
         return if (turn == Player.SENTE) {
             if (isSenteWin) Int.MAX_VALUE else Int.MIN_VALUE
         } else {
@@ -102,7 +109,7 @@ fun extractScore(pvText: String, turn: Player): Int {
     return v
 }
 
-fun formatUsiMove(usiMove: String, board: Map<Pair<Int, Int>, Piece>? = null): String {
+fun formatUsiMove(usiMove: String, board: Map<Pair<Int, Int>, Piece>? = null, lastTo: Pair<Int, Int>? = null): String {
     if (usiMove.length < 4) return usiMove
     fun colToNum(c: Char) = c.toString()
     fun rowToKanji(c: Char) = when (c) {
@@ -123,10 +130,15 @@ fun formatUsiMove(usiMove: String, board: Map<Pair<Int, Int>, Piece>? = null): S
             val fromRow = usiMove[1] - 'a'
             val piece = board?.get(Pair(fromRow, 9 - fromCol))
             val pieceLabel = piece?.let { if (it.isPromoted) it.type.promotedLabel ?: it.type.label else it.type.label } ?: ""
-            val toCol = colToNum(usiMove[2])
-            val toRow = rowToKanji(usiMove[3])
+            val toRowIdx = usiMove[3] - 'a'
+            val toColNum = usiMove[2] - '0'
+            val toPos = Pair(toRowIdx, 9 - toColNum)
             val prom = if (usiMove.endsWith("+")) "成" else ""
-            "${toCol}${toRow}${pieceLabel}${prom}"
+            if (lastTo != null && toPos == lastTo) {
+                "同${pieceLabel}${prom}"
+            } else {
+                "${colToNum(usiMove[2])}${rowToKanji(usiMove[3])}${pieceLabel}${prom}"
+            }
         }
     } catch (e: Exception) { usiMove }
 }
@@ -437,7 +449,8 @@ fun parseKif(text: String, root: KifuNode, onSaveRequested: (KifuNode) -> Unit):
                 val fp = fromPos ?: return@forEach  // ここで non-null にする
                 formatUsiMove(
                     "${9 - fp.second}${('a' + fp.first)}${9 - toPos.second}${('a' + toPos.first)}${if (promote) "+" else ""}",
-                    tempNode.board
+                    tempNode.board,
+                    tempNode.lastTo
                 )
             }
 
@@ -460,7 +473,7 @@ fun parseCsa(text: String, root: KifuNode, onSaveRequested: (KifuNode) -> Unit):
                 }
                 val fromPos = if (fromCol != null && fromRow != null) Pair(fromRow, fromCol) else null
                 val movingPiece = if (fromPos == null) Piece(type, tempNode.currentPlayer) else tempNode.board[fromPos] ?: return@let
-                val label = if (fromPos == null) "${toStr[0]}${when(toRow){0->"一";1->"二";2->"三";3->"四";4->"五";5->"六";6->"七";7->"八";8->"九";else->""}}${type.label}打" else formatUsiMove("${fromStr[0]}${('a' + fromRow!!)}${toStr[0]}${('a' + toRow)}${if (isPromoted && !movingPiece.isPromoted) "+" else ""}", tempNode.board)
+                val label = if (fromPos == null) "${toStr[0]}${when(toRow){0->"一";1->"二";2->"三";3->"四";4->"五";5->"六";6->"七";7->"八";8->"九";else->""}}${type.label}打" else formatUsiMove("${fromStr[0]}${('a' + fromRow!!)}${toStr[0]}${('a' + toRow)}${if (isPromoted && !movingPiece.isPromoted) "+" else ""}", tempNode.board, tempNode.lastTo)
                 executeMove(fromPos, Pair(toRow, toCol), movingPiece, tempNode.board[Pair(toRow, toCol)], isPromoted && !movingPiece.isPromoted, tempNode, label, false, onSaveRequested) { tempNode = it }
             } catch (e: Exception) {}
         }
@@ -480,7 +493,7 @@ fun parseKifu(text: String, root: KifuNode, onSaveRequested: (KifuNode) -> Unit)
             } else {
                 val fromPos = Pair(moveStr[1] - 'a', 9 - (moveStr[0] - '0')); val toPos = Pair(moveStr[3] - 'a', 9 - (moveStr[2] - '0'))
                 val piece = tempNode.board[fromPos] ?: return@forEach
-                executeMove(fromPos, toPos, piece, tempNode.board[toPos], moveStr.endsWith("+"), tempNode, formatUsiMove(moveStr, tempNode.board), false, onSaveRequested) { tempNode = it }
+                executeMove(fromPos, toPos, piece, tempNode.board[toPos], moveStr.endsWith("+"), tempNode, formatUsiMove(moveStr, tempNode.board, tempNode.lastTo), false, onSaveRequested) { tempNode = it }
             }
         } catch (e: Exception) {}
     }
@@ -508,7 +521,7 @@ fun applyUsiMoveToNode(
             val fromPos = Pair(usiMove[1] - 'a', 9 - (usiMove[0] - '0'))
             val toPos = Pair(usiMove[3] - 'a', 9 - (usiMove[2] - '0'))
             val piece = parentNode.board[fromPos] ?: return
-            executeMove(fromPos, toPos, piece, parentNode.board[toPos], usiMove.endsWith("+"), parentNode, formatUsiMove(usiMove, parentNode.board), false, onSaveRequested, onUpdate)
+            executeMove(fromPos, toPos, piece, parentNode.board[toPos], usiMove.endsWith("+"), parentNode, formatUsiMove(usiMove, parentNode.board, parentNode.lastTo), false, onSaveRequested, onUpdate)
         }
     } catch (e: Exception) { Log.e("ShogiGUI", "applyUsiMoveToNode: ${e.message}") }
 }
