@@ -723,7 +723,8 @@ fun extractGameDate(text: String): String? {
         val t = line.trim()
         when {
             t.startsWith("開始日時：") || t.startsWith("開始日時:") -> {
-                val v = t.substringAfterLast("：").substringAfterLast(":").trim()
+                val v = if (t.contains("：")) t.substringAfter("：").trim()
+                        else t.substringAfter(":").trim()
                 if (v.isNotEmpty()) return v
             }
             t.startsWith("\$START_TIME:") -> {
