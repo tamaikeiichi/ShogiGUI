@@ -534,7 +534,7 @@ class MainActivity : ComponentActivity() {
                                         pvList.toMap()
                                     })
                                     .entries
-                                    .sortedBy { it.key }
+                                    .sortedByDescending { (_, pvText) -> extractScore(pvText, currentPlayer) }
                                     .forEach { (rank, pvText) ->
                                         val alpha = if (isPvStale && pinnedPvList.isEmpty()) 0.5f else 1f
                                         Box(modifier = Modifier.graphicsLayer { this.alpha = alpha }) {
@@ -575,7 +575,7 @@ class MainActivity : ComponentActivity() {
                             PlayerStatusSection(if(botP==Player.SENTE) senteName else goteName, if(botP==Player.SENTE) "▲" else "△", currentPlayer==botP, if(botP==Player.SENTE) senteHand else goteHand, selectedHandPiece, currentPlayer, isBoardFlipped, handOnTop = true, gameResult = gameResult) { if (isHumanTurn) { selectedHandPiece = it; selectedSquare = null } }
                             Column(modifier = Modifier.padding(8.dp)) {
                                 (if (pinnedPvList.isNotEmpty()) pinnedPvList else pvList.toMap()).entries
-                                    .sortedBy { it.key }
+                                    .sortedByDescending { (_, pvText) -> extractScore(pvText, currentPlayer) }
                                     .forEach { (rank, pvText) ->
                                         val alpha = if (isPvStale && pinnedPvList.isEmpty()) 0.5f else 1f
                                         Box(modifier = Modifier.graphicsLayer { this.alpha = alpha }) {
