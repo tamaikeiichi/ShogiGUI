@@ -200,12 +200,19 @@ fun boardToSfen(board: Map<Pair<Int, Int>, Piece>, turn: Player, senteHand: Map<
 }
 
 fun formatRemainingTime(ms: Long): String {
-    val totalSecs = ms.coerceAtLeast(0L) / 1000L
+    if (ms < 0L) {
+        // 初期時間不明：消費時間を表示（格納値 = -(consumed + 1)）
+        val totalSecs = (-ms - 1L) / 1000L
+        val m = totalSecs / 60; val s = totalSecs % 60
+        return "消費時間 ${m}:${s.toString().padStart(2, '0')}"
+    }
+    val totalSecs = ms / 1000L
     val h = totalSecs / 3600
     val m = (totalSecs % 3600) / 60
     val s = totalSecs % 60
-    return if (h > 0) "$h:${m.toString().padStart(2, '0')}:${s.toString().padStart(2, '0')}"
-    else "${m}:${s.toString().padStart(2, '0')}"
+    val time = if (h > 0) "$h:${m.toString().padStart(2, '0')}:${s.toString().padStart(2, '0')}"
+               else "${m}:${s.toString().padStart(2, '0')}"
+    return "持ち時間 $time"
 }
 
 fun createInitialBoard(): Map<Pair<Int, Int>, Piece> {
@@ -292,6 +299,8 @@ fun kifuTreeToJson(node: KifuNode): JSONObject {
     val gHandJson = JSONObject(); node.goteHand.forEach { (t, c) -> gHandJson.put(t.name, c) }; json.put("goteHand", gHandJson)
     json.put("lastFrom", if (node.lastFrom != null) "${node.lastFrom.first},${node.lastFrom.second}" else null)
     json.put("lastTo", if (node.lastTo != null) "${node.lastTo.first},${node.lastTo.second}" else null)
+    node.senteRemainingMs?.let { json.put("senteRem", it) }
+    node.goteRemainingMs?.let { json.put("goteRem", it) }
     val childrenJson = JSONArray(); node.children.filter { !it.isPvBranch }.forEach { childrenJson.put(kifuTreeToJson(it)) }; json.put("children", childrenJson)
     return json
 }
@@ -313,6 +322,8 @@ fun jsonToKifuTree(json: JSONObject, parent: KifuNode? = null): KifuNode {
     val lastFrom = json.optString("lastFrom", null)?.takeIf { it != "null" && it.isNotEmpty() }?.split(",")?.let { Pair(it[0].toInt(), it[1].toInt()) }
     val lastTo = json.optString("lastTo", null)?.takeIf { it != "null" && it.isNotEmpty() }?.split(",")?.let { Pair(it[0].toInt(), it[1].toInt()) }
     val node = KifuNode(board, senteHand, goteHand, Player.valueOf(json.getString("turn")), json.getString("label"), parent, lastFrom, lastTo)
+    node.senteRemainingMs = json.optLong("senteRem", Long.MIN_VALUE).takeIf { it != Long.MIN_VALUE }
+    node.goteRemainingMs = json.optLong("goteRem", Long.MIN_VALUE).takeIf { it != Long.MIN_VALUE }
     val childrenJson = json.getJSONArray("children")
     for (i in 0 until childrenJson.length()) { node.children.add(jsonToKifuTree(childrenJson.getJSONObject(i), node)) }
     return node
@@ -455,6 +466,9 @@ fun parseKif(text: String, root: KifuNode, onSaveRequested: (KifuNode) -> Unit):
             initialMs = (m.groupValues[1].toLong() * 60 + m.groupValues[2].toLong()) * 60000L
         }
     }
+    // 0手目に初期持ち時間をセット（持ち時間不明なら消費0として -1L）
+    root.senteRemainingMs = initialMs ?: -1L
+    root.goteRemainingMs = initialMs ?: -1L
     var senteConsumedMs = 0L
     var goteConsumedMs = 0L
 
@@ -506,16 +520,20 @@ fun parseKif(text: String, root: KifuNode, onSaveRequested: (KifuNode) -> Unit):
             executeMove(fromPos, toPos, piece, tempNode.board[toPos], promote, tempNode, label, false, onSaveRequested) { tempNode = it }
 
             // 残り時間をノードにセット（指した側 = tempNode.currentPlayer の反対）
-            if (cumulativeMs != null && initialMs != null) {
+            if (cumulativeMs != null) {
                 if (tempNode.currentPlayer == Player.GOTE) {
-                    // 先手が指した
                     senteConsumedMs = cumulativeMs
                 } else {
-                    // 後手が指した
                     goteConsumedMs = cumulativeMs
                 }
-                tempNode.senteRemainingMs = initialMs - senteConsumedMs
-                tempNode.goteRemainingMs = initialMs - goteConsumedMs
+                if (initialMs != null) {
+                    tempNode.senteRemainingMs = initialMs - senteConsumedMs
+                    tempNode.goteRemainingMs = initialMs - goteConsumedMs
+                } else {
+                    // 持ち時間不明 → 消費時間を -(consumed+1) で格納（UIで「消費 X:XX」表示）
+                    tempNode.senteRemainingMs = -(senteConsumedMs + 1L)
+                    tempNode.goteRemainingMs = -(goteConsumedMs + 1L)
+                }
             }
         } catch (e: Exception) { Log.e("parseKif", "Error: ${e.message}, line: $line") }
     }
@@ -529,6 +547,7 @@ fun parseCsa(text: String, root: KifuNode, onSaveRequested: (KifuNode) -> Unit):
     // ヘッダーから持ち時間を抽出（ヘッダー全行を走査して優先度順に上書き）
     var initialSenteMs: Long? = null
     var initialGoteMs: Long? = null
+    var fischerIncrementMs: Long = 0L
     for (line in text.lines()) {
         val t = line.trim()
         // 指し手行（+/-で始まる）またはゲーム内容に入ったら終了
@@ -541,9 +560,10 @@ fun parseCsa(text: String, root: KifuNode, onSaveRequested: (KifuNode) -> Unit):
             if (initialGoteMs == null) initialGoteMs = ms
         }
         // V3.0: $TIME:initial+byoyomi+fisher（秒単位、小数あり）共通
-        Regex("""\${'$'}TIME:([\d.]+)\+[\d.]+\+[\d.]+""").find(t)?.let { m ->
+        Regex("""\${'$'}TIME:([\d.]+)\+[\d.]+\+([\d.]+)""").find(t)?.let { m ->
             val ms = (m.groupValues[1].toDoubleOrNull() ?: 0.0).times(1000).toLong()
             initialSenteMs = ms; initialGoteMs = ms
+            if (fischerIncrementMs == 0L) fischerIncrementMs = (m.groupValues[2].toDoubleOrNull() ?: 0.0).times(1000).toLong()
         }
         // V3.0: $TIME+: 先手個別
         Regex("""\${'$'}TIME\+:([\d.]+)\+""").find(t)?.let { m ->
@@ -560,10 +580,26 @@ fun parseCsa(text: String, root: KifuNode, onSaveRequested: (KifuNode) -> Unit):
                 if (initialGoteMs == null) initialGoteMs = it * 1000L
             }
         }
+        // フラッドゲート形式: $EVENT:...floodgate-初期秒-加算秒[F]...
+        Regex("""\${'$'}EVENT:.*?floodgate-(\d+)-(\d+)""").find(t)?.let { m ->
+            val initialSecs = m.groupValues[1].toLongOrNull() ?: 0L
+            val incSecs = m.groupValues[2].toLongOrNull() ?: 0L
+            if (initialSenteMs == null) initialSenteMs = initialSecs * 1000L
+            if (initialGoteMs == null) initialGoteMs = initialSecs * 1000L
+            if (fischerIncrementMs == 0L) fischerIncrementMs = incSecs * 1000L
+        }
+        // コメント行フィッシャー加算: 'Increment:N（秒）
+        Regex("""'Increment:(\d+)""").find(t)?.let { m ->
+            val incMs = (m.groupValues[1].toLongOrNull() ?: 0L) * 1000L
+            if (fischerIncrementMs == 0L) fischerIncrementMs = incMs
+        }
     }
 
     var senteRemainingMs = initialSenteMs
     var goteRemainingMs = initialGoteMs
+    // 0手目に初期持ち時間をセット
+    root.senteRemainingMs = initialSenteMs
+    root.goteRemainingMs = initialGoteMs
     var lastMovedPlayer: Player? = null
 
     text.lines().forEach { line ->
@@ -574,12 +610,12 @@ fun parseCsa(text: String, root: KifuNode, onSaveRequested: (KifuNode) -> Unit):
             val consumed = (m.groupValues[1].toDoubleOrNull() ?: 0.0).times(1000).toLong()
             when (lastMovedPlayer) {
                 Player.SENTE -> {
-                    senteRemainingMs = senteRemainingMs?.minus(consumed)
+                    senteRemainingMs = senteRemainingMs?.let { it + fischerIncrementMs - consumed }
                     tempNode.senteRemainingMs = senteRemainingMs
                     tempNode.goteRemainingMs = goteRemainingMs
                 }
                 Player.GOTE -> {
-                    goteRemainingMs = goteRemainingMs?.minus(consumed)
+                    goteRemainingMs = goteRemainingMs?.let { it + fischerIncrementMs - consumed }
                     tempNode.senteRemainingMs = senteRemainingMs
                     tempNode.goteRemainingMs = goteRemainingMs
                 }

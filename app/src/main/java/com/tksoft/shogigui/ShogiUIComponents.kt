@@ -223,16 +223,17 @@ fun PlayerInfoContent(name: String, mark: String, isFlipped: Boolean = false, ga
         ) {
             Text(text = "$mark ", style = MaterialTheme.typography.titleMedium.copy(fontSize = 14.sp), fontWeight = FontWeight.Bold, color = nameColor, maxLines = 1)
             Text(text = name, style = MaterialTheme.typography.titleMedium.copy(fontSize = fontSize), color = nameColor, maxLines = 1, softWrap = false, onTextLayout = { if (it.hasVisualOverflow && fontSize > 8.sp) fontSize *= 0.9f })
-            if (remainingMs != null) {
-                Text(
-                    text = formatRemainingTime(remainingMs),
-                    style = MaterialTheme.typography.titleMedium.copy(fontSize = 14.sp),
-                    color = if (remainingMs < 60_000L) MaterialTheme.colorScheme.error
-                            else MaterialTheme.colorScheme.onSurfaceVariant,
-                    fontWeight = FontWeight.Medium,
-                    maxLines = 1
-                )
-            }
+        }
+        if (remainingMs != null) {
+            Text(
+                text = formatRemainingTime(remainingMs),
+                style = MaterialTheme.typography.titleMedium.copy(fontSize = 14.sp),
+                color = if (remainingMs in 0L..59_999L) MaterialTheme.colorScheme.error
+                        else MaterialTheme.colorScheme.onSurfaceVariant,
+                fontWeight = FontWeight.Medium,
+                maxLines = 1,
+                modifier = Modifier.padding(horizontal = 8.dp)
+            )
         }
         if (gameResult.isNotEmpty() && isRight) {
             Text(
