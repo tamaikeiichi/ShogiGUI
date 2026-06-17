@@ -8,9 +8,12 @@ class AobaEngine : UsiEngineInterface {
     private val executor = Executors.newSingleThreadExecutor()
     private val mainHandler = Handler(Looper.getMainLooper())
 
-    override var onOutputReceived: ((String) -> Unit)? = null
+    @Volatile override var onOutputReceived: ((String) -> Unit)? = null
 
     companion object {
+        // プロセス内で動作中のインスタンスを追跡し、重複起動を防ぐ
+        @Volatile private var activeInstance: AobaEngine? = null
+
         init {
             System.loadLibrary("aobannue")
         }
@@ -22,6 +25,13 @@ class AobaEngine : UsiEngineInterface {
     private external fun nativeSetWorkDir(path: String)
 
     override fun start(workDir: String) {
+        // 別インスタンスが既に動いている場合（Activity再生成など）は先に停止
+        val prev = activeInstance
+        if (prev != null && prev !== this) {
+            prev.nativeStop()
+            activeInstance = null
+        }
+        activeInstance = this
         executor.execute {
             try {
                 if (workDir.isNotEmpty()) nativeSetWorkDir(workDir)
@@ -29,6 +39,8 @@ class AobaEngine : UsiEngineInterface {
                 nativeStart()
             } catch (e: Exception) {
                 mainHandler.post { onOutputReceived?.invoke("Error: " + e.message) }
+            } finally {
+                if (activeInstance === this) activeInstance = null
             }
         }
     }
@@ -44,7 +56,7 @@ class AobaEngine : UsiEngineInterface {
                     nativeSendCommand(command)
                 } catch (e: Exception) {}
             }
-        }, "Aoba-Command-Thread").start()
+        }, "Aoba-Command-Thread").also { it.isDaemon = true }.start()
     }
 
     override fun sendCommand(command: String) {
@@ -53,6 +65,7 @@ class AobaEngine : UsiEngineInterface {
 
     override fun stop() {
         nativeStop()
+        if (activeInstance === this) activeInstance = null
     }
 
     fun onOutput(line: String) {

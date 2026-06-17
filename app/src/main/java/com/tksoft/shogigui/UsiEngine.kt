@@ -8,26 +8,33 @@ class UsiEngine(private val dummyPath: String = "") : UsiEngineInterface {
     private val executor = Executors.newSingleThreadExecutor()
     private val mainHandler = Handler(Looper.getMainLooper())
 
-    override var onOutputReceived: ((String) -> Unit)? = null
+    @Volatile override var onOutputReceived: ((String) -> Unit)? = null
 
     companion object {
+        // プロセス内で動作中のインスタンスを追跡し、重複起動を防ぐ
+        @Volatile private var activeInstance: UsiEngine? = null
+
         init {
             System.loadLibrary("yaneuraou")
         }
     }
 
-    // ネイティブ関数の宣言
     private external fun nativeStart()
     private external fun nativeSendCommand(command: String)
     private external fun nativeStop()
     private external fun nativeSetWorkDir(path: String)
 
     override fun start(workDir: String) {
+        // 別インスタンスが既に動いている場合（Activity再生成など）は先に停止
+        val prev = activeInstance
+        if (prev != null && prev !== this) {
+            prev.nativeStop()
+            activeInstance = null
+        }
+        activeInstance = this
         executor.execute {
             try {
                 if (workDir.isNotEmpty()) nativeSetWorkDir(workDir)
-                //nativeSendCommand("usi")
-                // 必要なコマンドを全部先に積んでおく
                 nativeSendCommand("usi")
                 nativeSendCommand("setoption name Threads value 4")
                 nativeSendCommand("setoption name USI_Hash value 256")
@@ -36,8 +43,10 @@ class UsiEngine(private val dummyPath: String = "") : UsiEngineInterface {
                 nativeStart()
             } catch (e: Exception) {
                 mainHandler.post { onOutputReceived?.invoke("Error: " + e.message) }
+            } finally {
+                if (activeInstance === this) activeInstance = null
             }
-        }//, "USI-Engine-Thread").start()
+        }
     }
 
     private val commandQueue = java.util.concurrent.LinkedBlockingQueue<String>()
@@ -49,9 +58,9 @@ class UsiEngine(private val dummyPath: String = "") : UsiEngineInterface {
                 try {
                     android.util.Log.d("ShogiJNI", "sendCommand: $command")
                     nativeSendCommand(command)
-                } catch (e: Exception) {}
+                } catch (_: Exception) {}
             }
-        }, "USI-Command-Thread").start()
+        }, "USI-Command-Thread").also { it.isDaemon = true }.start()
     }
 
     override fun sendCommand(command: String) {
@@ -60,18 +69,13 @@ class UsiEngine(private val dummyPath: String = "") : UsiEngineInterface {
 
     override fun stop() {
         nativeStop()
+        if (activeInstance === this) activeInstance = null
     }
 
-    // C++側から呼び出されるコールバック関数
     fun onOutput(line: String) {
-        // 全ての出力をメインスレッドに送るのではなく、
-        // 必要な通知だけをメインスレッドで行う（負荷軽減）
         if (line.startsWith("info") || line == "usiok" || line == "readyok" || line.startsWith("bestmove")) {
-            mainHandler.post {
-                onOutputReceived?.invoke(line)
-            }
+            mainHandler.post { onOutputReceived?.invoke(line) }
         } else {
-            // それ以外はバックグラウンドでコールバックを呼ぶ
             onOutputReceived?.invoke(line)
         }
     }
