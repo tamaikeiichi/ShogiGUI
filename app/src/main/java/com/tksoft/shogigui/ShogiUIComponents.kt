@@ -16,7 +16,10 @@ import androidx.compose.ui.Modifier
 import androidx.compose.ui.draw.clip
 import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.input.pointer.pointerInput
+import androidx.compose.ui.text.SpanStyle
+import androidx.compose.ui.text.buildAnnotatedString
 import androidx.compose.ui.text.font.FontWeight
+import androidx.compose.ui.text.withStyle
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
 import androidx.compose.ui.tooling.preview.Preview
@@ -36,7 +39,7 @@ fun getPvColor(rank: Int): Color {
 }
 
 @Composable
-fun PvInfoCard(rank: Int, pvText: String, onTap: () -> Unit) {
+fun PvInfoCard(rank: Int, pvText: String, currentMoveLabel: String, onTap: () -> Unit) {
     Card(
         modifier = Modifier
             .fillMaxWidth()
@@ -47,8 +50,22 @@ fun PvInfoCard(rank: Int, pvText: String, onTap: () -> Unit) {
         )
     ) {
         Column(modifier = Modifier.padding(8.dp)) {
+            val annotated = buildAnnotatedString {
+                if (currentMoveLabel.isNotEmpty() && currentMoveLabel != "開始局面" && pvText.contains(currentMoveLabel)) {
+                    var start = 0
+                    while (true) {
+                        val idx = pvText.indexOf(currentMoveLabel, start)
+                        if (idx < 0) { append(pvText.substring(start)); break }
+                        append(pvText.substring(start, idx))
+                        withStyle(SpanStyle(fontWeight = FontWeight.Bold)) { append(currentMoveLabel) }
+                        start = idx + currentMoveLabel.length
+                    }
+                } else {
+                    append(pvText)
+                }
+            }
             Text(
-                text = pvText,
+                text = annotated,
                 style = MaterialTheme.typography.bodySmall,
                 modifier = Modifier.padding(top = 2.dp)
             )

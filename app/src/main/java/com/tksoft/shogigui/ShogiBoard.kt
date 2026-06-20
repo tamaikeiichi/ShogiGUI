@@ -55,7 +55,10 @@ fun ShogiBoard(
         else -> if (pvColorIndex > 0) MaterialTheme.colorScheme.surfaceVariant
         else MaterialTheme.colorScheme.surfaceContainerLow
     }
-    val highlightColor = MaterialTheme.colorScheme.tertiaryContainer.copy(alpha = 0.6f)
+    val highlightColor = if (pvColorIndex == 3)
+        MaterialTheme.colorScheme.primaryContainer.copy(alpha = 0.8f)
+    else
+        MaterialTheme.colorScheme.tertiaryContainer.copy(alpha = 0.6f)
     val selectionColor = MaterialTheme.colorScheme.primaryContainer.copy(alpha = 0.7f)
     val gridColor = MaterialTheme.colorScheme.outline
     val cellColor = MaterialTheme.colorScheme.outlineVariant

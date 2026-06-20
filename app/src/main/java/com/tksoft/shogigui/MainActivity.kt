@@ -145,6 +145,7 @@ class MainActivity : ComponentActivity() {
                 var threadCount by remember { mutableIntStateOf(prefs.getInt("thread_count", 4)) }
                 var showSettingsDialog by remember { mutableStateOf(false) }
                 var showHistoryDialog by remember { mutableStateOf(false) }
+                var selectedPvRank by remember { mutableStateOf<Int?>(null) }
                 val coroutineScope = rememberCoroutineScope()
 
                 var senteName by remember { mutableStateOf(savedSenteName) }
@@ -541,7 +542,8 @@ class MainActivity : ComponentActivity() {
                                     .forEach { (rank, pvText) ->
                                         val alpha = if (isPvStale && pinnedPvList.isEmpty()) 0.5f else 1f
                                         Box(modifier = Modifier.graphicsLayer { this.alpha = alpha }) {
-                                            PvInfoCard(rank, pvText) {
+                                            PvInfoCard(rank, pvText, if (rank == selectedPvRank) currentNode.moveLabel else "") {
+                                                selectedPvRank = rank
                                                 playPvBranch(
                                                     rank, pvList.toMap(), pvUsiList.toMap(), pinnedPvList,
                                                     pinnedPvUsiList, pvBranchPath, currentNode, engine) {
@@ -582,7 +584,8 @@ class MainActivity : ComponentActivity() {
                                     .forEach { (rank, pvText) ->
                                         val alpha = if (isPvStale && pinnedPvList.isEmpty()) 0.5f else 1f
                                         Box(modifier = Modifier.graphicsLayer { this.alpha = alpha }) {
-                                            PvInfoCard(rank, pvText) {
+                                            PvInfoCard(rank, pvText, if (rank == selectedPvRank) currentNode.moveLabel else "") {
+                                                selectedPvRank = rank
                                                 playPvBranch(rank, pvList.toMap(), pvUsiList.toMap(), pinnedPvList, pinnedPvUsiList, pvBranchPath, currentNode, engine) { pinned, pinnedUsi, lastNode, branchNodes, analysisMode ->
                                                     pinnedPvList = pinned; pinnedPvUsiList = pinnedUsi
                                                     pvBranchPath = branchNodes
@@ -788,14 +791,28 @@ class MainActivity : ComponentActivity() {
                                                 color = MaterialTheme.colorScheme.surfaceVariant
                                             ) {
                                                 Column(modifier = Modifier.padding(horizontal = 12.dp, vertical = 8.dp)) {
-                                                    Text(
-                                                        "▲${entry.senteName}　△${entry.goteName}",
-                                                        style = MaterialTheme.typography.bodyMedium,
-                                                        fontWeight = FontWeight.SemiBold,
-                                                        maxLines = 1,
-                                                        overflow = TextOverflow.Ellipsis
-                                                    )
-                                                    Row(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
+                                                    Row(modifier = Modifier.fillMaxWidth()) {
+                                                        Text(
+                                                            "▲${entry.senteName}",
+                                                            style = MaterialTheme.typography.bodyMedium,
+                                                            fontWeight = FontWeight.SemiBold,
+                                                            maxLines = 1,
+                                                            overflow = TextOverflow.Ellipsis,
+                                                            modifier = Modifier.weight(0.5f)
+                                                        )
+                                                        Text(
+                                                            "△${entry.goteName}",
+                                                            style = MaterialTheme.typography.bodyMedium,
+                                                            fontWeight = FontWeight.SemiBold,
+                                                            maxLines = 1,
+                                                            overflow = TextOverflow.Ellipsis,
+                                                            modifier = Modifier.weight(0.5f)
+                                                        )
+                                                    }
+                                                    Row(
+                                                        horizontalArrangement = Arrangement.spacedBy(8.dp),
+                                                        verticalAlignment = Alignment.Bottom
+                                                    ) {
                                                         Text(entry.displayDate,
                                                             style = MaterialTheme.typography.bodySmall,
                                                             color = MaterialTheme.colorScheme.onSurfaceVariant)
@@ -1022,8 +1039,8 @@ fun MainScreenPreview() {
                 ShogiBoard(board, Pair(6, 4), { _, _ -> }, modifier = Modifier.padding(16.dp), lastFrom = Pair(6, 4), lastTo = Pair(4, 4))
                 PlayerStatusSection("先手花子", "▲", true, senteHand, null, Player.SENTE, false, handOnTop = true, gameResult = "") {}
                 Column(modifier = Modifier.padding(8.dp)) {
-                    PvInfoCard(1, pvText) {}
-                    PvInfoCard(2, "評価: +80 (互角)\n読み筋: ▲7八金 △8四歩") {}
+                    PvInfoCard(1, pvText, "") {}
+                    PvInfoCard(2, "評価: +80 (互角)\n読み筋: ▲7八金 △8四歩", "") {}
                 }
             }
         }
