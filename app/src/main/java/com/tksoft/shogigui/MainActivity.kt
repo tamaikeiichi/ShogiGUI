@@ -919,6 +919,26 @@ class MainActivity : ComponentActivity() {
         val branchNodes = mutableListOf<KifuNode>()
 
         usi.forEach { m ->
+            var newSenteHand = p.senteHand
+            var newGoteHand = p.goteHand
+            if (m.length >= 4 && m[1] == '*') {
+                val type = when (m[0]) {
+                    'P' -> PieceType.PAWN; 'L' -> PieceType.LANCE; 'N' -> PieceType.KNIGHT
+                    'S' -> PieceType.SILVER; 'G' -> PieceType.GOLD
+                    'B' -> PieceType.BISHOP; 'R' -> PieceType.ROOK; else -> null
+                }
+                if (type != null) {
+                    if (p.currentPlayer == Player.SENTE) newSenteHand = newSenteHand.toMutableMap().apply { this[type] = (this[type] ?: 1) - 1 }.filterValues { it > 0 }
+                    else newGoteHand = newGoteHand.toMutableMap().apply { this[type] = (this[type] ?: 1) - 1 }.filterValues { it > 0 }
+                }
+            } else if (m.length >= 4) {
+                val toPos = Pair(m[3] - 'a', 9 - (m[2] - '0'))
+                val captured = p.board[toPos]
+                if (captured != null && captured.type != PieceType.KING) {
+                    if (p.currentPlayer == Player.SENTE) newSenteHand = newSenteHand.toMutableMap().apply { this[captured.type] = (this[captured.type] ?: 0) + 1 }
+                    else newGoteHand = newGoteHand.toMutableMap().apply { this[captured.type] = (this[captured.type] ?: 0) + 1 }
+                }
+            }
             val b = applyUsiMove(m, p.board, p.currentPlayer)
             val l = formatUsiMove(m, p.board, p.lastTo)
             val sym = if (p.currentPlayer == Player.SENTE) "▲" else "△"
@@ -927,7 +947,7 @@ class MainActivity : ComponentActivity() {
 
             // 同じrankのPVノードのみ再利用（別rankは別ノードで色を維持）
             val existing = p.children.find { it.moveLabel == "$sym$l" && it.pvColorIndex == rank && it.isPvBranch }
-            val n = existing ?: KifuNode(b, p.senteHand, p.goteHand, if (p.currentPlayer == Player.SENTE) Player.GOTE else Player.SENTE, "$sym$l", p, lastFrom, lastTo, isPvBranch = true, pvColorIndex = rank).also { p.children.add(it) }
+            val n = existing ?: KifuNode(b, newSenteHand, newGoteHand, if (p.currentPlayer == Player.SENTE) Player.GOTE else Player.SENTE, "$sym$l", p, lastFrom, lastTo, isPvBranch = true, pvColorIndex = rank).also { p.children.add(it) }
             branchNodes.add(n)
             p = n
         }
