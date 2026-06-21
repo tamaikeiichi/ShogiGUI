@@ -146,6 +146,7 @@ class MainActivity : ComponentActivity() {
                 var showSettingsDialog by remember { mutableStateOf(false) }
                 var showHistoryDialog by remember { mutableStateOf(false) }
                 var selectedPvRank by remember { mutableStateOf<Int?>(null) }
+                var editingPlayerMark by remember { mutableStateOf<String?>(null) }
                 val coroutineScope = rememberCoroutineScope()
 
                 var senteName by remember { mutableStateOf(savedSenteName) }
@@ -432,7 +433,10 @@ class MainActivity : ComponentActivity() {
                                         }
                                     }, modifier = Modifier.weight(0.3f).height(72.dp),
                                         shape = MaterialTheme.shapes.extraLarge) {
-                                        Column(horizontalAlignment = Alignment.CenterHorizontally) { Icon(Icons.Default.ContentPaste, "読込"); Text("読込", style = MaterialTheme.typography.labelSmall) }
+                                        Column(horizontalAlignment = Alignment.CenterHorizontally) { Icon(Icons.Default.ContentPaste, "クリップボードから読込");
+                                            Text("クリップボードから読込",
+                                                style = MaterialTheme.typography.labelSmall,
+                                                modifier = Modifier.basicMarquee()) }
                                     }
 
                                     OutlinedButton(onClick = {
