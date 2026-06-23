@@ -48,6 +48,12 @@ class MainActivity : ComponentActivity() {
     private var savedSenteName: String = senteColorName
     private var savedGoteName: String = goteColorName
     private var savedGameResult: String = ""
+    private val resumeCount = mutableIntStateOf(0)
+
+    override fun onResume() {
+        super.onResume()
+        resumeCount.intValue++
+    }
 
     @OptIn(ExperimentalMaterial3Api::class, ExperimentalMaterial3ExpressiveApi::class)
     override fun onCreate(savedInstanceState: Bundle?) {
@@ -318,6 +324,14 @@ class MainActivity : ComponentActivity() {
                     }
                 }
 
+                // バックグラウンドから復帰時にエンジンが準備中のまま止まっていたら再起動する
+                LaunchedEffect(resumeCount.intValue) {
+                    if (resumeCount.intValue > 1 && !isEngineReady) {
+                        engine.stop()
+                        engine = if (selectedEngine == "aoba") AobaEngine() else UsiEngine()
+                    }
+                }
+
                 Scaffold(
                     modifier = Modifier.fillMaxSize(),
                     containerColor = MaterialTheme.colorScheme.surfaceContainerLowest,
@@ -434,7 +448,7 @@ class MainActivity : ComponentActivity() {
                                     }, modifier = Modifier.weight(0.3f).height(72.dp),
                                         shape = MaterialTheme.shapes.extraLarge) {
                                         Column(horizontalAlignment = Alignment.CenterHorizontally) { Icon(Icons.Default.ContentPaste, "クリップボードから読込");
-                                            Text("クリップボードから読込",
+                                            Text("読込（クリップボードから）",
                                                 style = MaterialTheme.typography.labelSmall,
                                                 modifier = Modifier.basicMarquee()) }
                                     }
