@@ -234,6 +234,8 @@ class MainActivity : ComponentActivity() {
                 }
 
                 LaunchedEffect(engine) {
+                    val effectId = System.nanoTime()
+                    Log.d("EngineDebug", "[$effectId] LaunchedEffect(engine) start engine=$engine resumeCount=${resumeCount.intValue}")
                     delay(1000)
                     isEngineReady = false
                     engine.onOutputReceived = { rawLine ->
@@ -246,7 +248,9 @@ class MainActivity : ComponentActivity() {
                             copyAssetsToFileDir("aoba_nn.bin", "aoba_eval", filesDir, assets, targetName = "nn.bin")
                         }
                     }
+                    Log.d("EngineDebug", "[$effectId] LaunchedEffect(engine) calling engine.start() engine=$engine")
                     engine.start(filesDir.absolutePath)
+                    Log.d("EngineDebug", "[$effectId] LaunchedEffect(engine) engine.start() returned engine=$engine")
                 }
 
                 LaunchedEffect(isAutoAnalysis, isAnalysisMode, isEngineReady, currentNode) {
@@ -325,10 +329,31 @@ class MainActivity : ComponentActivity() {
                 }
 
                 // バックグラウンドから復帰時にエンジンが準備中のまま止まっていたら再起動する
+                // (1回の再作成で readyok が来るとは限らないため、タイムアウト付きで複数回試す)
                 LaunchedEffect(resumeCount.intValue) {
-                    if (resumeCount.intValue > 1 && !isEngineReady) {
-                        engine.stop()
+                    Log.d("EngineDebug", "resume check: count=${resumeCount.intValue} isEngineReady=$isEngineReady engine=$engine")
+                    if (resumeCount.intValue <= 1 || isEngineReady) return@LaunchedEffect
+
+                    val maxAttempts = 3
+                    val readyTimeoutMs = 8000L
+                    var attempt = 0
+                    while (!isEngineReady && attempt < maxAttempts) {
+                        attempt++
+                        Log.d("EngineDebug", "restarting engine (attempt $attempt/$maxAttempts): old=$engine")
+                        val old = engine
+                        withContext(Dispatchers.IO) { old.stop() }
                         engine = if (selectedEngine == "aoba") AobaEngine() else UsiEngine()
+                        Log.d("EngineDebug", "restarted engine: new=$engine")
+
+                        var waited = 0L
+                        while (!isEngineReady && waited < readyTimeoutMs) {
+                            delay(200)
+                            waited += 200
+                        }
+                        Log.d("EngineDebug", "attempt $attempt result: isEngineReady=$isEngineReady after ${waited}ms")
+                    }
+                    if (!isEngineReady) {
+                        Log.e("EngineDebug", "engine restart failed after $maxAttempts attempts")
                     }
                 }
 
@@ -532,9 +557,9 @@ class MainActivity : ComponentActivity() {
                     val isWide = androidx.compose.ui.platform.LocalConfiguration.current.screenWidthDp >= 840
                     if (isWide) {
                         Row(modifier = Modifier.fillMaxSize().padding(top = innerPadding.calculateTopPadding() + 16.dp, start = 16.dp, end = 16.dp), horizontalArrangement = Arrangement.spacedBy(24.dp)) {
+                            val topP = if (isBoardFlipped) Player.SENTE else Player.GOTE; val botP = if (isBoardFlipped) Player.GOTE else Player.SENTE
 
                             Column(modifier = Modifier.weight(0.5f).verticalScroll(rememberScrollState()), horizontalAlignment = Alignment.CenterHorizontally, verticalArrangement = Arrangement.spacedBy(8.dp)) {
-                                val topP = if (isBoardFlipped) Player.SENTE else Player.GOTE; val botP = if (isBoardFlipped) Player.GOTE else Player.SENTE
                                 val isHumanTurn = humanPlayer == null || currentPlayer == humanPlayer
                                 PlayerStatusSection(if(topP==Player.SENTE) senteName else goteName, if(topP==Player.SENTE) "▲" else "△", currentPlayer==topP, if(topP==Player.SENTE) senteHand else goteHand, selectedHandPiece, currentPlayer, isBoardFlipped, handOnTop = false, gameResult = gameResult, remainingMs = if(topP==Player.SENTE) currentNode.senteRemainingMs else currentNode.goteRemainingMs, onNameClick = { editingPlayerMark = if(topP==Player.SENTE) "▲" else "△" }) { if (isHumanTurn) { selectedHandPiece = it; selectedSquare = null } }
                                 ShogiBoard(boardState, selectedSquare, { r, c ->
@@ -702,10 +727,12 @@ class MainActivity : ComponentActivity() {
                                     isAnalysisMode = false
                                     isAutoAnalysis = false
                                     isEngineReady = false
-                                    engine.onOutputReceived = null
-                                    engine.stop()
+                                    val old = engine
+                                    old.onOutputReceived = null
                                     selectedEngine = pendingEngine
                                     engine = if (pendingEngine == "aoba") AobaEngine() else UsiEngine()
+                                    // nativeStop()がブロックする可能性があるためメインスレッドを避ける
+                                    coroutineScope.launch(Dispatchers.IO) { old.stop() }
                                 } else {
                                     if (isEngineReady) {
                                         engine.sendCommand("setoption name MultiPV value $multiPvCount")

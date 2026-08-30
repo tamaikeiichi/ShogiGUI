@@ -88,14 +88,15 @@ fun parseInfo(
     return result.joinToString("\n")
 }
 
-fun extractScore(pvText: String, turn: Player): Int {
+// perspective: この視点から見て有利な順に並べるためのスコアを返す（次に指す側の視点を渡す）
+fun extractScore(pvText: String, perspective: Player): Int {
     val lines = pvText.lines()
     val mateIdx = lines.indexOfFirst { it.contains("手詰") || it == "詰み" }
     if (mateIdx >= 0) {
         // winner line is either the mate line itself or the next line
         val winnerText = lines.drop(mateIdx).take(2).joinToString("\n")
         val isSenteWin = winnerText.contains("先手勝ち")
-        return if (turn == Player.SENTE) {
+        return if (perspective == Player.SENTE) {
             if (isSenteWin) Int.MAX_VALUE else Int.MIN_VALUE
         } else {
             if (!isSenteWin) Int.MAX_VALUE else Int.MIN_VALUE
@@ -103,10 +104,9 @@ fun extractScore(pvText: String, turn: Player): Int {
     }
     val scoreLine = pvText.lines().find { it.startsWith("評価:") } ?: return 0
     val vStr = scoreLine.substringAfter("評価:").trim().split(" ")[0]
-    //return vStr.replace("+", "").toIntOrNull() ?: 0
+    // 評価値は先手視点の値なので、視点が後手の場合は符号を反転する
     val v = vStr.toIntOrNull() ?: 0
-    //return if (turn == Player.SENTE) v else -v
-    return v
+    return if (perspective == Player.SENTE) v else -v
 }
 
 fun formatUsiMove(usiMove: String, board: Map<Pair<Int, Int>, Piece>? = null, lastTo: Pair<Int, Int>? = null): String {
@@ -150,17 +150,29 @@ fun copyAssetsToFileDir(
     assetManager: android.content.res.AssetManager,
     targetName: String = assetName
 ) {
+    val callId = System.nanoTime()
+    val tag = "AssetCopyDebug"
+    val threadName = Thread.currentThread().name
     val targetDir = if (subDir.isNotEmpty()) {
         val dir = java.io.File(baseDir, subDir)
         if (!dir.exists()) dir.mkdirs()
         dir
     } else baseDir
     val file = java.io.File(targetDir, targetName)
+    if (file.exists() && file.length() > 0L) {
+        // エンジン再起動のたびに数百MBのコピーをやり直さないよう、既存ファイルがあればスキップする
+        Log.d(tag, "[$callId] skip (already copied) asset=$assetName target=${file.absolutePath} size=${file.length()}")
+        return
+    }
+    Log.d(tag, "[$callId] start asset=$assetName target=$targetName thread=$threadName")
     try {
         assetManager.open(assetName).use { inputStream ->
             file.outputStream().use { outputStream -> inputStream.copyTo(outputStream) }
         }
-    } catch (e: Exception) { Log.e("ShogiGUI", "Copy failed: ${e.message}") }
+        Log.d(tag, "[$callId] done asset=$assetName target=${file.absolutePath} size=${file.length()} thread=$threadName")
+    } catch (e: Exception) {
+        Log.e(tag, "[$callId] Copy failed: asset=$assetName target=${file.absolutePath} thread=$threadName", e)
+    }
 }
 
 fun boardToSfen(board: Map<Pair<Int, Int>, Piece>, turn: Player, senteHand: Map<PieceType, Int>, goteHand: Map<PieceType, Int>): String {

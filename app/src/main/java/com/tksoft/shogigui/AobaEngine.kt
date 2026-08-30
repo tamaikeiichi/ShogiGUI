@@ -25,18 +25,23 @@ class AobaEngine : UsiEngineInterface {
     private external fun nativeSetWorkDir(path: String)
 
     override fun start(workDir: String) {
+        android.util.Log.d("EngineDebug", "AobaEngine.start() called on $this workDir=$workDir thread=${Thread.currentThread().name}")
         // 別インスタンスが既に動いている場合（Activity再生成など）は先に停止
         val prev = activeInstance
         if (prev != null && prev !== this) {
+            android.util.Log.d("EngineDebug", "AobaEngine.start() stopping prev instance $prev before starting $this")
             prev.nativeStop()
+            android.util.Log.d("EngineDebug", "AobaEngine.start() prev.nativeStop() returned for $prev")
             activeInstance = null
         }
         activeInstance = this
         executor.execute {
             try {
+                android.util.Log.d("EngineDebug", "AobaEngine executor begin for $this thread=${Thread.currentThread().name}")
                 if (workDir.isNotEmpty()) nativeSetWorkDir(workDir)
                 // "usi" は native-lib-aoba.cpp 内で事前投入済み
                 nativeStart()
+                android.util.Log.d("EngineDebug", "AobaEngine nativeStart() returned for $this")
             } catch (e: Exception) {
                 mainHandler.post { onOutputReceived?.invoke("Error: " + e.message) }
             } finally {
@@ -64,7 +69,9 @@ class AobaEngine : UsiEngineInterface {
     }
 
     override fun stop() {
+        android.util.Log.d("EngineDebug", "AobaEngine.stop() called on $this thread=${Thread.currentThread().name}")
         nativeStop()
+        android.util.Log.d("EngineDebug", "AobaEngine.stop() nativeStop() returned for $this")
         if (activeInstance === this) activeInstance = null
     }
 

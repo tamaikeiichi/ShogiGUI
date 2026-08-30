@@ -25,15 +25,19 @@ class UsiEngine(private val dummyPath: String = "") : UsiEngineInterface {
     private external fun nativeSetWorkDir(path: String)
 
     override fun start(workDir: String) {
+        android.util.Log.d("EngineDebug", "UsiEngine.start() called on $this workDir=$workDir thread=${Thread.currentThread().name}")
         // 別インスタンスが既に動いている場合（Activity再生成など）は先に停止
         val prev = activeInstance
         if (prev != null && prev !== this) {
+            android.util.Log.d("EngineDebug", "UsiEngine.start() stopping prev instance $prev before starting $this")
             prev.nativeStop()
+            android.util.Log.d("EngineDebug", "UsiEngine.start() prev.nativeStop() returned for $prev")
             activeInstance = null
         }
         activeInstance = this
         executor.execute {
             try {
+                android.util.Log.d("EngineDebug", "UsiEngine executor begin for $this thread=${Thread.currentThread().name}")
                 if (workDir.isNotEmpty()) nativeSetWorkDir(workDir)
                 nativeSendCommand("usi")
                 nativeSendCommand("setoption name Threads value 4")
@@ -41,6 +45,7 @@ class UsiEngine(private val dummyPath: String = "") : UsiEngineInterface {
                 nativeSendCommand("setoption name BookFile value no_book")
                 nativeSendCommand("isready")
                 nativeStart()
+                android.util.Log.d("EngineDebug", "UsiEngine nativeStart() returned for $this")
             } catch (e: Exception) {
                 mainHandler.post { onOutputReceived?.invoke("Error: " + e.message) }
             } finally {
@@ -68,7 +73,9 @@ class UsiEngine(private val dummyPath: String = "") : UsiEngineInterface {
     }
 
     override fun stop() {
+        android.util.Log.d("EngineDebug", "UsiEngine.stop() called on $this thread=${Thread.currentThread().name}")
         nativeStop()
+        android.util.Log.d("EngineDebug", "UsiEngine.stop() nativeStop() returned for $this")
         if (activeInstance === this) activeInstance = null
     }
 
