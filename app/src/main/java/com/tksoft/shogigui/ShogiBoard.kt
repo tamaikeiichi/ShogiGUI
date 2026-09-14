@@ -295,7 +295,14 @@ fun DropMoveArrowOverlay(
     boardCoordinates: LayoutCoordinates?,
     toSquare: Pair<Int, Int>?,
     modifier: Modifier = Modifier,
-    arrowColor: Color = MaterialTheme.colorScheme.primary
+    arrowColor: Color = MaterialTheme.colorScheme.primary,
+    // 盤・持ち駒側のスクロール位置。このオーバーレイ自体はスクロールしない画面全体の
+    // Box に置かれているため、onGloballyPositioned の再通知だけに頼ると盤や持ち駒が
+    // スクロールで動いても矢印が再合成されず取り残されることがある。呼び出し側で
+    // スクロール量をここに渡すことで、スクロールのたびに再合成させて
+    // handCoordinates/boardCoordinates (常に最新位置を返すライブオブジェクト) から
+    // 現在位置を計算し直させる。
+    scrollValue: Int = 0
 ) {
     var ownCoordinates by remember { mutableStateOf<LayoutCoordinates?>(null) }
 
@@ -306,6 +313,12 @@ fun DropMoveArrowOverlay(
         own != null && own.isAttached
     ) {
         try {
+            // scrollValue を実際に読むことで、Compose の strong skipping によりこの
+            // Composable が「未使用パラメータ」として再合成をスキップされるのを防ぐ。
+            // スクロールのたびにこのブロックを再実行させ、handCoordinates/boardCoordinates
+            // (常に現在位置を返すライブオブジェクト) から矢印の位置を計算し直させる。
+            @Suppress("UNUSED_EXPRESSION")
+            scrollValue
             val cell = boardCoordinates.size.width / 9f
             val toLocalInBoard = Offset((toSquare.second + 0.5f) * cell, (toSquare.first + 0.5f) * cell)
             val handLocalCenter = Offset(handCoordinates.size.width / 2f, handCoordinates.size.height / 2f)

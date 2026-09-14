@@ -377,6 +377,11 @@ class MainActivity : ComponentActivity() {
                 val onBoardBoxPositioned: (androidx.compose.ui.layout.LayoutCoordinates) -> Unit = { boardBoxCoords = it }
                 val onHandPiecePositioned: (Player, PieceType, androidx.compose.ui.layout.LayoutCoordinates) -> Unit =
                     { p, t, c -> handPieceCoords[Pair(p, t)] = c }
+                // 盤・持ち駒を含むエリアのスクロール位置。DropMoveArrowOverlay はこのエリアの
+                // 外側（画面全体オーバーレイ）にあるため、スクロール量が変わるたびに再合成させて
+                // 矢印の位置を再計算させる（onGloballyPositioned だけでは再合成が起きず矢印が
+                // 取り残されるため）。
+                val boardAreaScrollState = rememberScrollState()
 
                 Box(modifier = Modifier.fillMaxSize()) {
                 Scaffold(
@@ -581,7 +586,7 @@ class MainActivity : ComponentActivity() {
                         Row(modifier = Modifier.fillMaxSize().padding(top = innerPadding.calculateTopPadding() + 16.dp, start = 16.dp, end = 16.dp), horizontalArrangement = Arrangement.spacedBy(24.dp)) {
                             val topP = if (isBoardFlipped) Player.SENTE else Player.GOTE; val botP = if (isBoardFlipped) Player.GOTE else Player.SENTE
 
-                            Column(modifier = Modifier.weight(0.5f).verticalScroll(rememberScrollState()), horizontalAlignment = Alignment.CenterHorizontally, verticalArrangement = Arrangement.spacedBy(8.dp)) {
+                            Column(modifier = Modifier.weight(0.5f).verticalScroll(boardAreaScrollState), horizontalAlignment = Alignment.CenterHorizontally, verticalArrangement = Arrangement.spacedBy(8.dp)) {
                                 val isHumanTurn = humanPlayer == null || currentPlayer == humanPlayer
                                 PlayerStatusSection(if(topP==Player.SENTE) senteName else goteName, if(topP==Player.SENTE) "▲" else "△", currentPlayer==topP, if(topP==Player.SENTE) senteHand else goteHand, selectedHandPiece, currentPlayer, isBoardFlipped, handOnTop = false, gameResult = gameResult, remainingMs = if(topP==Player.SENTE) currentNode.senteRemainingMs else currentNode.goteRemainingMs, onNameClick = { editingPlayerMark = if(topP==Player.SENTE) "▲" else "△" }, onPiecePositioned = onHandPiecePositioned) { if (isHumanTurn) { selectedHandPiece = it; selectedSquare = null } }
                                 ShogiBoard(boardState, selectedSquare, { r, c ->
@@ -630,7 +635,7 @@ class MainActivity : ComponentActivity() {
                         }
                     }
                     else {
-                        Column(modifier = Modifier.fillMaxSize().padding(top = innerPadding.calculateTopPadding()).verticalScroll(rememberScrollState()), horizontalAlignment = Alignment.CenterHorizontally) {
+                        Column(modifier = Modifier.fillMaxSize().padding(top = innerPadding.calculateTopPadding()).verticalScroll(boardAreaScrollState), horizontalAlignment = Alignment.CenterHorizontally) {
 
                             val topP = if (isBoardFlipped) Player.SENTE else Player.GOTE; val botP = if (isBoardFlipped) Player.GOTE else Player.SENTE
                             val isHumanTurn = humanPlayer == null || currentPlayer == humanPlayer
@@ -677,7 +682,8 @@ class MainActivity : ComponentActivity() {
                     boardCoordinates = boardBoxCoords,
                     toSquare = bestMoveSquares?.second,
                     arrowColor = bestMoveArrowColor,
-                    modifier = Modifier.fillMaxSize()
+                    modifier = Modifier.fillMaxSize(),
+                    scrollValue = boardAreaScrollState.value
                 )
                 }
 
