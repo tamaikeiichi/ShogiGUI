@@ -1,9 +1,12 @@
 package com.tksoft.shogigui
 
+import android.net.Uri
 import android.os.Bundle
 import androidx.activity.ComponentActivity
+import androidx.activity.compose.rememberLauncherForActivityResult
 import androidx.activity.compose.setContent
 import androidx.activity.enableEdgeToEdge
+import androidx.activity.result.contract.ActivityResultContracts
 import androidx.compose.foundation.basicMarquee
 import androidx.compose.foundation.layout.*
 import androidx.compose.foundation.lazy.LazyColumn
@@ -41,6 +44,9 @@ import kotlin.math.roundToInt
 import androidx.compose.ui.window.Dialog
 import androidx.compose.ui.window.Popup
 import androidx.compose.ui.window.PopupProperties
+import java.text.SimpleDateFormat
+import java.util.Date
+import java.util.Locale
 
 class MainActivity : ComponentActivity() {
 
@@ -78,7 +84,7 @@ class MainActivity : ComponentActivity() {
             ShogiGUITheme {
                 val initialNode by remember { mutableStateOf(rootNode!!) }
                 var currentNode by remember { mutableStateOf(initialNode) }
-                
+
                 val saveKifu = { node: KifuNode ->
                     val root = getRootNode(node)
                     prefs.edit().putString("current_tree", kifuTreeToJson(root).toString()).apply()
@@ -154,6 +160,35 @@ class MainActivity : ComponentActivity() {
                 var selectedPvRank by remember { mutableStateOf<Int?>(null) }
                 var editingPlayerMark by remember { mutableStateOf<String?>(null) }
                 val coroutineScope = rememberCoroutineScope()
+
+                var kifuIoMessage by remember { mutableStateOf<String?>(null) }
+                val exportKifuLauncher = rememberLauncherForActivityResult(
+                    ActivityResultContracts.CreateDocument("text/plain")
+                ) { uri: Uri? ->
+                    if (uri != null) {
+                        coroutineScope.launch {
+                            val count = withContext(Dispatchers.IO) {
+                                KifuHistoryManager.exportAllToUri(this@MainActivity, uri)
+                            }
+                            kifuIoMessage = "${count}件の棋譜をエクスポートしました"
+                        }
+                    }
+                }
+                val importKifuLauncher = rememberLauncherForActivityResult(
+                    ActivityResultContracts.OpenDocument()
+                ) { uri: Uri? ->
+                    if (uri != null) {
+                        coroutineScope.launch {
+                            val result = withContext(Dispatchers.IO) {
+                                KifuHistoryManager.importFromUri(this@MainActivity, uri)
+                            }
+                            kifuIoMessage = buildString {
+                                append("${result.imported}件の棋譜をインポートしました")
+                                if (result.skipped > 0) append("（${result.skipped}件は読み込めませんでした）")
+                            }
+                        }
+                    }
+                }
 
                 var senteName by remember { mutableStateOf(savedSenteName) }
                 var goteName by remember { mutableStateOf(savedGoteName) }
@@ -464,6 +499,19 @@ class MainActivity : ComponentActivity() {
                                         DropdownMenuItem(
                                             text = { Text("過去の棋譜") },
                                             onClick = { showHistoryDialog = true; showMenu = false })
+                                        DropdownMenuItem(
+                                            text = { Text("過去の棋譜をすべてエクスポート") },
+                                            onClick = {
+                                                val ts = SimpleDateFormat("yyyyMMdd_HHmmss", Locale.JAPAN).format(Date())
+                                                exportKifuLauncher.launch("shogi_kifu_$ts.txt")
+                                                showMenu = false
+                                            })
+                                        DropdownMenuItem(
+                                            text = { Text("過去の棋譜をインポート") },
+                                            onClick = {
+                                                importKifuLauncher.launch(arrayOf("text/plain", "text/*", "*/*"))
+                                                showMenu = false
+                                            })
                                     }
                                     OutlinedButton(onClick = {
                                         clipboard.getText()?.text?.let { text ->
@@ -924,6 +972,17 @@ class MainActivity : ComponentActivity() {
                             }
                         }
                     }
+                }
+
+                kifuIoMessage?.let { msg ->
+                    AlertDialog(
+                        onDismissRequest = { kifuIoMessage = null },
+                        title = { Text("過去の棋譜") },
+                        text = { Text(msg) },
+                        confirmButton = {
+                            TextButton(onClick = { kifuIoMessage = null }) { Text("OK") }
+                        }
+                    )
                 }
 
                 editingPlayerMark?.let { mark ->
