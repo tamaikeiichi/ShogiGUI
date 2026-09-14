@@ -86,6 +86,7 @@ fun PlayerStatusSection(
     gameResult: String = "",
     remainingMs: Long? = null,
     onNameClick: () -> Unit = {},
+    onPiecePositioned: (Player, PieceType, androidx.compose.ui.layout.LayoutCoordinates) -> Unit = { _, _, _ -> },
     onSelected: (Pair<Player, PieceType>?) -> Unit
 ) {
     val player = if (mark == "▲") Player.SENTE else Player.GOTE
@@ -95,7 +96,8 @@ fun PlayerStatusSection(
             player = player,
             selectedPieceType = selectedHandPiece?.takeIf { it.first == player }?.second,
             onPieceClick = { type -> if (isActive) onSelected(Pair(player, type)) },
-            isFlipped = isFlipped
+            isFlipped = isFlipped,
+            onPiecePositioned = { type, coords -> onPiecePositioned(player, type, coords) }
         )
     }
     val nameColor = if (mark == "▲") senteNameColor else goteNameColor
@@ -151,28 +153,39 @@ fun SliderControlSection(
             val activeTrackColor = MaterialTheme.colorScheme.primary
             val inactiveTrackColor = MaterialTheme.colorScheme.outlineVariant
             Box(modifier = Modifier.weight(1f), contentAlignment = Alignment.Center) {
-                Canvas(modifier = Modifier.fillMaxWidth().height(48.dp).padding(horizontal = 10.dp)) {
+                Canvas(modifier = Modifier.fillMaxWidth().height(48.dp)) {
                     val width = size.width; val height = size.height; val centerY = height / 2f
-                    // バー幅: 全幅を (maxIndex+1) 等分、端がはみ出ないよう usableWidth + stroke/2 オフセット
+                    // 実際の Slider (M3 1.4.0) の thumb 配置ロジックに合わせる。
+                    // Slider.kt の SliderLayout 内では、
+                    //   thumbOffsetX = if (steps>0 && 先頭/末尾の目盛りでない)
+                    //       (trackWidth - 2*cornerSize) * fraction + cornerSize
+                    //     else
+                    //       trackWidth * fraction
+                    // という「先頭・末尾だけ特別扱い」の式で thumb 位置を決めている
+                    // (cornerSize はトラックの角丸半径 = TrackHeight(16.dp)/2 = 8.dp)。
+                    // 単純な線形補間 (旧実装) だと、先頭/末尾とその隣の目盛りとの間隔だけ
+                    // 広くなってしまい、実際の Slider の目盛り位置とずれる。
+                    val thumbWidthPx = 4.dp.toPx() // SliderTokens.HandleWidth
+                    val thumbHalfPx = thumbWidthPx / 2f
+                    val trackWidthPx = (width - thumbWidthPx).coerceAtLeast(0f)
+                    val trackCornerPx = 8.dp.toPx() // SliderTokens.InactiveTrackHeight(16.dp) / 2
+                    val valueRangeEnd = maxIndex.toFloat().coerceAtLeast(1f)
+                    fun xForIndex(idx: Int): Float {
+                        val fraction = (idx / valueRangeEnd).coerceIn(0f, 1f)
+                        val thumbOffsetX = if (idx != 0 && idx != maxIndex) {
+                            (trackWidthPx - 2f * trackCornerPx) * fraction + trackCornerPx
+                        } else {
+                            trackWidthPx * fraction
+                        }
+                        return thumbOffsetX + thumbHalfPx
+                    }
+                    // バーの太さは見た目上のもので、位置計算には使わない
                     val stroke = (width / (maxIndex + 1).toFloat().coerceAtLeast(1f)).coerceAtLeast(2f)
-                    val usableWidth = width - stroke
-                    val stepX = if (maxIndex > 0) usableWidth / maxIndex.toFloat() else usableWidth
-                    val offset = stroke / 2f  // 最初のバー中心を左端から offset 分内側に
-                    val activeX = offset + currentIndex.toFloat() * stepX
-
-                    // トラック（非アクティブ）
-//                    drawLine(inactiveTrackColor.copy(alpha = 0.4f),
-//                        androidx.compose.ui.geometry.Offset(0f, centerY),
-//                        androidx.compose.ui.geometry.Offset(width, centerY), 4f)
-//                    // トラック（アクティブ）
-//                    if (currentIndex > 0) drawLine(activeTrackColor.copy(alpha = 0.6f),
-//                        androidx.compose.ui.geometry.Offset(offset, centerY),
-//                        androidx.compose.ui.geometry.Offset(activeX, centerY), 4f)
 
                     // 評価値バー
                     evalHistory.forEach { (moveCount, score) ->
                         if (moveCount <= maxIndex) {
-                            val x = offset + moveCount * stepX
+                            val x = xForIndex(moveCount)
                             val isMate = score > 10000 || score < -10000
                             val normalized = (score.toFloat() / 2000f).coerceIn(-1f, 1f)
                             val y = centerY - (normalized * centerY)
@@ -192,7 +205,7 @@ fun SliderControlSection(
                     // PV分岐ドット
                     currentPath.forEachIndexed { index, node ->
                         if (node.isPvBranch && index <= maxIndex) {
-                            val x = offset + index.toFloat() * stepX
+                            val x = xForIndex(index)
                             val dotColor = when (node.pvColorIndex) {
                                 1 -> pvColor1; 2 -> pvColor2; 3 -> pvColor3; else -> pvColorElse
                             }

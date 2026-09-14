@@ -88,15 +88,14 @@ fun parseInfo(
     return result.joinToString("\n")
 }
 
-// perspective: この視点から見て有利な順に並べるためのスコアを返す（次に指す側の視点を渡す）
-fun extractScore(pvText: String, perspective: Player): Int {
+fun extractScore(pvText: String, turn: Player): Int {
     val lines = pvText.lines()
     val mateIdx = lines.indexOfFirst { it.contains("手詰") || it == "詰み" }
     if (mateIdx >= 0) {
         // winner line is either the mate line itself or the next line
         val winnerText = lines.drop(mateIdx).take(2).joinToString("\n")
         val isSenteWin = winnerText.contains("先手勝ち")
-        return if (perspective == Player.SENTE) {
+        return if (turn == Player.SENTE) {
             if (isSenteWin) Int.MAX_VALUE else Int.MIN_VALUE
         } else {
             if (!isSenteWin) Int.MAX_VALUE else Int.MIN_VALUE
@@ -104,9 +103,10 @@ fun extractScore(pvText: String, perspective: Player): Int {
     }
     val scoreLine = pvText.lines().find { it.startsWith("評価:") } ?: return 0
     val vStr = scoreLine.substringAfter("評価:").trim().split(" ")[0]
-    // 評価値は先手視点の値なので、視点が後手の場合は符号を反転する
+    // 評価: の値は常に先手視点で格納されているため、手番側 (turn) から見た評価値に変換する。
+    // これをしないと、後手番のときに「候補1番目」が先手にとって都合の良い手になってしまう。
     val v = vStr.toIntOrNull() ?: 0
-    return if (perspective == Player.SENTE) v else -v
+    return if (turn == Player.SENTE) v else -v
 }
 
 fun formatUsiMove(usiMove: String, board: Map<Pair<Int, Int>, Piece>? = null, lastTo: Pair<Int, Int>? = null): String {
@@ -143,6 +143,35 @@ fun formatUsiMove(usiMove: String, board: Map<Pair<Int, Int>, Piece>? = null, la
     } catch (e: Exception) { usiMove }
 }
 
+// USI形式の指し手 (例: "7g7f", "P*5e") を盤上の(移動元, 移動先)マス座標に変換する
+// 移動元は駒打ちの場合 null。座標系は Piece の格納に使う Pair(row, col) と同一。
+fun usiMoveSquares(usiMove: String): Pair<Pair<Int, Int>?, Pair<Int, Int>>? {
+    if (usiMove.length < 4) return null
+    return try {
+        val toCol = usiMove[2] - '0'
+        val toRow = usiMove[3] - 'a'
+        val to = Pair(toRow, 9 - toCol)
+        if (usiMove[1] == '*') {
+            Pair(null, to)
+        } else {
+            val fromCol = usiMove[0] - '0'
+            val fromRow = usiMove[1] - 'a'
+            Pair(Pair(fromRow, 9 - fromCol), to)
+        }
+    } catch (e: Exception) { null }
+}
+
+// USI形式の駒打ち (例: "P*5e") から駒種を取得する。駒打ちでなければ null。
+fun usiDropPieceType(usiMove: String): PieceType? {
+    if (usiMove.length < 2 || usiMove[1] != '*') return null
+    return when (usiMove[0]) {
+        'P' -> PieceType.PAWN; 'L' -> PieceType.LANCE; 'N' -> PieceType.KNIGHT
+        'S' -> PieceType.SILVER; 'G' -> PieceType.GOLD; 'B' -> PieceType.BISHOP
+        'R' -> PieceType.ROOK
+        else -> null
+    }
+}
+
 fun copyAssetsToFileDir(
     assetName: String,
     subDir: String = "",
@@ -150,29 +179,17 @@ fun copyAssetsToFileDir(
     assetManager: android.content.res.AssetManager,
     targetName: String = assetName
 ) {
-    val callId = System.nanoTime()
-    val tag = "AssetCopyDebug"
-    val threadName = Thread.currentThread().name
     val targetDir = if (subDir.isNotEmpty()) {
         val dir = java.io.File(baseDir, subDir)
         if (!dir.exists()) dir.mkdirs()
         dir
     } else baseDir
     val file = java.io.File(targetDir, targetName)
-    if (file.exists() && file.length() > 0L) {
-        // エンジン再起動のたびに数百MBのコピーをやり直さないよう、既存ファイルがあればスキップする
-        Log.d(tag, "[$callId] skip (already copied) asset=$assetName target=${file.absolutePath} size=${file.length()}")
-        return
-    }
-    Log.d(tag, "[$callId] start asset=$assetName target=$targetName thread=$threadName")
     try {
         assetManager.open(assetName).use { inputStream ->
             file.outputStream().use { outputStream -> inputStream.copyTo(outputStream) }
         }
-        Log.d(tag, "[$callId] done asset=$assetName target=${file.absolutePath} size=${file.length()} thread=$threadName")
-    } catch (e: Exception) {
-        Log.e(tag, "[$callId] Copy failed: asset=$assetName target=${file.absolutePath} thread=$threadName", e)
-    }
+    } catch (e: Exception) { Log.e("ShogiGUI", "Copy failed: ${e.message}") }
 }
 
 fun boardToSfen(board: Map<Pair<Int, Int>, Piece>, turn: Player, senteHand: Map<PieceType, Int>, goteHand: Map<PieceType, Int>): String {

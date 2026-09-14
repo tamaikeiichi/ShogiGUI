@@ -357,6 +357,28 @@ class MainActivity : ComponentActivity() {
                     }
                 }
 
+                // 解析中のみ候補1番目の指し手を盤面矢印として表示。解析停止で null になり矢印は消える。
+                // 「候補1番目」は MultiPV の順位ではなく、手番側から見て評価値が最も良いもの
+                // (PVカードの並び替えと同じ基準 = extractScore(pvText, currentPlayer) の降順) で決める。
+                // こうしないと後手番のときにカードの1番目と矢印が指す手がずれてしまう。
+                // (矢印の色自体は primary 固定)
+                val topPvRank = if (isAnalysisMode || isAutoAnalysis)
+                    pvList.entries.maxByOrNull { (_, pvText) -> extractScore(pvText, currentPlayer) }?.key
+                else null
+                val bestMoveArrowUsi = topPvRank?.let { pvUsiList[it]?.firstOrNull() }
+                val bestMoveArrowColor = MaterialTheme.colorScheme.primary
+                val bestMoveSquares = bestMoveArrowUsi?.let { usiMoveSquares(it) }
+                val bestMoveDropPieceType = bestMoveArrowUsi?.let { usiDropPieceType(it) }
+
+                // 駒打ちの矢印は「持ち駒 → 盤面」を横断して引く必要があるため、
+                // 両コンポーネントの画面上の位置を LayoutCoordinates で保持しておく
+                var boardBoxCoords by remember { mutableStateOf<androidx.compose.ui.layout.LayoutCoordinates?>(null) }
+                val handPieceCoords = remember { mutableStateMapOf<Pair<Player, PieceType>, androidx.compose.ui.layout.LayoutCoordinates>() }
+                val onBoardBoxPositioned: (androidx.compose.ui.layout.LayoutCoordinates) -> Unit = { boardBoxCoords = it }
+                val onHandPiecePositioned: (Player, PieceType, androidx.compose.ui.layout.LayoutCoordinates) -> Unit =
+                    { p, t, c -> handPieceCoords[Pair(p, t)] = c }
+
+                Box(modifier = Modifier.fillMaxSize()) {
                 Scaffold(
                     modifier = Modifier.fillMaxSize(),
                     containerColor = MaterialTheme.colorScheme.surfaceContainerLowest,
@@ -561,15 +583,15 @@ class MainActivity : ComponentActivity() {
 
                             Column(modifier = Modifier.weight(0.5f).verticalScroll(rememberScrollState()), horizontalAlignment = Alignment.CenterHorizontally, verticalArrangement = Arrangement.spacedBy(8.dp)) {
                                 val isHumanTurn = humanPlayer == null || currentPlayer == humanPlayer
-                                PlayerStatusSection(if(topP==Player.SENTE) senteName else goteName, if(topP==Player.SENTE) "▲" else "△", currentPlayer==topP, if(topP==Player.SENTE) senteHand else goteHand, selectedHandPiece, currentPlayer, isBoardFlipped, handOnTop = false, gameResult = gameResult, remainingMs = if(topP==Player.SENTE) currentNode.senteRemainingMs else currentNode.goteRemainingMs, onNameClick = { editingPlayerMark = if(topP==Player.SENTE) "▲" else "△" }) { if (isHumanTurn) { selectedHandPiece = it; selectedSquare = null } }
+                                PlayerStatusSection(if(topP==Player.SENTE) senteName else goteName, if(topP==Player.SENTE) "▲" else "△", currentPlayer==topP, if(topP==Player.SENTE) senteHand else goteHand, selectedHandPiece, currentPlayer, isBoardFlipped, handOnTop = false, gameResult = gameResult, remainingMs = if(topP==Player.SENTE) currentNode.senteRemainingMs else currentNode.goteRemainingMs, onNameClick = { editingPlayerMark = if(topP==Player.SENTE) "▲" else "△" }, onPiecePositioned = onHandPiecePositioned) { if (isHumanTurn) { selectedHandPiece = it; selectedSquare = null } }
                                 ShogiBoard(boardState, selectedSquare, { r, c ->
                                     if (isHumanTurn) handleSquareClick(r, c, boardState, currentPlayer, selectedSquare, selectedHandPiece, currentNode, saveKifu) { s, h, n, p ->
                                         selectedSquare = s; selectedHandPiece = h
                                         if(n != null) currentNode = n
                                         if(p != null) promotionPendingBy = p
                                     }
-                                }, isBoardFlipped, Modifier.sizeIn(maxWidth = 500.dp, maxHeight = 500.dp), currentNode.lastFrom, currentNode.lastTo, currentNode.pvColorIndex)
-                                PlayerStatusSection(if(botP==Player.SENTE) senteName else goteName, if(botP==Player.SENTE) "▲" else "△", currentPlayer==botP, if(botP==Player.SENTE) senteHand else goteHand, selectedHandPiece, currentPlayer, isBoardFlipped, handOnTop = true, gameResult = gameResult, remainingMs = if(botP==Player.SENTE) currentNode.senteRemainingMs else currentNode.goteRemainingMs, onNameClick = { editingPlayerMark = if(botP==Player.SENTE) "▲" else "△" }) { if (isHumanTurn) { selectedHandPiece = it; selectedSquare = null } }
+                                }, isBoardFlipped, Modifier.sizeIn(maxWidth = 500.dp, maxHeight = 500.dp), currentNode.lastFrom, currentNode.lastTo, currentNode.pvColorIndex, bestMoveArrowUsi, onBoardBoxPositioned, bestMoveArrowColor)
+                                PlayerStatusSection(if(botP==Player.SENTE) senteName else goteName, if(botP==Player.SENTE) "▲" else "△", currentPlayer==botP, if(botP==Player.SENTE) senteHand else goteHand, selectedHandPiece, currentPlayer, isBoardFlipped, handOnTop = true, gameResult = gameResult, remainingMs = if(botP==Player.SENTE) currentNode.senteRemainingMs else currentNode.goteRemainingMs, onNameClick = { editingPlayerMark = if(botP==Player.SENTE) "▲" else "△" }, onPiecePositioned = onHandPiecePositioned) { if (isHumanTurn) { selectedHandPiece = it; selectedSquare = null } }
                             }
                             Column(
                                 modifier = Modifier
@@ -612,15 +634,15 @@ class MainActivity : ComponentActivity() {
 
                             val topP = if (isBoardFlipped) Player.SENTE else Player.GOTE; val botP = if (isBoardFlipped) Player.GOTE else Player.SENTE
                             val isHumanTurn = humanPlayer == null || currentPlayer == humanPlayer
-                            PlayerStatusSection(if(topP==Player.SENTE) senteName else goteName, if(topP==Player.SENTE) "▲" else "△", currentPlayer==topP, if(topP==Player.SENTE) senteHand else goteHand, selectedHandPiece, currentPlayer, isBoardFlipped, handOnTop = false, gameResult = gameResult, remainingMs = if(topP==Player.SENTE) currentNode.senteRemainingMs else currentNode.goteRemainingMs, onNameClick = { editingPlayerMark = if(topP==Player.SENTE) "▲" else "△" }) { if (isHumanTurn) { selectedHandPiece = it; selectedSquare = null } }
+                            PlayerStatusSection(if(topP==Player.SENTE) senteName else goteName, if(topP==Player.SENTE) "▲" else "△", currentPlayer==topP, if(topP==Player.SENTE) senteHand else goteHand, selectedHandPiece, currentPlayer, isBoardFlipped, handOnTop = false, gameResult = gameResult, remainingMs = if(topP==Player.SENTE) currentNode.senteRemainingMs else currentNode.goteRemainingMs, onNameClick = { editingPlayerMark = if(topP==Player.SENTE) "▲" else "△" }, onPiecePositioned = onHandPiecePositioned) { if (isHumanTurn) { selectedHandPiece = it; selectedSquare = null } }
                             ShogiBoard(boardState, selectedSquare, { r, c ->
                                 if (isHumanTurn) handleSquareClick(r, c, boardState, currentPlayer, selectedSquare, selectedHandPiece, currentNode, saveKifu) { s, h, n, p ->
                                     selectedSquare = s; selectedHandPiece = h
                                     if(n != null) currentNode = n
                                     if(p != null) promotionPendingBy = p
                                 }
-                            }, isBoardFlipped, Modifier.padding(16.dp), currentNode.lastFrom, currentNode.lastTo, currentNode.pvColorIndex)
-                            PlayerStatusSection(if(botP==Player.SENTE) senteName else goteName, if(botP==Player.SENTE) "▲" else "△", currentPlayer==botP, if(botP==Player.SENTE) senteHand else goteHand, selectedHandPiece, currentPlayer, isBoardFlipped, handOnTop = true, gameResult = gameResult, remainingMs = if(botP==Player.SENTE) currentNode.senteRemainingMs else currentNode.goteRemainingMs, onNameClick = { editingPlayerMark = if(botP==Player.SENTE) "▲" else "△" }) { if (isHumanTurn) { selectedHandPiece = it; selectedSquare = null } }
+                            }, isBoardFlipped, Modifier.padding(16.dp), currentNode.lastFrom, currentNode.lastTo, currentNode.pvColorIndex, bestMoveArrowUsi, onBoardBoxPositioned, bestMoveArrowColor)
+                            PlayerStatusSection(if(botP==Player.SENTE) senteName else goteName, if(botP==Player.SENTE) "▲" else "△", currentPlayer==botP, if(botP==Player.SENTE) senteHand else goteHand, selectedHandPiece, currentPlayer, isBoardFlipped, handOnTop = true, gameResult = gameResult, remainingMs = if(botP==Player.SENTE) currentNode.senteRemainingMs else currentNode.goteRemainingMs, onNameClick = { editingPlayerMark = if(botP==Player.SENTE) "▲" else "△" }, onPiecePositioned = onHandPiecePositioned) { if (isHumanTurn) { selectedHandPiece = it; selectedSquare = null } }
                             Column(modifier = Modifier.padding(8.dp)) {
                                 (if (pinnedPvList.isNotEmpty()) pinnedPvList else pvList.toMap()).entries
                                     .sortedByDescending { (_, pvText) -> extractScore(pvText, currentPlayer) }
@@ -647,6 +669,16 @@ class MainActivity : ComponentActivity() {
                             Spacer(modifier = Modifier.height(innerPadding.calculateBottomPadding()))
                         }
                     }
+                }
+
+                DropMoveArrowOverlay(
+                    visible = bestMoveArrowUsi != null && bestMoveSquares?.first == null,
+                    handCoordinates = bestMoveDropPieceType?.let { handPieceCoords[Pair(currentPlayer, it)] },
+                    boardCoordinates = boardBoxCoords,
+                    toSquare = bestMoveSquares?.second,
+                    arrowColor = bestMoveArrowColor,
+                    modifier = Modifier.fillMaxSize()
+                )
                 }
 
                 if (showSettingsDialog) {
