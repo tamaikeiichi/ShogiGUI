@@ -163,7 +163,7 @@ class MainActivity : ComponentActivity() {
 
                 var kifuIoMessage by remember { mutableStateOf<String?>(null) }
                 val exportKifuLauncher = rememberLauncherForActivityResult(
-                    ActivityResultContracts.CreateDocument("text/plain")
+                    ActivityResultContracts.CreateDocument("application/zip")
                 ) { uri: Uri? ->
                     if (uri != null) {
                         coroutineScope.launch {
@@ -503,13 +503,13 @@ class MainActivity : ComponentActivity() {
                                             text = { Text("過去の棋譜をすべてエクスポート") },
                                             onClick = {
                                                 val ts = SimpleDateFormat("yyyyMMdd_HHmmss", Locale.JAPAN).format(Date())
-                                                exportKifuLauncher.launch("shogi_kifu_$ts.txt")
+                                                exportKifuLauncher.launch("shogi_kifu_$ts.zip")
                                                 showMenu = false
                                             })
                                         DropdownMenuItem(
-                                            text = { Text("過去の棋譜をインポート") },
+                                            text = { Text("ZIP圧縮した複数のCSAファイルを過去の棋譜としてインポート") },
                                             onClick = {
-                                                importKifuLauncher.launch(arrayOf("text/plain", "text/*", "*/*"))
+                                                importKifuLauncher.launch(arrayOf("application/zip", "application/x-zip-compressed", "*/*"))
                                                 showMenu = false
                                             })
                                     }

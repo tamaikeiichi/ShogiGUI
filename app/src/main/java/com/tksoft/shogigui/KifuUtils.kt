@@ -410,81 +410,6 @@ fun jsonToKifuTree(json: JSONObject, parent: KifuNode? = null): KifuNode {
     return node
 }
 
-// 一括エクスポート用のコンパクトな棋譜表現。通常の kifuTreeToJson は
-// 各局面ごとに盤面・持ち駒を丸ごと保存するため1000局規模だと非常に大きくなる。
-// こちらはルート局面だけSFENで保存し、以降は指し手の差分（駒を置いた升目・成りの有無など）
-// だけを保存し、読み込み時に executeMove と同じロジックで盤面を再現する。
-fun kifuTreeToCompactJson(node: KifuNode): JSONObject {
-    val json = JSONObject()
-    json.put("l", node.moveLabel)
-    val parent = node.parent
-    if (parent == null) {
-        json.put("sfen", boardToSfen(node.board, node.currentPlayer, node.senteHand, node.goteHand))
-    } else {
-        val to = node.lastTo
-        val from = node.lastFrom
-        if (to != null) json.put("t", "${to.first},${to.second}")
-        if (from != null) {
-            json.put("f", "${from.first},${from.second}")
-        } else {
-            to?.let { node.board[it]?.let { placed -> json.put("d", placed.type.name) } }
-        }
-        val wasPromoted = from?.let { parent.board[it]?.isPromoted } ?: false
-        val nowPromoted = to?.let { node.board[it]?.isPromoted } ?: false
-        if (nowPromoted && !wasPromoted) json.put("p", true)
-    }
-    node.senteRemainingMs?.let { json.put("sr", it) }
-    node.goteRemainingMs?.let { json.put("gr", it) }
-    val childrenJson = JSONArray()
-    node.children.filter { !it.isPvBranch }.forEach { childrenJson.put(kifuTreeToCompactJson(it)) }
-    json.put("c", childrenJson)
-    return json
-}
-
-fun compactJsonToKifuTree(json: JSONObject, parent: KifuNode? = null): KifuNode {
-    val label = json.optString("l", "")
-    val node: KifuNode
-    if (parent == null) {
-        val pos = sfenToBoard(json.getString("sfen"))
-        node = KifuNode(pos.board, pos.senteHand, pos.goteHand, pos.turn, label, null, null, null)
-    } else {
-        val to = json.getString("t").split(",").let { Pair(it[0].toInt(), it[1].toInt()) }
-        val from = json.optString("f", "").takeIf { it.isNotEmpty() }
-            ?.split(",")?.let { Pair(it[0].toInt(), it[1].toInt()) }
-        val newBoard = parent.board.toMutableMap()
-        var newSenteHand = parent.senteHand
-        var newGoteHand = parent.goteHand
-        val mover = parent.currentPlayer
-        val piece: Piece
-        if (from != null) {
-            piece = parent.board[from] ?: throw org.json.JSONException("no piece at $from")
-            newBoard.remove(from)
-        } else {
-            val dropType = PieceType.valueOf(json.getString("d"))
-            piece = Piece(dropType, mover, false)
-            if (mover == Player.SENTE) {
-                newSenteHand = newSenteHand.toMutableMap().apply { this[dropType] = (this[dropType] ?: 1) - 1 }.filterValues { it > 0 }
-            } else {
-                newGoteHand = newGoteHand.toMutableMap().apply { this[dropType] = (this[dropType] ?: 1) - 1 }.filterValues { it > 0 }
-            }
-        }
-        val captured = parent.board[to]
-        if (captured != null && captured.type != PieceType.KING) {
-            if (mover == Player.SENTE) { newSenteHand = newSenteHand.toMutableMap().apply { this[captured.type] = (this[captured.type] ?: 0) + 1 } }
-            else { newGoteHand = newGoteHand.toMutableMap().apply { this[captured.type] = (this[captured.type] ?: 0) + 1 } }
-        }
-        val promoteFlag = json.optBoolean("p", false)
-        newBoard[to] = piece.copy(isPromoted = promoteFlag || piece.isPromoted)
-        val nextTurn = if (mover == Player.SENTE) Player.GOTE else Player.SENTE
-        node = KifuNode(newBoard, newSenteHand, newGoteHand, nextTurn, label, parent, from, to)
-    }
-    node.senteRemainingMs = json.optLong("sr", Long.MIN_VALUE).takeIf { it != Long.MIN_VALUE }
-    node.goteRemainingMs = json.optLong("gr", Long.MIN_VALUE).takeIf { it != Long.MIN_VALUE }
-    val childrenJson = json.optJSONArray("c") ?: JSONArray()
-    for (i in 0 until childrenJson.length()) { node.children.add(compactJsonToKifuTree(childrenJson.getJSONObject(i), node)) }
-    return node
-}
-
 private fun pieceTypeToCsa(type: PieceType, isPromoted: Boolean): String = when {
     isPromoted -> when (type) {
         PieceType.PAWN -> "TO"; PieceType.LANCE -> "NY"; PieceType.KNIGHT -> "NK"
@@ -498,11 +423,115 @@ private fun pieceTypeToCsa(type: PieceType, isPromoted: Boolean): String = when 
     }
 }
 
-fun exportMainLineToCsa(rootNode: KifuNode, senteName: String, goteName: String): String {
+private fun csaCodeToPiece(code: String): Pair<PieceType, Boolean>? = when (code) {
+    "FU" -> PieceType.PAWN to false; "KY" -> PieceType.LANCE to false; "KE" -> PieceType.KNIGHT to false
+    "GI" -> PieceType.SILVER to false; "KI" -> PieceType.GOLD to false; "KA" -> PieceType.BISHOP to false
+    "HI" -> PieceType.ROOK to false; "OU" -> PieceType.KING to false
+    "TO" -> PieceType.PAWN to true; "NY" -> PieceType.LANCE to true; "NK" -> PieceType.KNIGHT to true
+    "NG" -> PieceType.SILVER to true; "UM" -> PieceType.BISHOP to true; "RY" -> PieceType.ROOK to true
+    else -> null
+}
+
+// CSAの升目表記（筋の数字, 段の数字）を内部の (row, col) に変換する。
+// 指し手表記 ("+7776FU" 等) と同じ変換式 (col = 9-筋, row = 段-1)。
+private fun csaSquareToPos(fileDigit: Char, rankDigit: Char): Pair<Int, Int> =
+    Pair((rankDigit - '0') - 1, 9 - (fileDigit - '0'))
+
+data class CsaInitialPosition(
+    val board: Map<Pair<Int, Int>, Piece>,
+    val senteHand: Map<PieceType, Int>,
+    val goteHand: Map<PieceType, Int>,
+    val turn: Player
+)
+
+// CSAのヘッダー部（PI／P1-P9／P+／P-／手番行）を解析し、駒落ちなど非標準の
+// 初期配置にも対応する。該当する行が無ければ平手の初期配置を返す。
+private fun parseCsaInitialPosition(text: String): CsaInitialPosition {
+    var board = createInitialBoard().toMutableMap()
+    val senteHand = mutableMapOf<PieceType, Int>()
+    val goteHand = mutableMapOf<PieceType, Int>()
+    var turn = Player.SENTE
+    val squarePieceRegex = Regex("(\\d)(\\d)([A-Z]{2})")
+
+    for (rawLine in text.lines()) {
+        val t = rawLine.trim()
+        if (t.isEmpty()) continue
+        // 指し手行またはゲーム終了行に入ったら初期配置の解析を終える
+        if (t.matches(Regex("^[+-]\\d{4}[A-Z]{2}.*")) || t.startsWith("%")) break
+
+        when {
+            t == "+" -> turn = Player.SENTE
+            t == "-" -> turn = Player.GOTE
+            t.startsWith("PI") -> {
+                // 平手から指定升の駒を取り除く形式（駒落ちの標準的な表記）
+                board = createInitialBoard().toMutableMap()
+                squarePieceRegex.findAll(t.removePrefix("PI")).forEach { m ->
+                    board.remove(csaSquareToPos(m.groupValues[1][0], m.groupValues[2][0]))
+                }
+            }
+            t.length >= 2 && t[0] == 'P' && t[1] in '1'..'9' -> {
+                // 盤面を1段ずつすべて明示する形式（P{段}が9升×3文字=27文字続く）
+                val row = (t[1] - '0') - 1
+                val body = t.substring(2)
+                for (col in 0 until 9) {
+                    val start = col * 3
+                    if (start + 3 > body.length) break
+                    val cell = body.substring(start, start + 3)
+                    val pos = Pair(row, col)
+                    val sign = cell[0]
+                    if (sign != '+' && sign != '-') { board.remove(pos); continue }
+                    val (type, promoted) = csaCodeToPiece(cell.substring(1, 3)) ?: continue
+                    board[pos] = Piece(type, if (sign == '+') Player.SENTE else Player.GOTE, promoted)
+                }
+            }
+            t.startsWith("P+") || t.startsWith("P-") -> {
+                // 駒別に升目（持ち駒は00）を指定する形式
+                val owner = if (t.startsWith("P+")) Player.SENTE else Player.GOTE
+                val hand = if (owner == Player.SENTE) senteHand else goteHand
+                squarePieceRegex.findAll(t.drop(2)).forEach { m ->
+                    val fileDigit = m.groupValues[1][0]; val rankDigit = m.groupValues[2][0]
+                    val (type, promoted) = csaCodeToPiece(m.groupValues[3]) ?: return@forEach
+                    if (fileDigit == '0' && rankDigit == '0') {
+                        hand[type] = (hand[type] ?: 0) + 1
+                    } else {
+                        board[csaSquareToPos(fileDigit, rankDigit)] = Piece(type, owner, promoted)
+                    }
+                }
+            }
+        }
+    }
+    return CsaInitialPosition(board.toMap(), senteHand.toMap(), goteHand.toMap(), turn)
+}
+
+// gameResult (アプリ内部の日本語表記) を標準CSAの対局終了タグに変換する。
+// 該当タグが無い/不明な場合は "中断" として扱う。
+private fun gameResultToCsaEndTag(gameResult: String): String = when {
+    gameResult.contains("投了") -> "%TORYO"
+    gameResult.contains("時間切れ") -> "%TIME_UP"
+    gameResult.contains("入玉") -> "%KACHI"
+    gameResult.contains("詰み") -> "%TSUMI"
+    gameResult.contains("反則") -> "%ILLEGAL_MOVE"
+    gameResult.contains("千日手") -> "%SENNICHITE"
+    gameResult.contains("持将棋") -> "%JISHOGI"
+    gameResult.contains("引き分け") -> "%HIKIWAKE"
+    else -> "%CHUDAN"
+}
+
+fun exportMainLineToCsa(
+    rootNode: KifuNode,
+    senteName: String,
+    goteName: String,
+    // null の場合は従来通り常に %TORYO を出力する（メニューの「本譜をエクスポート」用、
+    // 対局途中でも共有できるようにするための簡易挙動）。値を渡した場合は実際の結果に
+    // 応じたタグに変換する（過去棋譜の一括エクスポート用）。
+    gameResult: String? = null,
+    gameDate: String? = null
+): String {
     val sb = StringBuilder()
     sb.appendLine("V2.2")
     sb.appendLine("N+$senteName")
     sb.appendLine("N-$goteName")
+    gameDate?.let { sb.appendLine("\$START_TIME:$it") }
 
     for (rank in 0 until 9) {
         sb.append("P${rank + 1}")
@@ -546,7 +575,7 @@ fun exportMainLineToCsa(rootNode: KifuNode, senteName: String, goteName: String)
         sb.appendLine(moveStr)
         node = next
     }
-    sb.append("%TORYO")
+    sb.append(if (gameResult == null) "%TORYO" else gameResultToCsaEndTag(gameResult))
     return sb.toString()
 }
 
@@ -697,6 +726,13 @@ fun parseKif(text: String, root: KifuNode, onSaveRequested: (KifuNode) -> Unit):
 }
 
 fun parseCsa(text: String, root: KifuNode, onSaveRequested: (KifuNode) -> Unit): KifuNode? {
+    // 駒落ちなど非標準の初期配置（PI/P1-P9/P+/P-）を反映する
+    val initialPosition = parseCsaInitialPosition(text)
+    root.board = initialPosition.board
+    root.senteHand = initialPosition.senteHand
+    root.goteHand = initialPosition.goteHand
+    root.currentPlayer = initialPosition.turn
+
     var tempNode = root
     val moveRegex = Regex("^[+-](\\d{2})(\\d{2})([A-Z]{2})")
 
@@ -787,9 +823,7 @@ fun parseCsa(text: String, root: KifuNode, onSaveRequested: (KifuNode) -> Unit):
                 val fromStr = match.groupValues[1]; val toStr = match.groupValues[2]; val pieceStr = match.groupValues[3]
                 val fromCol = if (fromStr == "00") null else 9 - (fromStr[0] - '0'); val fromRow = if (fromStr == "00") null else (fromStr[1] - '0') - 1
                 val toCol = 9 - (toStr[0] - '0'); val toRow = (toStr[1] - '0') - 1
-                val (type, isPromoted) = when (pieceStr) {
-                    "FU" -> PieceType.PAWN to false; "KY" -> PieceType.LANCE to false; "KE" -> PieceType.KNIGHT to false; "GI" -> PieceType.SILVER to false; "KI" -> PieceType.GOLD to false; "KA" -> PieceType.BISHOP to false; "HI" -> PieceType.ROOK to false; "OU" -> PieceType.KING to false; "TO" -> PieceType.PAWN to true; "NY" -> PieceType.LANCE to true; "NK" -> PieceType.KNIGHT to true; "NG" -> PieceType.SILVER to true; "UM" -> PieceType.BISHOP to true; "RY" -> PieceType.ROOK to true; else -> return@let
-                }
+                val (type, isPromoted) = csaCodeToPiece(pieceStr) ?: return@let
                 val fromPos = if (fromCol != null && fromRow != null) Pair(fromRow, fromCol) else null
                 val movingPiece = if (fromPos == null) Piece(type, tempNode.currentPlayer) else tempNode.board[fromPos] ?: return@let
                 val label = if (fromPos == null) "${toStr[0]}${when(toRow){0->"一";1->"二";2->"三";3->"四";4->"五";5->"六";6->"七";7->"八";8->"九";else->""}}${type.label}打" else formatUsiMove("${fromStr[0]}${('a' + fromRow!!)}${toStr[0]}${('a' + toRow)}${if (isPromoted && !movingPiece.isPromoted) "+" else ""}", tempNode.board, tempNode.lastTo)
