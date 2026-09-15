@@ -1,11 +1,13 @@
 package com.tksoft.shogigui
 
+import android.content.Context
 import android.util.Log
 import org.json.JSONArray
 import org.json.JSONObject
 
 // USIのinfo行を解析して読みやすい文字列にする
 fun parseInfo(
+    context: Context,
     line: String,
     currentBoard: Map<Pair<Int, Int>, Piece>,
     turn: Player,
@@ -28,18 +30,18 @@ fun parseInfo(
                             val v = if (turn == Player.SENTE) rawV else -rawV
                             val sign = if (v > 0) "+" else ""
                             val status = when {
-                                v in -200..200 -> "互角"
-                                v in 201..500 -> "先手指しやすい"
-                                v in -500..-201 -> "後手指しやすい"
-                                v in 501..1000 -> "先手有利"
-                                v in -1000..-501 -> "後手有利"
-                                v in 1001..2000 -> "先手優勢"
-                                v in -2000..-1001 -> "後手優勢"
-                                v > 2000 -> "先手勝勢"
-                                v < -2000 -> "後手勝勢"
+                                v in -200..200 -> context.getString(R.string.eval_status_even)
+                                v in 201..500 -> context.getString(R.string.eval_status_sente_slight_edge)
+                                v in -500..-201 -> context.getString(R.string.eval_status_gote_slight_edge)
+                                v in 501..1000 -> context.getString(R.string.eval_status_sente_advantage)
+                                v in -1000..-501 -> context.getString(R.string.eval_status_gote_advantage)
+                                v in 1001..2000 -> context.getString(R.string.eval_status_sente_dominant)
+                                v in -2000..-1001 -> context.getString(R.string.eval_status_gote_dominant)
+                                v > 2000 -> context.getString(R.string.eval_status_sente_winning)
+                                v < -2000 -> context.getString(R.string.eval_status_gote_winning)
                                 else -> ""
                             }
-                            "評価: $sign$v ($status)"
+                            "$sign$v ($status)"
                         }
                         "mate" -> {
                             val v = value.toIntOrNull() ?: 0
@@ -75,7 +77,7 @@ fun parseInfo(
                         tempBoard = applyUsiMove(moveStr, tempBoard, tempTurn)
                         tempTurn = if (tempTurn == Player.SENTE) Player.GOTE else Player.SENTE
                     }
-                    pv = "読み筋: " + formattedMoves.joinToString(" ")
+                    pv = formattedMoves.joinToString(" ")
                 }
                 break
             }

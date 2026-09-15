@@ -31,6 +31,7 @@ import androidx.compose.ui.graphics.drawscope.drawIntoCanvas
 import androidx.compose.ui.graphics.drawscope.scale
 import androidx.compose.ui.layout.LayoutCoordinates
 import androidx.compose.ui.layout.onGloballyPositioned
+import androidx.compose.ui.res.stringResource
 import androidx.compose.ui.text.font.Font
 import androidx.compose.ui.text.font.FontFamily
 import androidx.compose.ui.text.font.FontWeight
@@ -452,7 +453,7 @@ fun HandView(
             }
         }
         if (hand.values.sum() == 0) {
-            Text(text = "なし", fontSize = 14.sp, color = MaterialTheme.colorScheme.onSurfaceVariant)
+            Text(text = stringResource(R.string.hand_none), fontSize = 14.sp, color = MaterialTheme.colorScheme.onSurfaceVariant)
         }
     }
 }

@@ -1,3 +1,70 @@
 <resources>
-    <string name="app_name">将棋棋譜解析</string>
+    <string name="app_name">Shogi Kifu Analysis</string>
+
+    <!-- Hamburger menu -->
+    <string name="menu_content_description">Menu</string>
+    <string name="menu_reset">Reset</string>
+    <string name="menu_analyze_to_end">Analyze to the end from here</string>
+    <string name="menu_export_main_line_csa">Export main line (CSA)</string>
+    <string name="menu_play_as_sente">Play as Sente</string>
+    <string name="menu_play_as_gote">Play as Gote</string>
+    <string name="menu_settings">Settings</string>
+    <string name="menu_history">Game History</string>
+    <string name="menu_export_all_history">Export all game history</string>
+    <string name="menu_import_history_zip">Import history from a ZIP of CSA files</string>
+
+    <!-- Toolbar actions -->
+    <string name="action_load_from_clipboard_desc">Load from clipboard</string>
+    <string name="action_load_from_clipboard_label">Load (from clipboard)</string>
+    <string name="action_analyze">Analyze</string>
+    <string name="action_stop_game">Stop game</string>
+    <string name="action_preparing">Preparing</string>
+    <string name="action_stop">Stop</string>
+    <string name="action_flip">Flip</string>
+    <string name="action_main_line">Main line</string>
+
+    <!-- Settings dialog -->
+    <string name="settings_title_prefix">Settings </string>
+    <string name="settings_engine_label">Engine</string>
+    <string name="settings_think_time">Think time: %1$dms</string>
+    <string name="settings_multipv_label">Candidate moves (MultiPV)</string>
+    <string name="settings_threads_label">Thread count</string>
+    <string name="settings_save">Save</string>
+
+    <!-- History dialog -->
+    <string name="history_search_placeholder">Search by player name or date</string>
+    <string name="history_empty_no_games">No games</string>
+    <string name="history_empty_no_matches">No matching games</string>
+    <string name="history_move_count">%1$d moves</string>
+    <string name="history_close">Close</string>
+
+    <!-- Player name dialog -->
+    <string name="player_name_dialog_title_sente">Sente\'s name</string>
+    <string name="player_name_dialog_title_gote">Gote\'s name</string>
+    <string name="dialog_cancel">Cancel</string>
+
+    <!-- Promotion dialog -->
+    <string name="promote_button">Promote</string>
+    <string name="do_not_promote_button">Do not promote</string>
+
+    <!-- Misc -->
+    <string name="engine_waiting">Engine waiting…</string>
+    <string name="kifu_export_success">Exported %1$d game(s)</string>
+    <string name="kifu_import_success">Imported %1$d game(s)</string>
+    <string name="kifu_import_skipped_suffix"> (%1$d could not be loaded)</string>
+    <string name="move_counter">Move %1$d / %2$d</string>
+    <string name="nav_previous">Previous</string>
+    <string name="nav_next">Next</string>
+    <string name="hand_none">None</string>
+
+    <!-- Evaluation status -->
+    <string name="eval_status_even">Even</string>
+    <string name="eval_status_sente_slight_edge">Sente slight edge</string>
+    <string name="eval_status_gote_slight_edge">Gote slight edge</string>
+    <string name="eval_status_sente_advantage">Sente advantage</string>
+    <string name="eval_status_gote_advantage">Gote advantage</string>
+    <string name="eval_status_sente_dominant">Sente dominant</string>
+    <string name="eval_status_gote_dominant">Gote dominant</string>
+    <string name="eval_status_sente_winning">Sente winning</string>
+    <string name="eval_status_gote_winning">Gote winning</string>
 </resources>
