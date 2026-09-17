@@ -24,6 +24,7 @@ import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.graphics.graphicsLayer
 import androidx.compose.ui.platform.LocalClipboardManager
 import androidx.compose.ui.res.painterResource
+import androidx.compose.ui.res.stringResource
 import androidx.compose.ui.unit.dp
 import org.json.JSONObject
 import com.tksoft.shogigui.ui.theme.ShogiGUITheme
@@ -163,14 +164,14 @@ class MainActivity : ComponentActivity() {
 
                 var kifuIoMessage by remember { mutableStateOf<String?>(null) }
                 val exportKifuLauncher = rememberLauncherForActivityResult(
-                    ActivityResultContracts.CreateDocument("text/plain")
+                    ActivityResultContracts.CreateDocument("application/zip")
                 ) { uri: Uri? ->
                     if (uri != null) {
                         coroutineScope.launch {
                             val count = withContext(Dispatchers.IO) {
                                 KifuHistoryManager.exportAllToUri(this@MainActivity, uri)
                             }
-                            kifuIoMessage = "${count}件の棋譜をエクスポートしました"
+                            kifuIoMessage = getString(R.string.kifu_export_success, count)
                         }
                     }
                 }
@@ -183,8 +184,8 @@ class MainActivity : ComponentActivity() {
                                 KifuHistoryManager.importFromUri(this@MainActivity, uri)
                             }
                             kifuIoMessage = buildString {
-                                append("${result.imported}件の棋譜をインポートしました")
-                                if (result.skipped > 0) append("（${result.skipped}件は読み込めませんでした）")
+                                append(getString(R.string.kifu_import_success, result.imported))
+                                if (result.skipped > 0) append(getString(R.string.kifu_import_skipped_suffix, result.skipped))
                             }
                         }
                     }
@@ -198,7 +199,7 @@ class MainActivity : ComponentActivity() {
                 var engine by remember { mutableStateOf<UsiEngineInterface>(
                     if (selectedEngine == "aoba") AobaEngine() else UsiEngine()
                 ) }
-                var engineOutput by remember { mutableStateOf("エンジン待機中...") }
+                var engineOutput by remember { mutableStateOf(getString(R.string.engine_waiting)) }
 
                 val processOutput = {
                     rawLine: String,
@@ -227,7 +228,7 @@ class MainActivity : ComponentActivity() {
                             if (pvIdx >= 0 && pvIdx + 1 < infoParts.size) {
                                 pvUsiList[rank] = infoParts.drop(pvIdx + 1)
                             }
-                            val parsed = parseInfo(line, capturedBoard, capturedTurn, capturedLastTo)
+                            val parsed = parseInfo(this@MainActivity, line, capturedBoard, capturedTurn, capturedLastTo)
 
                             if (parsed.isNotEmpty()) {
                                 pvList[rank] = parsed
@@ -437,20 +438,20 @@ class MainActivity : ComponentActivity() {
                                 Spacer(modifier = Modifier.height(8.dp))
                                 Row(modifier = Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.spacedBy(8.dp), verticalAlignment = Alignment.CenterVertically) {
                                     val clipboard = LocalClipboardManager.current
-                                    IconButton(onClick = { showMenu = true }) { Icon(Icons.Default.Menu, "メニュー") }
+                                    IconButton(onClick = { showMenu = true }) { Icon(Icons.Default.Menu, stringResource(R.string.menu_content_description)) }
                                     DropdownMenu(
                                         expanded = showMenu,
                                         onDismissRequest = { showMenu = false },
                                         offset = DpOffset(x = 0.dp, y = 0.dp),
                                     ) {
                                         DropdownMenuItem(
-                                            text = { Text("リセット") },
+                                            text = { Text(stringResource(R.string.menu_reset)) },
                                             onClick = {
                                                 engine.sendCommand("stop")
                                                 isAnalysisMode = false; isAutoAnalysis = false; humanPlayer = null
                                                 currentNode = initialNode
                                                 initialNode.children.clear()
-                                                senteName = "先手"; goteName = "後手"; gameResult = ""
+                                                senteName = senteColorName; goteName = goteColorName; gameResult = ""
                                                 pvList.clear(); pvUsiList.clear()
                                                 pinnedPvList = emptyMap(); pinnedPvUsiList = emptyMap()
                                                 pvBranchPath = null
@@ -466,10 +467,10 @@ class MainActivity : ComponentActivity() {
                                                 showMenu = false
                                             })
                                         DropdownMenuItem(
-                                            text = { Text("現局面から最後まで解析") },
+                                            text = { Text(stringResource(R.string.menu_analyze_to_end)) },
                                             onClick = { isAutoAnalysis = true; pinnedPvList = emptyMap(); pinnedPvUsiList = emptyMap(); showMenu = false })
                                         DropdownMenuItem(
-                                            text = { Text("本譜をエクスポート(CSA)") },
+                                            text = { Text(stringResource(R.string.menu_export_main_line_csa)) },
                                             onClick = {
                                                 var root = currentNode
                                                 while (root.parent != null) root = root.parent!!
@@ -478,7 +479,7 @@ class MainActivity : ComponentActivity() {
                                                 showMenu = false
                                             })
                                         DropdownMenuItem(
-                                            text = { Text("先手番を持って対局") },
+                                            text = { Text(stringResource(R.string.menu_play_as_sente)) },
                                             onClick = {
                                                 isAnalysisMode = false; isAutoAnalysis = false
                                                 engine.sendCommand("stop")
@@ -486,7 +487,7 @@ class MainActivity : ComponentActivity() {
                                                 showMenu = false
                                             })
                                         DropdownMenuItem(
-                                            text = { Text("後手番を持って対局") },
+                                            text = { Text(stringResource(R.string.menu_play_as_gote)) },
                                             onClick = {
                                                 isAnalysisMode = false; isAutoAnalysis = false
                                                 engine.sendCommand("stop")
@@ -494,22 +495,22 @@ class MainActivity : ComponentActivity() {
                                                 showMenu = false
                                             })
                                         DropdownMenuItem(
-                                            text = { Text("設定") },
+                                            text = { Text(stringResource(R.string.menu_settings)) },
                                             onClick = { showSettingsDialog = true; showMenu = false })
                                         DropdownMenuItem(
-                                            text = { Text("過去の棋譜") },
+                                            text = { Text(stringResource(R.string.menu_history)) },
                                             onClick = { showHistoryDialog = true; showMenu = false })
                                         DropdownMenuItem(
-                                            text = { Text("過去の棋譜をすべてエクスポート") },
+                                            text = { Text(stringResource(R.string.menu_export_all_history)) },
                                             onClick = {
                                                 val ts = SimpleDateFormat("yyyyMMdd_HHmmss", Locale.JAPAN).format(Date())
-                                                exportKifuLauncher.launch("shogi_kifu_$ts.txt")
+                                                exportKifuLauncher.launch("shogi_kifu_$ts.zip")
                                                 showMenu = false
                                             })
                                         DropdownMenuItem(
-                                            text = { Text("過去の棋譜をインポート") },
+                                            text = { Text(stringResource(R.string.menu_import_history_zip)) },
                                             onClick = {
-                                                importKifuLauncher.launch(arrayOf("text/plain", "text/*", "*/*"))
+                                                importKifuLauncher.launch(arrayOf("application/zip", "application/x-zip-compressed", "*/*"))
                                                 showMenu = false
                                             })
                                     }
@@ -547,8 +548,8 @@ class MainActivity : ComponentActivity() {
                                         }
                                     }, modifier = Modifier.weight(0.3f).height(72.dp),
                                         shape = MaterialTheme.shapes.extraLarge) {
-                                        Column(horizontalAlignment = Alignment.CenterHorizontally) { Icon(Icons.Default.ContentPaste, "クリップボードから読込");
-                                            Text("読込（クリップボードから）",
+                                        Column(horizontalAlignment = Alignment.CenterHorizontally) { Icon(Icons.Default.ContentPaste, stringResource(R.string.action_load_from_clipboard_desc));
+                                            Text(stringResource(R.string.action_load_from_clipboard_label),
                                                 style = MaterialTheme.typography.labelSmall,
                                                 modifier = Modifier.basicMarquee()) }
                                     }
@@ -566,13 +567,13 @@ class MainActivity : ComponentActivity() {
                                         shape = MaterialTheme.shapes.extraLarge,
                                         colors = ButtonDefaults.outlinedButtonColors(containerColor = if (humanPlayer != null || isAnalysisMode || isAutoAnalysis) MaterialTheme.colorScheme.tertiaryContainer else Color.Transparent)) {
                                         Column(horizontalAlignment = Alignment.CenterHorizontally) {
-                                            Icon(painterResource(if (humanPlayer != null || isAnalysisMode || isAutoAnalysis) R.drawable.stop_circle_24px else R.drawable.network_intelligence_24px), "解析")
+                                            Icon(painterResource(if (humanPlayer != null || isAnalysisMode || isAutoAnalysis) R.drawable.stop_circle_24px else R.drawable.network_intelligence_24px), stringResource(R.string.action_analyze))
                                             Text(
                                                 when {
-                                                    humanPlayer != null -> "対局中止"
-                                                    !isEngineReady -> "準備中"
-                                                    isAnalysisMode || isAutoAnalysis -> "停止"
-                                                    else -> "解析"
+                                                    humanPlayer != null -> stringResource(R.string.action_stop_game)
+                                                    !isEngineReady -> stringResource(R.string.action_preparing)
+                                                    isAnalysisMode || isAutoAnalysis -> stringResource(R.string.action_stop)
+                                                    else -> stringResource(R.string.action_analyze)
                                                 },
                                                 style = MaterialTheme.typography.labelSmall,
                                                 maxLines = 1,
@@ -585,7 +586,7 @@ class MainActivity : ComponentActivity() {
                                         modifier = Modifier.weight(0.3f).height(72.dp),
                                         shape = MaterialTheme.shapes.extraLarge
                                     ) {
-                                        Column(horizontalAlignment = Alignment.CenterHorizontally) { Icon(painterResource(R.drawable.rotate_right_24px), "反転"); Text("反転", style = MaterialTheme.typography.labelSmall) }
+                                        Column(horizontalAlignment = Alignment.CenterHorizontally) { Icon(painterResource(R.drawable.rotate_right_24px), stringResource(R.string.action_flip)); Text(stringResource(R.string.action_flip), style = MaterialTheme.typography.labelSmall) }
                                     }
 
                                     OutlinedButton(onClick = {
@@ -620,7 +621,7 @@ class MainActivity : ComponentActivity() {
                                         modifier = Modifier.weight(0.3f).height(72.dp),
                                         shape = MaterialTheme.shapes.extraLarge
                                     ) {
-                                        Column(horizontalAlignment = Alignment.CenterHorizontally) { Icon(painterResource(R.drawable.undo_24px), "本譜"); Text("本譜", style = MaterialTheme.typography.labelSmall) }
+                                        Column(horizontalAlignment = Alignment.CenterHorizontally) { Icon(painterResource(R.drawable.undo_24px), stringResource(R.string.action_main_line)); Text(stringResource(R.string.action_main_line), style = MaterialTheme.typography.labelSmall) }
                                     }
 
 
@@ -739,7 +740,7 @@ class MainActivity : ComponentActivity() {
                     var pendingEngine by remember { mutableStateOf(selectedEngine) }
                     AlertDialog(onDismissRequest = { showSettingsDialog = false }, title = { Text(
                         text = buildAnnotatedString {
-                            append("設定 ")
+                            append(stringResource(R.string.settings_title_prefix))
                             withStyle(style = SpanStyle(
                                 fontSize = 10.sp,
                                 fontWeight = FontWeight.Normal
@@ -753,7 +754,7 @@ class MainActivity : ComponentActivity() {
                             Column(verticalArrangement = Arrangement.spacedBy(16.dp)) {
                                 // エンジン選択
                                 Column {
-                                    Text("エンジン", style = MaterialTheme.typography.labelMedium)
+                                    Text(stringResource(R.string.settings_engine_label), style = MaterialTheme.typography.labelMedium)
                                     Row(verticalAlignment = Alignment.CenterVertically) {
                                         RadioButton(selected = pendingEngine == "suisho5", onClick = { pendingEngine = "suisho5" })
                                         Text("Suisho5", modifier = Modifier.weight(1f))
@@ -763,7 +764,7 @@ class MainActivity : ComponentActivity() {
                                 }
                                 // 思考時間
                                 Column {
-                                    Text("思考時間: ${analysisTimeMs}ms", style = MaterialTheme.typography.labelMedium)
+                                    Text(stringResource(R.string.settings_think_time, analysisTimeMs), style = MaterialTheme.typography.labelMedium)
                                     Slider(
                                         value = analysisTimeMs.toFloat(),
                                         onValueChange = { analysisTimeMs = it.roundToInt().toLong() },
@@ -774,7 +775,7 @@ class MainActivity : ComponentActivity() {
                                 // 候補手 (MultiPV)
                                 Column {
                                     Row(verticalAlignment = Alignment.Bottom) {
-                                        Text("候補手 (MultiPV)", style = MaterialTheme.typography.labelMedium)
+                                        Text(stringResource(R.string.settings_multipv_label), style = MaterialTheme.typography.labelMedium)
                                         Spacer(modifier = Modifier.width(8.dp))
                                         Text(text = multiPvCount.toString(), style = MaterialTheme.typography.titleLarge, color = MaterialTheme.colorScheme.primary)
                                     }
@@ -789,7 +790,7 @@ class MainActivity : ComponentActivity() {
                                 // スレッド数
                                 Column {
                                     Row(verticalAlignment = Alignment.Bottom) {
-                                        Text("スレッド数", style = MaterialTheme.typography.labelMedium)
+                                        Text(stringResource(R.string.settings_threads_label), style = MaterialTheme.typography.labelMedium)
                                         Spacer(modifier = Modifier.width(8.dp))
                                         Text(text = threadCount.toString(), style = MaterialTheme.typography.titleLarge, color = MaterialTheme.colorScheme.primary)
                                     }
@@ -826,7 +827,7 @@ class MainActivity : ComponentActivity() {
                                     }
                                 }
                                 showSettingsDialog = false
-                            }) { Text("保存") }
+                            }) { Text(stringResource(R.string.settings_save)) }
                         }
                     )
                 }
@@ -865,7 +866,7 @@ class MainActivity : ComponentActivity() {
                                 OutlinedTextField(
                                     value = searchQuery,
                                     onValueChange = { searchQuery = it },
-                                    placeholder = { Text("対局者名・日付で検索") },
+                                    placeholder = { Text(stringResource(R.string.history_search_placeholder)) },
                                     singleLine = true,
                                     modifier = Modifier.fillMaxWidth(),
                                     shape = MaterialTheme.shapes.large
@@ -876,7 +877,7 @@ class MainActivity : ComponentActivity() {
                                         contentAlignment = Alignment.Center
                                     ) {
                                         Text(
-                                            if (historyEntries.isEmpty()) "棋譜がありません" else "該当する棋譜がありません",
+                                            if (historyEntries.isEmpty()) stringResource(R.string.history_empty_no_games) else stringResource(R.string.history_empty_no_matches),
                                             style = MaterialTheme.typography.bodyMedium,
                                             color = MaterialTheme.colorScheme.onSurfaceVariant
                                         )
@@ -948,7 +949,7 @@ class MainActivity : ComponentActivity() {
                                                             style = MaterialTheme.typography.bodySmall,
                                                             color = MaterialTheme.colorScheme.onSurfaceVariant)
                                                         if (entry.moveCount > 0) {
-                                                            Text("${entry.moveCount}手",
+                                                            Text(stringResource(R.string.history_move_count, entry.moveCount),
                                                                 style = MaterialTheme.typography.bodySmall,
                                                                 color = MaterialTheme.colorScheme.onSurfaceVariant)
                                                         }
@@ -967,7 +968,7 @@ class MainActivity : ComponentActivity() {
                                     modifier = Modifier.fillMaxWidth(),
                                     horizontalArrangement = Arrangement.End
                                 ) {
-                                    TextButton(onClick = { showHistoryDialog = false }) { Text("閉じる") }
+                                    TextButton(onClick = { showHistoryDialog = false }) { Text(stringResource(R.string.history_close)) }
                                 }
                             }
                         }
@@ -977,7 +978,7 @@ class MainActivity : ComponentActivity() {
                 kifuIoMessage?.let { msg ->
                     AlertDialog(
                         onDismissRequest = { kifuIoMessage = null },
-                        title = { Text("過去の棋譜") },
+                        title = { Text(stringResource(R.string.menu_history)) },
                         text = { Text(msg) },
                         confirmButton = {
                             TextButton(onClick = { kifuIoMessage = null }) { Text("OK") }
@@ -990,7 +991,7 @@ class MainActivity : ComponentActivity() {
                     var editText by remember(mark) { mutableStateOf(currentName) }
                     AlertDialog(
                         onDismissRequest = { editingPlayerMark = null },
-                        title = { Text(if (mark == "▲") "先手の名前" else "後手の名前") },
+                        title = { Text(if (mark == "▲") stringResource(R.string.player_name_dialog_title_sente) else stringResource(R.string.player_name_dialog_title_gote)) },
                         text = {
                             OutlinedTextField(
                                 value = editText,
@@ -1011,7 +1012,7 @@ class MainActivity : ComponentActivity() {
                             }) { Text("OK") }
                         },
                         dismissButton = {
-                            TextButton(onClick = { editingPlayerMark = null }) { Text("キャンセル") }
+                            TextButton(onClick = { editingPlayerMark = null }) { Text(stringResource(R.string.dialog_cancel)) }
                         }
                     )
                 }
@@ -1036,7 +1037,7 @@ class MainActivity : ComponentActivity() {
                                     },
                                     shape = MaterialTheme.shapes.large,
                                     modifier = Modifier.size(width = 100.dp, height = 56.dp)
-                                ) { Text("成", style = MaterialTheme.typography.titleMedium) }
+                                ) { Text(stringResource(R.string.promote_button), style = MaterialTheme.typography.titleMedium) }
                                 FilledTonalButton(
                                     onClick = {
                                         val usi = "${9 - move.from.second}${('a' + move.from.first)}${9 - move.to.second}${('a' + move.to.first)}"
@@ -1046,7 +1047,7 @@ class MainActivity : ComponentActivity() {
                                     },
                                     shape = MaterialTheme.shapes.large,
                                     modifier = Modifier.size(width = 100.dp, height = 56.dp)
-                                ) { Text("不成", style = MaterialTheme.typography.titleMedium) }
+                                ) { Text(stringResource(R.string.do_not_promote_button), style = MaterialTheme.typography.titleMedium) }
                             }
                         }
                     }

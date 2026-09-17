@@ -8,6 +8,9 @@ import java.io.File
 import java.text.SimpleDateFormat
 import java.util.Date
 import java.util.Locale
+import java.util.zip.ZipEntry
+import java.util.zip.ZipInputStream
+import java.util.zip.ZipOutputStream
 
 data class KifuHistoryEntry(
     val id: String,
@@ -173,28 +176,20 @@ object KifuHistoryManager {
         return count
     }
 
-    private const val EXPORT_HEADER = "#ShogiGUI-KifuExport v1"
-
-    // 過去の棋譜すべてを1つのtxtファイルへ書き出す。各局は1行ずつのJSON
-    // （盤面はルートのみSFENで持ち、以降は指し手の差分だけを保存するコンパクト形式）
-    // で保存するため、1000局規模でも現実的なサイズに収まる。
+    // 過去の棋譜すべてを、対局ごとに1つの標準CSAファイルとしてZIPへ書き出す。
+    // 分岐・読み筋は保存されず本譜のみとなる（CSAが単一の指し手列しか表現できないため）。
     fun exportAllToUri(context: Context, uri: Uri): Int {
         var count = 0
-        context.contentResolver.openOutputStream(uri)?.bufferedWriter(Charsets.UTF_8)?.use { writer ->
-            writer.write(EXPORT_HEADER); writer.newLine()
-            loadIndex(context).forEach { entry ->
-                val root = loadKifu(context, entry.id) ?: return@forEach
-                val line = JSONObject().apply {
-                    put("id", entry.id)
-                    put("senteName", entry.senteName)
-                    put("goteName", entry.goteName)
-                    put("gameResult", entry.gameResult)
-                    put("savedAt", entry.savedAt)
-                    entry.gameDate?.let { put("gameDate", it) }
-                    put("tree", kifuTreeToCompactJson(root))
-                }.toString()
-                writer.write(line); writer.newLine()
-                count++
+        context.contentResolver.openOutputStream(uri)?.let { out ->
+            ZipOutputStream(out.buffered()).use { zip ->
+                loadIndex(context).forEach { entry ->
+                    val root = loadKifu(context, entry.id) ?: return@forEach
+                    val csa = exportMainLineToCsa(root, entry.senteName, entry.goteName, entry.gameResult, entry.gameDate)
+                    zip.putNextEntry(ZipEntry("${entry.id}.csa"))
+                    zip.write(csa.toByteArray(Charsets.UTF_8))
+                    zip.closeEntry()
+                    count++
+                }
             }
         }
         return count
@@ -202,39 +197,56 @@ object KifuHistoryManager {
 
     data class KifuImportResult(val imported: Int, val skipped: Int)
 
-    // exportAllToUri で書き出したtxtを読み込み、過去の棋譜として追加する。
-    // 1行ごとに独立して解析するため、一部の行が壊れていても他の対局は読み込める。
+    // exportAllToUri で書き出したZIP（対局ごとのCSAファイル群）を読み込み、
+    // 過去の棋譜として追加する。1ファイルごとに独立して解析するため、
+    // 一部が壊れていても他の対局は読み込める。標準CSAファイルなので、
+    // 他ソフトで作成されたCSAをまとめたZIPも同様に取り込める。
     fun importFromUri(context: Context, uri: Uri): KifuImportResult {
-        val lines = context.contentResolver.openInputStream(uri)?.bufferedReader(Charsets.UTF_8)?.use { it.readLines() }
-            ?: emptyList()
         val entries = loadIndex(context).toMutableList()
         val knownIds = entries.map { it.id }.toMutableSet()
         var imported = 0
         var skipped = 0
-        lines.forEach { rawLine ->
-            val line = rawLine.trim()
-            if (line.isEmpty() || line.startsWith("#")) return@forEach
-            try {
-                val obj = JSONObject(line)
-                val tree = compactJsonToKifuTree(obj.getJSONObject("tree"))
-                var id = obj.getString("id")
-                if (id in knownIds) id = "${System.currentTimeMillis()}_${(0..999999).random()}"
-                knownIds.add(id)
-                writeTextAtomic(kifuFile(context, id), kifuTreeToJson(tree).toString())
-                val savedAt = obj.optLong("savedAt", System.currentTimeMillis())
-                val gameDate = obj.optString("gameDate").takeIf { it.isNotBlank() && it != "null" }
-                entries.add(KifuHistoryEntry(
-                    id = id,
-                    senteName = obj.optString("senteName", "先手"),
-                    goteName = obj.optString("goteName", "後手"),
-                    gameResult = obj.optString("gameResult", ""),
-                    savedAt = savedAt,
-                    moveCount = countMainLineMoves(tree),
-                    gameDate = gameDate,
-                    displayDate = computeDisplayDate(gameDate, savedAt)
-                ))
-                imported++
-            } catch (e: Exception) { skipped++ }
+        context.contentResolver.openInputStream(uri)?.use { input ->
+            ZipInputStream(input.buffered()).use { zip ->
+                var zipEntry: ZipEntry? = zip.nextEntry
+                while (zipEntry != null) {
+                    val name = zipEntry.name
+                    if (zipEntry.isDirectory || !name.endsWith(".csa", ignoreCase = true)) {
+                        zip.closeEntry(); zipEntry = zip.nextEntry; continue
+                    }
+                    val bytes = zip.readBytes()
+                    try {
+                        val text = decodeCsaBytes(bytes)
+                        val freshRoot = KifuNode(createInitialBoard(), emptyMap(), emptyMap(), Player.SENTE)
+                        val tree = parseCsa(text, freshRoot, {}) ?: throw IllegalArgumentException("no moves")
+
+                        val names = extractPlayerNames(text)
+                        val gameResult = extractGameResult(text) ?: ""
+                        val gameDate = extractGameDate(text)
+
+                        var id = File(name).nameWithoutExtension.takeIf { it.toLongOrNull() != null }
+                            ?: "${System.currentTimeMillis()}_${(0..999999).random()}"
+                        if (id in knownIds) id = "${System.currentTimeMillis()}_${(0..999999).random()}"
+                        knownIds.add(id)
+
+                        val savedAt = id.toLongOrNull() ?: System.currentTimeMillis()
+                        writeTextAtomic(kifuFile(context, id), kifuTreeToJson(freshRoot).toString())
+                        entries.add(KifuHistoryEntry(
+                            id = id,
+                            senteName = names.sente ?: "先手",
+                            goteName = names.gote ?: "後手",
+                            gameResult = gameResult,
+                            savedAt = savedAt,
+                            moveCount = countMainLineMoves(freshRoot),
+                            gameDate = gameDate,
+                            displayDate = computeDisplayDate(gameDate, savedAt)
+                        ))
+                        imported++
+                    } catch (e: Exception) { skipped++ }
+                    zip.closeEntry()
+                    zipEntry = zip.nextEntry
+                }
+            }
         }
         if (imported == 0) return KifuImportResult(0, skipped)
 
@@ -245,6 +257,14 @@ object KifuHistoryManager {
         }
         saveIndex(context, merged)
         return KifuImportResult(imported, skipped)
+    }
+
+    // 標準CSAはShift_JISで配布されることも多いため、UTF-8として文字化けする場合は
+    // Shift_JISとして読み直す（自アプリの書き出しは常にUTF-8）。
+    private fun decodeCsaBytes(bytes: ByteArray): String {
+        val utf8 = String(bytes, Charsets.UTF_8)
+        if (!utf8.contains('�')) return utf8
+        return try { String(bytes, charset("Shift_JIS")) } catch (e: Exception) { utf8 }
     }
 
     fun formatDate(timestamp: Long): String = dateFmt.format(Date(timestamp))

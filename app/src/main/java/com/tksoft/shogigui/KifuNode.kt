@@ -4,10 +4,12 @@ import androidx.compose.runtime.mutableStateListOf
 
 // 棋譜の1局面を管理するノードクラス
 class KifuNode(
-    val board: Map<Pair<Int, Int>, Piece>,
-    val senteHand: Map<PieceType, Int>,
-    val goteHand: Map<PieceType, Int>,
-    val currentPlayer: Player,
+    // CSAインポート時、駒落ちなど非標準の初期配置を解析結果で上書きできるよう var にしている
+    // （それ以外の用途では通常のノードと同様、構築後に書き換えない）
+    var board: Map<Pair<Int, Int>, Piece>,
+    var senteHand: Map<PieceType, Int>,
+    var goteHand: Map<PieceType, Int>,
+    var currentPlayer: Player,
     val moveLabel: String = "開始局面",
     val parent: KifuNode? = null,
     val lastFrom: Pair<Int, Int>? = null,
