@@ -228,6 +228,58 @@ fun boardToSfen(board: Map<Pair<Int, Int>, Piece>, turn: Player, senteHand: Map<
     return sfen.toString()
 }
 
+private val sfenPieceChars = mapOf(
+    'k' to PieceType.KING, 'r' to PieceType.ROOK, 'b' to PieceType.BISHOP,
+    'g' to PieceType.GOLD, 's' to PieceType.SILVER, 'n' to PieceType.KNIGHT,
+    'l' to PieceType.LANCE, 'p' to PieceType.PAWN
+)
+
+data class SfenPosition(
+    val board: Map<Pair<Int, Int>, Piece>,
+    val turn: Player,
+    val senteHand: Map<PieceType, Int>,
+    val goteHand: Map<PieceType, Int>
+)
+
+// boardToSfen の逆変換。一括エクスポートで盤面をコンパクトに保存するために使う
+fun sfenToBoard(sfen: String): SfenPosition {
+    val parts = sfen.trim().split(" ")
+    val board = mutableMapOf<Pair<Int, Int>, Piece>()
+    val rows = parts[0].split("/")
+    for (row in rows.indices) {
+        var col = 0
+        var pendingPromote = false
+        for (ch in rows[row]) {
+            when {
+                ch == '+' -> pendingPromote = true
+                ch.isDigit() -> { col += ch.digitToInt(); pendingPromote = false }
+                else -> {
+                    val type = sfenPieceChars[ch.lowercaseChar()] ?: continue
+                    board[Pair(row, col)] = Piece(type, if (ch.isUpperCase()) Player.SENTE else Player.GOTE, pendingPromote)
+                    col++; pendingPromote = false
+                }
+            }
+        }
+    }
+    val turn = if (parts.getOrNull(1) == "w") Player.GOTE else Player.SENTE
+    val senteHand = mutableMapOf<PieceType, Int>()
+    val goteHand = mutableMapOf<PieceType, Int>()
+    val handStr = parts.getOrNull(2) ?: "-"
+    if (handStr != "-") {
+        var count = 0
+        for (ch in handStr) {
+            if (ch.isDigit()) { count = count * 10 + ch.digitToInt() } else {
+                val type = sfenPieceChars[ch.lowercaseChar()] ?: continue
+                val n = if (count == 0) 1 else count
+                if (ch.isUpperCase()) senteHand[type] = (senteHand[type] ?: 0) + n
+                else goteHand[type] = (goteHand[type] ?: 0) + n
+                count = 0
+            }
+        }
+    }
+    return SfenPosition(board, turn, senteHand, goteHand)
+}
+
 fun formatRemainingTime(ms: Long): String {
     if (ms < 0L) {
         // 初期時間不明：消費時間を表示（格納値 = -(consumed + 1)）
@@ -355,6 +407,81 @@ fun jsonToKifuTree(json: JSONObject, parent: KifuNode? = null): KifuNode {
     node.goteRemainingMs = json.optLong("goteRem", Long.MIN_VALUE).takeIf { it != Long.MIN_VALUE }
     val childrenJson = json.getJSONArray("children")
     for (i in 0 until childrenJson.length()) { node.children.add(jsonToKifuTree(childrenJson.getJSONObject(i), node)) }
+    return node
+}
+
+// 一括エクスポート用のコンパクトな棋譜表現。通常の kifuTreeToJson は
+// 各局面ごとに盤面・持ち駒を丸ごと保存するため1000局規模だと非常に大きくなる。
+// こちらはルート局面だけSFENで保存し、以降は指し手の差分（駒を置いた升目・成りの有無など）
+// だけを保存し、読み込み時に executeMove と同じロジックで盤面を再現する。
+fun kifuTreeToCompactJson(node: KifuNode): JSONObject {
+    val json = JSONObject()
+    json.put("l", node.moveLabel)
+    val parent = node.parent
+    if (parent == null) {
+        json.put("sfen", boardToSfen(node.board, node.currentPlayer, node.senteHand, node.goteHand))
+    } else {
+        val to = node.lastTo
+        val from = node.lastFrom
+        if (to != null) json.put("t", "${to.first},${to.second}")
+        if (from != null) {
+            json.put("f", "${from.first},${from.second}")
+        } else {
+            to?.let { node.board[it]?.let { placed -> json.put("d", placed.type.name) } }
+        }
+        val wasPromoted = from?.let { parent.board[it]?.isPromoted } ?: false
+        val nowPromoted = to?.let { node.board[it]?.isPromoted } ?: false
+        if (nowPromoted && !wasPromoted) json.put("p", true)
+    }
+    node.senteRemainingMs?.let { json.put("sr", it) }
+    node.goteRemainingMs?.let { json.put("gr", it) }
+    val childrenJson = JSONArray()
+    node.children.filter { !it.isPvBranch }.forEach { childrenJson.put(kifuTreeToCompactJson(it)) }
+    json.put("c", childrenJson)
+    return json
+}
+
+fun compactJsonToKifuTree(json: JSONObject, parent: KifuNode? = null): KifuNode {
+    val label = json.optString("l", "")
+    val node: KifuNode
+    if (parent == null) {
+        val pos = sfenToBoard(json.getString("sfen"))
+        node = KifuNode(pos.board, pos.senteHand, pos.goteHand, pos.turn, label, null, null, null)
+    } else {
+        val to = json.getString("t").split(",").let { Pair(it[0].toInt(), it[1].toInt()) }
+        val from = json.optString("f", "").takeIf { it.isNotEmpty() }
+            ?.split(",")?.let { Pair(it[0].toInt(), it[1].toInt()) }
+        val newBoard = parent.board.toMutableMap()
+        var newSenteHand = parent.senteHand
+        var newGoteHand = parent.goteHand
+        val mover = parent.currentPlayer
+        val piece: Piece
+        if (from != null) {
+            piece = parent.board[from] ?: throw org.json.JSONException("no piece at $from")
+            newBoard.remove(from)
+        } else {
+            val dropType = PieceType.valueOf(json.getString("d"))
+            piece = Piece(dropType, mover, false)
+            if (mover == Player.SENTE) {
+                newSenteHand = newSenteHand.toMutableMap().apply { this[dropType] = (this[dropType] ?: 1) - 1 }.filterValues { it > 0 }
+            } else {
+                newGoteHand = newGoteHand.toMutableMap().apply { this[dropType] = (this[dropType] ?: 1) - 1 }.filterValues { it > 0 }
+            }
+        }
+        val captured = parent.board[to]
+        if (captured != null && captured.type != PieceType.KING) {
+            if (mover == Player.SENTE) { newSenteHand = newSenteHand.toMutableMap().apply { this[captured.type] = (this[captured.type] ?: 0) + 1 } }
+            else { newGoteHand = newGoteHand.toMutableMap().apply { this[captured.type] = (this[captured.type] ?: 0) + 1 } }
+        }
+        val promoteFlag = json.optBoolean("p", false)
+        newBoard[to] = piece.copy(isPromoted = promoteFlag || piece.isPromoted)
+        val nextTurn = if (mover == Player.SENTE) Player.GOTE else Player.SENTE
+        node = KifuNode(newBoard, newSenteHand, newGoteHand, nextTurn, label, parent, from, to)
+    }
+    node.senteRemainingMs = json.optLong("sr", Long.MIN_VALUE).takeIf { it != Long.MIN_VALUE }
+    node.goteRemainingMs = json.optLong("gr", Long.MIN_VALUE).takeIf { it != Long.MIN_VALUE }
+    val childrenJson = json.optJSONArray("c") ?: JSONArray()
+    for (i in 0 until childrenJson.length()) { node.children.add(compactJsonToKifuTree(childrenJson.getJSONObject(i), node)) }
     return node
 }
 
