@@ -5,6 +5,10 @@ import android.util.Log
 import org.json.JSONArray
 import org.json.JSONObject
 
+// parseInfo()が生成するcpスコア行 ("+120 (先手指しやすい)" など) を判別するための正規表現。
+// ラベル文言はローカライズ対象なので、代わりに数値+カッコの形で判定する。
+val scoreLineRegex = Regex("""^[+-]?\d+ \(.*\)$""")
+
 // USIのinfo行を解析して読みやすい文字列にする
 fun parseInfo(
     context: Context,
@@ -103,9 +107,9 @@ fun extractScore(pvText: String, turn: Player): Int {
             if (!isSenteWin) Int.MAX_VALUE else Int.MIN_VALUE
         }
     }
-    val scoreLine = pvText.lines().find { it.startsWith("評価:") } ?: return 0
-    val vStr = scoreLine.substringAfter("評価:").trim().split(" ")[0]
-    // 評価: の値は常に先手視点で格納されているため、手番側 (turn) から見た評価値に変換する。
+    val scoreLine = pvText.lines().find { scoreLineRegex.matches(it) } ?: return 0
+    val vStr = scoreLine.substringBefore(" ")
+    // score行の値は常に先手視点で格納されているため、手番側 (turn) から見た評価値に変換する。
     // これをしないと、後手番のときに「候補1番目」が先手にとって都合の良い手になってしまう。
     val v = vStr.toIntOrNull() ?: 0
     return if (turn == Player.SENTE) v else -v

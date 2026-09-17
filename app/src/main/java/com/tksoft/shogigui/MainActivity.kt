@@ -235,10 +235,9 @@ class MainActivity : ComponentActivity() {
                                 engineOutput = pvList.toSortedMap().values.joinToString("\n---\n")
                                 analysisHistory[capturedMoveCount] = pvList.toMap()
                                 analysisUsiHistory[capturedMoveCount] = pvUsiList.toMap()
-                                if (rank == 1 && parsed.contains("評価")) {
-                                    val scoreLine = parsed.lines().find { it.startsWith("評価:") }
-                                    val score = scoreLine?.substringAfter("評価:")?.trim()
-                                        ?.split(" ")?.firstOrNull()?.replace("+", "")?.toIntOrNull()
+                                if (rank == 1 && parsed.lines().any { scoreLineRegex.matches(it) }) {
+                                    val scoreLine = parsed.lines().find { scoreLineRegex.matches(it) }
+                                    val score = scoreLine?.substringBefore(" ")?.toIntOrNull()
                                     if (score != null) evalHistory[capturedMoveCount] = score  // ← 変更
                                 } else if (rank == 1 && (parsed.contains("手詰") || parsed.contains("詰み"))) {
                                     val isSenteWin = parsed.contains("先手勝ち")
