@@ -19,3 +19,12 @@
 # If you keep the line number information, uncomment this to
 # hide the original source file name.
 #-renamesourcefileattribute SourceFile
+
+# native-lib.cpp / native-lib-aoba.cpp call back into these methods via
+# JNI GetMethodID("onOutput", ...), so R8 must not rename or strip them.
+-keepclassmembers class com.tksoft.shogigui.UsiEngine {
+    void onOutput(java.lang.String);
+}
+-keepclassmembers class com.tksoft.shogigui.AobaEngine {
+    void onOutput(java.lang.String);
+}

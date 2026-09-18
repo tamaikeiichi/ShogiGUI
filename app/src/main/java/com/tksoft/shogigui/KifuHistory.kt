@@ -79,8 +79,27 @@ object KifuHistoryManager {
             }
         } catch (e: Exception) { emptyList() }
 
-        return reconcileWithOrphanFiles(context, parsed)
+        val reconciled = reconcileWithOrphanFiles(context, parsed)
+        val deduped = dedupeById(reconciled)
+        if (deduped.size != reconciled.size) saveIndex(context, deduped)
+        return deduped
     }
+
+    // 過去に存在した保存処理の不具合により、同一idのエントリが
+    // 「正しい対局者名」版と「先手／後手（既定名）」版の二重で
+    // index.json に残っているケースを解消する。実名を持つ方を優先して残す。
+    private fun dedupeById(entries: List<KifuHistoryEntry>): List<KifuHistoryEntry> {
+        val seen = LinkedHashMap<String, KifuHistoryEntry>()
+        for (e in entries) {
+            val existing = seen[e.id]
+            if (existing == null || (isDefaultNamed(existing) && !isDefaultNamed(e))) {
+                seen[e.id] = e
+            }
+        }
+        return seen.values.toList()
+    }
+
+    private fun isDefaultNamed(e: KifuHistoryEntry) = e.senteName == "先手" && e.goteName == "後手"
 
     // index.json の破損・欠落や、保存処理の途中終了で index に登録され損ねた
     // 対局ファイル（本体の棋譜データ自体は無事）を見つけて復旧する
@@ -137,9 +156,12 @@ object KifuHistoryManager {
     ) {
         val now = System.currentTimeMillis()
         val id = now.toString()
+        // 先に index を読み込んでおく。書き込み後に loadIndex すると、
+        // まだ index に登録されていないこのファイルを reconcileWithOrphanFiles が
+        // 孤児ファイルとみなし、名前が「先手」「後手」の重複エントリを作ってしまう。
+        val entries = loadIndex(context).toMutableList()
         writeTextAtomic(kifuFile(context, id), kifuTreeToJson(rootNode).toString())
 
-        val entries = loadIndex(context).toMutableList()
         entries.add(0, KifuHistoryEntry(
             id = id, senteName = senteName, goteName = goteName,
             gameResult = gameResult, savedAt = now,
