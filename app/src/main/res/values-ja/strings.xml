@@ -1,0 +1,70 @@
+<resources>
+    <string name="app_name">将棋棋譜解析</string>
+
+    <!-- ハンバーガーメニュー -->
+    <string name="menu_content_description">メニュー</string>
+    <string name="menu_reset">リセット</string>
+    <string name="menu_analyze_to_end">現局面から最後まで解析</string>
+    <string name="menu_export_main_line_csa">本譜をエクスポート(CSA)</string>
+    <string name="menu_play_as_sente">先手番を持って対局</string>
+    <string name="menu_play_as_gote">後手番を持って対局</string>
+    <string name="menu_settings">設定</string>
+    <string name="menu_history">過去の棋譜</string>
+    <string name="menu_export_all_history">過去の棋譜をすべてエクスポート</string>
+    <string name="menu_import_history_zip">ZIP圧縮した複数のCSAファイルを過去の棋譜としてインポート</string>
+
+    <!-- ツールバー -->
+    <string name="action_load_from_clipboard_desc">クリップボードから読込</string>
+    <string name="action_load_from_clipboard_label">読込（クリップボードから）</string>
+    <string name="action_analyze">解析</string>
+    <string name="action_stop_game">対局中止</string>
+    <string name="action_preparing">準備中</string>
+    <string name="action_stop">停止</string>
+    <string name="action_flip">反転</string>
+    <string name="action_main_line">本譜</string>
+
+    <!-- 設定ダイアログ -->
+    <string name="settings_title_prefix">設定 </string>
+    <string name="settings_engine_label">エンジン</string>
+    <string name="settings_think_time">思考時間: %1$dms</string>
+    <string name="settings_multipv_label">候補手 (MultiPV)</string>
+    <string name="settings_threads_label">スレッド数</string>
+    <string name="settings_save">保存</string>
+
+    <!-- 過去の棋譜ダイアログ -->
+    <string name="history_search_placeholder">対局者名・日付で検索</string>
+    <string name="history_empty_no_games">棋譜がありません</string>
+    <string name="history_empty_no_matches">該当する棋譜がありません</string>
+    <string name="history_move_count">%1$d手</string>
+    <string name="history_close">閉じる</string>
+
+    <!-- 対局者名編集ダイアログ -->
+    <string name="player_name_dialog_title_sente">先手の名前</string>
+    <string name="player_name_dialog_title_gote">後手の名前</string>
+    <string name="dialog_cancel">キャンセル</string>
+
+    <!-- 成/不成ダイアログ -->
+    <string name="promote_button">成</string>
+    <string name="do_not_promote_button">不成</string>
+
+    <!-- その他 -->
+    <string name="engine_waiting">エンジン待機中…</string>
+    <string name="kifu_export_success">%1$d件の棋譜をエクスポートしました</string>
+    <string name="kifu_import_success">%1$d件の棋譜をインポートしました</string>
+    <string name="kifu_import_skipped_suffix">（%1$d件は読み込めませんでした）</string>
+    <string name="move_counter">%1$d手目 / %2$d手</string>
+    <string name="nav_previous">前へ</string>
+    <string name="nav_next">次へ</string>
+    <string name="hand_none">なし</string>
+
+    <!-- 形勢判断 -->
+    <string name="eval_status_even">互角</string>
+    <string name="eval_status_sente_slight_edge">先手指しやすい</string>
+    <string name="eval_status_gote_slight_edge">後手指しやすい</string>
+    <string name="eval_status_sente_advantage">先手有利</string>
+    <string name="eval_status_gote_advantage">後手有利</string>
+    <string name="eval_status_sente_dominant">先手優勢</string>
+    <string name="eval_status_gote_dominant">後手優勢</string>
+    <string name="eval_status_sente_winning">先手勝勢</string>
+    <string name="eval_status_gote_winning">後手勝勢</string>
+</resources>
