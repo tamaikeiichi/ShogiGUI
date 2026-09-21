@@ -15,8 +15,8 @@ android {
         applicationId = "com.tksoft.shogigui"
         minSdk = 24
         targetSdk = 36
-        versionCode = 28
-        versionName = "1.67"
+        versionCode = 29
+        versionName = "1.68"
 
         testInstrumentationRunner = "androidx.test.runner.AndroidJUnitRunner"
     }
