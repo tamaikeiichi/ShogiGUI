@@ -9,6 +9,7 @@ import androidx.compose.foundation.Canvas
 import androidx.compose.foundation.background
 import androidx.compose.foundation.border
 import androidx.compose.foundation.clickable
+import androidx.compose.foundation.interaction.MutableInteractionSource
 import androidx.compose.foundation.layout.*
 import androidx.compose.material3.MaterialTheme
 import androidx.compose.material3.Text
@@ -148,6 +149,7 @@ fun ShogiBoard(
                                 isLastMove -> highlightColor
                                 else -> Color.Transparent
                             }
+                            val squareInteractionSource = remember(row, col) { MutableInteractionSource() }
 
                             ShogiSquare(
                                 modifier = Modifier
@@ -155,7 +157,10 @@ fun ShogiBoard(
                                     .fillMaxHeight()
                                     .border(0.5.dp, cellColor)
                                     .background(bgColor)
-                                    .clickable { onSquareClick(actualRow, actualCol) },
+                                    .clickable(
+                                        interactionSource = squareInteractionSource,
+                                        indication = null
+                                    ) { onSquareClick(actualRow, actualCol) },
                                 piece = piece,
                                 isFlipped = isFlipped
                             )
@@ -163,7 +168,7 @@ fun ShogiBoard(
                     }
                 }
             }
-                BestMoveArrow(bestMoveUsi = bestMoveUsi, arrowColor = bestMoveColor, modifier = Modifier.fillMaxSize())
+                BestMoveArrow(bestMoveUsi = bestMoveUsi, boardState = boardState, arrowColor = bestMoveColor, modifier = Modifier.fillMaxSize())
             }
             // ... (段ラベル部分は変更なし)
 
@@ -194,29 +199,44 @@ fun ShogiBoard(
 }
 
 // 解析中の候補1番目の指し手を示す矢印 (M3 Expressive: 太くまるいストロークとバネの弾みで表示/消去する)
+// 解析を停止しても矢印自体は消さず、透明度を上げて（薄く）残す。局面が変わったとき
+// (指し手が進む・棋譜を移動する等) だけ、直前の矢印は無関係になるので消す。
 @Composable
 fun BestMoveArrow(
     bestMoveUsi: String?,
+    boardState: Map<Pair<Int, Int>, Piece>,
     modifier: Modifier = Modifier,
     arrowColor: Color = MaterialTheme.colorScheme.primary
 ) {
-    var lastSquares by remember { mutableStateOf<Pair<Pair<Int, Int>?, Pair<Int, Int>>?>(null) }
+    var lastSquares by remember(boardState) { mutableStateOf<Pair<Pair<Int, Int>?, Pair<Int, Int>>?>(null) }
     val squares = bestMoveUsi?.let { usiMoveSquares(it) }
     if (squares != null) lastSquares = squares
+    val hasArrow = lastSquares != null
 
-    val progress by animateFloatAsState(
-        targetValue = if (squares != null) 1f else 0f,
-        animationSpec = if (squares != null)
+    // 矢印の伸びるバネアニメーション（表示/非表示の切り替え時のみ）
+    val growProgress by animateFloatAsState(
+        targetValue = if (hasArrow) 1f else 0f,
+        animationSpec = if (hasArrow)
             spring(dampingRatio = Spring.DampingRatioMediumBouncy, stiffness = Spring.StiffnessMedium)
         else
             tween(durationMillis = 150),
-        label = "bestMoveArrowProgress"
+        label = "bestMoveArrowGrow"
+    )
+
+    // 解析中はしっかり表示、解析停止後（局面はそのまま）は消さずに薄く残す
+    val alpha by animateFloatAsState(
+        targetValue = when {
+            squares != null -> 1f
+            hasArrow -> restingArrowAlpha
+            else -> 0f
+        },
+        animationSpec = tween(durationMillis = 300),
+        label = "bestMoveArrowAlpha"
     )
 
     val shown = lastSquares
-    if (shown == null || progress <= 0f) return
+    if (shown == null || growProgress <= 0f) return
     val outlineColor = MaterialTheme.colorScheme.surface
-    val alpha = progress.coerceIn(0f, 1f)
 
     Canvas(modifier = modifier) {
         val cell = size.width / 9f
@@ -257,7 +277,7 @@ fun BestMoveArrow(
         }
 
         // 移動元マスを起点にバネで伸びるアニメーション
-        scale(progress.coerceIn(0f, 1f), pivot = fromCenter) {
+        scale(growProgress.coerceIn(0f, 1f), pivot = fromCenter) {
             val bounds = Rect(Offset.Zero, size)
             // 縁取り（駒の上でも視認できるようコントラストを確保）
             // 棒と矢じりを同じレイヤーに不透明で描いてからレイヤーごと透過させることで、
@@ -285,6 +305,8 @@ fun BestMoveArrow(
 // 矢印の不透明度（盤面が透けて見えるよう少し薄めに設定）
 private const val arrowBodyAlpha = 0.62f
 private const val arrowOutlineAlpha = 0.38f
+// 解析停止後（局面は同じ）に矢印を消さず残しておくときの薄さ
+private const val restingArrowAlpha = 0.35f
 
 // 駒打ちの矢印: 持ち駒 (別コンポーネント) から盤面のマスへ引く。ShogiBoard の外側、画面全体を覆う
 // オーバーレイとして使い、LayoutCoordinates.localPositionOf で座標系をまたいで位置を合わせる
