@@ -4,6 +4,11 @@ import androidx.compose.foundation.Canvas
 import androidx.compose.foundation.background
 import androidx.compose.foundation.clickable
 import androidx.compose.foundation.gestures.detectTapGestures
+import androidx.compose.foundation.gestures.awaitEachGesture
+import androidx.compose.foundation.gestures.awaitFirstDown
+import androidx.compose.ui.input.pointer.PointerInputScope
+import androidx.compose.ui.input.pointer.PointerEventPass
+import androidx.compose.foundation.gestures.detectDragGestures
 import androidx.compose.foundation.layout.*
 import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.material.icons.Icons
@@ -14,6 +19,12 @@ import androidx.compose.runtime.*
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.draw.clip
+import androidx.compose.ui.geometry.Offset
+import androidx.compose.ui.graphics.StrokeCap
+import androidx.compose.ui.graphics.drawscope.Stroke
+import androidx.compose.ui.layout.onSizeChanged
+import androidx.compose.ui.platform.LocalDensity
+import androidx.compose.ui.unit.IntSize
 import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.input.pointer.pointerInput
 import androidx.compose.ui.res.stringResource
@@ -110,24 +121,96 @@ fun PlayerStatusSection(
     }
 }
 
+// 棋譜ツリーのレイアウト結果。nodes[i] を (col[i]=手数, row[i]=行) に置き、parentIdx[i] と線で結ぶ
+private class KifuTreeLayout(
+    val nodes: List<KifuNode>,
+    val col: IntArray,
+    val row: IntArray,
+    val parentIdx: IntArray,
+    val indexOf: Map<KifuNode, Int>,
+    val maxCol: Int,
+    val rowCount: Int
+)
+
+// 本譜（continuationChild を辿る列）を 0 行目に左から右へ一直線に並べ、
+// 分岐はそれぞれ新しい行を割り当てて下へ並べる（樹形図）
+private fun layoutKifuTree(root: KifuNode): KifuTreeLayout {
+    val nodes = ArrayList<KifuNode>()
+    val cols = ArrayList<Int>(); val rows = ArrayList<Int>(); val parents = ArrayList<Int>()
+    val indexOf = HashMap<KifuNode, Int>()
+    var nextRow = 0
+    fun layRow(start: KifuNode) {
+        val row = nextRow++
+        val pending = ArrayList<KifuNode>()
+        var n: KifuNode? = start
+        while (n != null) {
+            indexOf[n] = nodes.size
+            nodes.add(n); cols.add(n.moveCount - root.moveCount); rows.add(row)
+            parents.add(n.parent?.let { indexOf[it] } ?: -1)
+            // 同じ行に続ける子以外（手作業の手・別候補の読み筋）は新しい行へ
+            val next = n.continuationChild()
+            n.children.forEach { if (it !== next) pending.add(it) }
+            n = next
+        }
+        // 分岐点が右（後）にある枝ほど親の行の近くに置く。枝とその子孫の行は連続させる。
+        // こうすると、親から遠い行へ下りる斜め線が通る列には、間の行の線がまだ始まっていないので交差しない
+        pending.asReversed().forEach { layRow(it) }
+    }
+    layRow(root)
+    return KifuTreeLayout(
+        nodes, cols.toIntArray(), rows.toIntArray(), parents.toIntArray(), indexOf,
+        cols.maxOrNull() ?: 0, nextRow
+    )
+}
+
+// 2本指以上のピンチだけを検出する（指の並びの向きによらず、指の間隔の変化を倍率とする）。
+// Initial パスで子より先に受け取り、2本指の間はイベントを消費して子のドラッグ・タップを止める。
+// 1本指の操作には触れないので、子のタップやスクロールはそのまま動く
+private suspend fun PointerInputScope.detectPinchGestures(onZoom: (zoom: Float) -> Unit) {
+    // 指の間隔（重心からの平均距離）がこれ未満のときは倍率を変えない（誤差で暴れないように）
+    val minSpan = 12.dp.toPx()
+    awaitEachGesture {
+        awaitFirstDown(requireUnconsumed = false, pass = PointerEventPass.Initial)
+        do {
+            val event = awaitPointerEvent(PointerEventPass.Initial)
+            val pts = event.changes.filter { it.pressed && it.previousPressed }
+            if (pts.size >= 2) {
+                val n = pts.size.toFloat()
+                val cur = Offset(pts.sumOf { it.position.x.toDouble() }.toFloat() / n, pts.sumOf { it.position.y.toDouble() }.toFloat() / n)
+                val prev = Offset(pts.sumOf { it.previousPosition.x.toDouble() }.toFloat() / n, pts.sumOf { it.previousPosition.y.toDouble() }.toFloat() / n)
+                val span = pts.map { (it.position - cur).getDistance() }.average().toFloat()
+                val pSpan = pts.map { (it.previousPosition - prev).getDistance() }.average().toFloat()
+                if (span > minSpan && pSpan > minSpan) onZoom(span / pSpan)
+                event.changes.forEach { it.consume() }
+            }
+        } while (event.changes.any { it.pressed })
+    }
+}
+
 @Composable
-fun SliderControlSection(
+fun KifuTreeSection(
     currentNode: KifuNode,
     currentPath: List<KifuNode>,
-    evalHistory: Map<Int, Int> = emptyMap(),
     onNodeChange: (KifuNode) -> Unit
 ) {
     val currentIndex = currentPath.indexOf(currentNode).coerceAtLeast(0)
     val maxIndex = (currentPath.size - 1).coerceAtLeast(0)
+    // 樹形図の縦方向の拡大縮小（KifuTreeView が登録する）
+    val zoomHandler = remember { mutableStateOf<((Float) -> Unit)?>(null) }
 
     Column(
-        modifier = Modifier.fillMaxWidth().padding(horizontal = 8.dp),
+        // ピンチは樹形図だけでなくセクション全体（手数表示・矢印ボタン含む）で受ける。
+        // 樹形図は高さが小さく、斜めや縦のピンチだと2本目の指が樹形図の外に出てしまうため
+        modifier = Modifier.fillMaxWidth().padding(horizontal = 8.dp)
+            .pointerInput(Unit) { detectPinchGestures { zoom -> zoomHandler.value?.invoke(zoom) } },
         horizontalAlignment = Alignment.CenterHorizontally
     ) {
         Text(
             text = stringResource(R.string.move_counter, currentNode.moveCount, maxIndex),
-            style = MaterialTheme.typography.bodySmall,
-            color = MaterialTheme.colorScheme.onSurfaceVariant
+            style = MaterialTheme.typography.labelMedium,
+            fontWeight = FontWeight.SemiBold,
+            color = MaterialTheme.colorScheme.onSurfaceVariant,
+            modifier = Modifier.padding(bottom = 2.dp)
         )
         Row(
             modifier = Modifier.fillMaxWidth(),
@@ -147,94 +230,210 @@ fun SliderControlSection(
                     tint = MaterialTheme.colorScheme.onSecondaryContainer,
                     modifier = Modifier.size(20.dp)) }
 
-            val pvColor1 = MaterialTheme.colorScheme.primary
-            val pvColor2 = MaterialTheme.colorScheme.secondary
-            val pvColor3 = MaterialTheme.colorScheme.tertiary
-            val pvColorElse = MaterialTheme.colorScheme.outline
-            val activeTrackColor = MaterialTheme.colorScheme.primary
-            val inactiveTrackColor = MaterialTheme.colorScheme.outlineVariant
-            Box(modifier = Modifier.weight(1f), contentAlignment = Alignment.Center) {
-                Canvas(modifier = Modifier.fillMaxWidth().height(48.dp)) {
-                    val width = size.width; val height = size.height; val centerY = height / 2f
-                    // 実際の Slider (M3 1.4.0) の thumb 配置ロジックに合わせる。
-                    // Slider.kt の SliderLayout 内では、
-                    //   thumbOffsetX = if (steps>0 && 先頭/末尾の目盛りでない)
-                    //       (trackWidth - 2*cornerSize) * fraction + cornerSize
-                    //     else
-                    //       trackWidth * fraction
-                    // という「先頭・末尾だけ特別扱い」の式で thumb 位置を決めている
-                    // (cornerSize はトラックの角丸半径 = TrackHeight(16.dp)/2 = 8.dp)。
-                    // 単純な線形補間 (旧実装) だと、先頭/末尾とその隣の目盛りとの間隔だけ
-                    // 広くなってしまい、実際の Slider の目盛り位置とずれる。
-                    val thumbWidthPx = 4.dp.toPx() // SliderTokens.HandleWidth
-                    val thumbHalfPx = thumbWidthPx / 2f
-                    val trackWidthPx = (width - thumbWidthPx).coerceAtLeast(0f)
-                    val trackCornerPx = 8.dp.toPx() // SliderTokens.InactiveTrackHeight(16.dp) / 2
-                    val valueRangeEnd = maxIndex.toFloat().coerceAtLeast(1f)
-                    fun xForIndex(idx: Int): Float {
-                        val fraction = (idx / valueRangeEnd).coerceIn(0f, 1f)
-                        val thumbOffsetX = if (idx != 0 && idx != maxIndex) {
-                            (trackWidthPx - 2f * trackCornerPx) * fraction + trackCornerPx
-                        } else {
-                            trackWidthPx * fraction
-                        }
-                        return thumbOffsetX + thumbHalfPx
-                    }
-                    // バーの太さは見た目上のもので、位置計算には使わない
-                    val stroke = (width / (maxIndex + 1).toFloat().coerceAtLeast(1f)).coerceAtLeast(2f)
-
-                    // 評価値バー
-                    evalHistory.forEach { (moveCount, score) ->
-                        if (moveCount <= maxIndex) {
-                            val x = xForIndex(moveCount)
-                            val isMate = score > 10000 || score < -10000
-                            val normalized = (score.toFloat() / 2000f).coerceIn(-1f, 1f)
-                            val y = centerY - (normalized * centerY)
-                            val barColor = when {
-                                isMate && score > 0 -> senteMateColor
-                                isMate && score < 0 -> goteMateColor
-                                score >= 0 -> senteBarColor
-                                else -> goteBarColor
-                            }
-                            drawLine(color = barColor,
-                                start = androidx.compose.ui.geometry.Offset(x, centerY),
-                                end = androidx.compose.ui.geometry.Offset(x, y),
-                                strokeWidth = stroke)
-                        }
-                    }
-
-                    // PV分岐ドット
-                    currentPath.forEachIndexed { index, node ->
-                        if (node.isPvBranch && index <= maxIndex) {
-                            val x = xForIndex(index)
-                            val dotColor = when (node.pvColorIndex) {
-                                1 -> pvColor1; 2 -> pvColor2; 3 -> pvColor3; else -> pvColorElse
-                            }
-                            drawCircle(dotColor.copy(alpha = 0.8f), radius = 5f,
-                                center = androidx.compose.ui.geometry.Offset(x, centerY))
-                        }
-                    }
-                }
-                Slider(
-                    value = currentIndex.toFloat(),
-                    onValueChange = { v -> onNodeChange(currentPath[v.toInt().coerceIn(0, maxIndex)]) },
-                    valueRange = 0f..maxIndex.toFloat().coerceAtLeast(1f),
-                    steps = (maxIndex - 1).coerceAtLeast(0),
-                    modifier = Modifier.fillMaxWidth(),
-                    colors = SliderDefaults.colors(
-                        activeTrackColor = MaterialTheme.colorScheme.primary.copy(alpha = 0.07f),
-                        inactiveTrackColor = MaterialTheme.colorScheme.surfaceVariant.copy(alpha = 0.1f),
-                        activeTickColor = MaterialTheme.colorScheme.onPrimary.copy(alpha = 0.07f),
-                        inactiveTickColor = MaterialTheme.colorScheme.onSurfaceVariant.copy(alpha = 0.07f),
-                        thumbColor = MaterialTheme.colorScheme.primary.copy(alpha = 0.7f),
-                        ))
-            }
+            KifuTreeView(
+                currentNode = currentNode,
+                currentPath = currentPath,
+                onNodeChange = onNodeChange,
+                zoomHandler = zoomHandler,
+                modifier = Modifier.weight(1f)
+            )
 
             Box(
                 modifier = Modifier.size(36.dp).clip(RoundedCornerShape(50)).background(MaterialTheme.colorScheme.secondaryContainer)
                     .repeatingClickable(enabled = currentIndex < maxIndex) { if (currentIndex < maxIndex) onNodeChange(currentPath[currentIndex + 1]) },
                 contentAlignment = Alignment.Center
             ) { Icon(Icons.AutoMirrored.Filled.ArrowForward, contentDescription = stringResource(R.string.nav_next), tint = MaterialTheme.colorScheme.onSecondaryContainer, modifier = Modifier.size(20.dp)) }
+        }
+    }
+}
+
+// 手順をドットと線の樹形図で表示し、現在の手順のドットに形勢棒グラフを重ねる。
+// ピンチ（zoomHandler 経由）で縦方向を縮小・ドラッグで上下スクロール・タップでその手へ移動。
+@Composable
+private fun KifuTreeView(
+    currentNode: KifuNode,
+    currentPath: List<KifuNode>,
+    onNodeChange: (KifuNode) -> Unit,
+    zoomHandler: MutableState<((Float) -> Unit)?>,
+    modifier: Modifier = Modifier
+) {
+    var root = currentNode
+    while (root.parent != null) root = root.parent!!
+    // children (SnapshotStateList) をコンポジション中に読むので、ツリーが変われば再レイアウトされる
+    val layout = layoutKifuTree(root)
+    val pathSet = remember(currentPath) { currentPath.toHashSet() }
+
+    val density = LocalDensity.current
+    // 行間は棒グラフ（上下）がちょうど収まる高さ
+    val baseRowPx = with(density) { 48.dp.toPx() }
+    val padX = with(density) { 12.dp.toPx() }
+    val minPadYPx = with(density) { 12.dp.toPx() }
+    val minScaleY = 0.25f
+    val maxScaleY = 1f // 縦はデフォルトより拡大しない（縮小して全体を見る用途のみ）
+
+    val visibleRows = layout.rowCount.coerceIn(1, 2)
+    val viewHeight = 48.dp * visibleRows
+
+    var viewSize by remember { mutableStateOf(IntSize.Zero) }
+    var initialized by remember(root) { mutableStateOf(false) }
+    var offsetY by remember(root) { mutableFloatStateOf(0f) }
+    var scaleY by remember(root) { mutableFloatStateOf(1f) } // 縦方向の倍率（行間）
+    fun rowPx() = baseRowPx * scaleY
+    // 棒グラフの半分の高さ (±2000 で振り切れ)。隣の行の棒と重ならないよう行間の半分弱にする
+    fun barHalfPx() = rowPx() * 0.46f
+    // 上下の余白は棒グラフが切れない高さ（ただし表示高さの半分まで）
+    fun padY() = barHalfPx().coerceAtLeast(minPadYPx).coerceAtMost(viewSize.height / 2f)
+
+    val currentLayout by rememberUpdatedState(layout)
+    val currentOnNodeChange by rememberUpdatedState(onNodeChange)
+    // 横方向は拡大縮小せず、手数に合わせて常に幅いっぱいに並べる
+    val offsetX = padX
+    fun colPx() = (viewSize.width - 2 * padX) / currentLayout.maxCol.coerceAtLeast(1)
+
+    fun clampOffsets() {
+        val l = currentLayout
+        val h = viewSize.height.toFloat()
+        val contentH = (l.rowCount - 1) * rowPx()
+        val padY = padY()
+        offsetY = if (contentH <= h - 2 * padY) padY else offsetY.coerceIn(h - padY - contentH, padY)
+    }
+
+    // 初期表示: 本譜の行を上端に
+    LaunchedEffect(root, viewSize) {
+        if (viewSize.width == 0 || initialized) return@LaunchedEffect
+        offsetY = padY()
+        initialized = true
+        clampOffsets()
+    }
+
+    // 現在の手の行が表示範囲外に出たらそこへスクロール。高さ変化 (分岐の追加) でも再クランプする
+    LaunchedEffect(currentNode, initialized, viewSize, layout.rowCount) {
+        if (!initialized || viewSize.width == 0) return@LaunchedEffect
+        val l = currentLayout
+        val idx = l.indexOf[currentNode] ?: return@LaunchedEffect
+        val h = viewSize.height.toFloat()
+        val y = offsetY + l.row[idx] * rowPx()
+        if (y < padY() || y > h - padY()) offsetY = h / 2f - l.row[idx] * rowPx()
+        clampOffsets()
+    }
+
+    // ピンチの向きによらず縦方向（行間）だけ拡大縮小。現在の手の行が動かないようにオフセットを補正
+    val currentNodeState by rememberUpdatedState(currentNode)
+    SideEffect {
+        zoomHandler.value = handler@{ zoom ->
+            if (!initialized) return@handler
+            val oldY = scaleY
+            val newY = (oldY * zoom).coerceIn(minScaleY, maxScaleY)
+            val row = currentLayout.indexOf[currentNodeState]?.let { currentLayout.row[it] } ?: 0
+            val anchorY = offsetY + row * rowPx()
+            offsetY = anchorY - (anchorY - offsetY) * (newY / oldY)
+            scaleY = newY
+            clampOffsets()
+        }
+    }
+
+    val pathColor = MaterialTheme.colorScheme.primary
+    val branchColor = MaterialTheme.colorScheme.outline
+    val pvColor1 = MaterialTheme.colorScheme.primary
+    val pvColor2 = MaterialTheme.colorScheme.secondary
+    val pvColor3 = MaterialTheme.colorScheme.tertiary
+    val cursorColor = MaterialTheme.colorScheme.primary
+    val cursorHaloColor = MaterialTheme.colorScheme.primaryContainer
+    val containerColor = MaterialTheme.colorScheme.surfaceContainerHighest
+
+    // M3 Expressive: トーナルなコンテナ + 大きめの角丸
+    Canvas(
+        modifier = modifier
+            .height(viewHeight)
+            .clip(MaterialTheme.shapes.extraLarge)
+            .background(containerColor)
+            .onSizeChanged { viewSize = it }
+            .pointerInput(root) {
+                // 1本指のドラッグで上下スクロール（2本指はセクション側のピンチが消費するので来ない）
+                detectDragGestures { change, drag ->
+                    if (!initialized) return@detectDragGestures
+                    offsetY += drag.y
+                    clampOffsets()
+                    change.consume()
+                }
+            }
+            .pointerInput(root) {
+                detectTapGestures { pos ->
+                    if (!initialized) return@detectTapGestures
+                    val l = currentLayout
+                    val colPx = colPx()
+                    val rowPx = rowPx()
+                    val threshold = 28.dp.toPx()
+                    var best = -1; var bestD = threshold * threshold
+                    for (i in l.nodes.indices) {
+                        val dx = offsetX + l.col[i] * colPx - pos.x
+                        val dy = offsetY + l.row[i] * rowPx - pos.y
+                        val d = dx * dx + dy * dy
+                        if (d < bestD) { bestD = d; best = i }
+                    }
+                    if (best >= 0) currentOnNodeChange(l.nodes[best])
+                }
+            }
+    ) {
+        if (!initialized) return@Canvas
+        val colPx = colPx()
+        val rowPx = rowPx()
+        val dotR = (minOf(colPx, rowPx) * 0.3f).coerceIn(2.dp.toPx(), 5.dp.toPx())
+        val left = -dotR * 4; val right = size.width + dotR * 4
+        fun pos(i: Int) = Offset(offsetX + layout.col[i] * colPx, offsetY + layout.row[i] * rowPx)
+        fun lineColor(node: KifuNode, onPath: Boolean) = if (node.isPvBranch) when (node.pvColorIndex) {
+            1 -> pvColor1; 2 -> pvColor2; 3 -> pvColor3; else -> branchColor
+        } else if (onPath) pathColor else branchColor
+
+        // 線（現在の手順は太く濃く、PV分岐は候補順位の色）
+        for (i in layout.nodes.indices) {
+            val p = layout.parentIdx[i]
+            if (p < 0) continue
+            val a = pos(p); val b = pos(i)
+            if (b.x < left || a.x > right) continue
+            val node = layout.nodes[i]
+            val onPath = node in pathSet
+            drawLine(
+                color = lineColor(node, onPath).copy(alpha = if (onPath) 0.9f else 0.45f),
+                start = a, end = b,
+                strokeWidth = (if (onPath) 2.dp else 1.dp).toPx(),
+                cap = StrokeCap.Round
+            )
+        }
+
+        // 現在の手のハロー（ドットの背面）
+        val cursorIdx = layout.indexOf[currentNode]
+        cursorIdx?.let { i -> drawCircle(cursorHaloColor, radius = dotR + 5.dp.toPx(), center = pos(i)) }
+
+        // ドット
+        for (i in layout.nodes.indices) {
+            val c = pos(i)
+            if (c.x < left || c.x > right) continue
+            val node = layout.nodes[i]
+            val onPath = node in pathSet
+            drawCircle(lineColor(node, onPath).copy(alpha = if (onPath) 1f else 0.6f), radius = dotR, center = c)
+        }
+
+        // 形勢棒グラフ（解析済みの全ての手）: 各手のドットを中心に上下へ伸ばす。詰みは不透明
+        val barWidth = colPx.coerceAtLeast(2f)
+        for (i in layout.nodes.indices) {
+            val score = layout.nodes[i].evalScore ?: continue
+            val c = pos(i)
+            if (c.x < left || c.x > right) continue
+            val isMate = score > 10000 || score < -10000
+            val normalized = (score.toFloat() / 2000f).coerceIn(-1f, 1f)
+            val barColor = when {
+                isMate && score > 0 -> senteMateColor
+                isMate && score < 0 -> goteMateColor
+                score >= 0 -> senteBarColor
+                else -> goteBarColor
+            }
+            drawLine(barColor, c, Offset(c.x, c.y - normalized * barHalfPx()), strokeWidth = barWidth)
+        }
+
+        // 現在の手
+        cursorIdx?.let { i ->
+            drawCircle(cursorColor, radius = dotR + 5.dp.toPx(), center = pos(i), style = Stroke(width = 2.dp.toPx()))
         }
     }
 }
@@ -280,7 +479,7 @@ fun PlayerInfoContent(name: String, mark: String, isFlipped: Boolean = false, ga
 
 @Preview(showBackground = true)
 @Composable
-fun SliderControlSectionPreview() {
+fun KifuTreeSectionPreview() {
     val emptyBoard = emptyMap<Pair<Int, Int>, Piece>()
     val emptyHand = emptyMap<PieceType, Int>()
     val root = KifuNode(emptyBoard, emptyHand, emptyHand, Player.SENTE, "開始局面")
@@ -288,10 +487,12 @@ fun SliderControlSectionPreview() {
     val n2 = KifuNode(emptyBoard, emptyHand, emptyHand, Player.SENTE, "△3四歩", n1)
     val n3 = KifuNode(emptyBoard, emptyHand, emptyHand, Player.GOTE, "▲2六歩", n2, isPvBranch = true, pvColorIndex = 1)
     val n4 = KifuNode(emptyBoard, emptyHand, emptyHand, Player.SENTE, "△8四歩", n3, isPvBranch = true, pvColorIndex = 2)
+    val b3 = KifuNode(emptyBoard, emptyHand, emptyHand, Player.GOTE, "▲2五歩", n2)
+    root.children.add(n1); n1.children.add(n2); n2.children.add(b3); n2.children.add(n3); n3.children.add(n4)
+    root.evalScore = 0; n1.evalScore = 30; n2.evalScore = -50; n3.evalScore = 1200; n4.evalScore = 30000; b3.evalScore = -800
     val path = listOf(root, n1, n2, n3, n4)
-    val evalHistory = mapOf(0 to 0, 1 to 30, 2 to -50, 3 to 120, 4 to -200)
     ShogiGUITheme {
-        SliderControlSection(currentNode = n2, currentPath = path, evalHistory = evalHistory) {}
+        KifuTreeSection(currentNode = n3, currentPath = path) {}
     }
 }
 

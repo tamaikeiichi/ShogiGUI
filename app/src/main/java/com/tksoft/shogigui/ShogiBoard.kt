@@ -87,7 +87,7 @@ fun ShogiBoard(
         MaterialTheme.colorScheme.primaryContainer.copy(alpha = 0.8f)
     else
         MaterialTheme.colorScheme.tertiaryContainer.copy(alpha = 0.6f)
-    val selectionColor = MaterialTheme.colorScheme.primaryContainer.copy(alpha = 0.7f)
+    val selectionColor = pieceSelectionColor()
     val gridColor = MaterialTheme.colorScheme.outline
     val cellColor = MaterialTheme.colorScheme.outlineVariant
     val labelColor = MaterialTheme.colorScheme.onSurfaceVariant
@@ -450,7 +450,7 @@ fun HandView(
                     contentAlignment = Alignment.TopEnd,
                     modifier = Modifier
                         .padding(horizontal = 6.dp)
-                        .background(if (isSelected) MaterialTheme.colorScheme.secondaryContainer else Color.Transparent)
+                        .background(if (isSelected) pieceSelectionColor() else Color.Transparent)
                         .clickable { onPieceClick(type) }
                         .onGloballyPositioned { onPiecePositioned(type, it) }
                 ) {

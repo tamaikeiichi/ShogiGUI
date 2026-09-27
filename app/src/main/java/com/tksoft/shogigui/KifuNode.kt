@@ -1,6 +1,9 @@
 package com.tksoft.shogigui
 
+import androidx.compose.runtime.getValue
 import androidx.compose.runtime.mutableStateListOf
+import androidx.compose.runtime.mutableStateOf
+import androidx.compose.runtime.setValue
 
 // 棋譜の1局面を管理するノードクラス
 class KifuNode(
@@ -22,6 +25,14 @@ class KifuNode(
     // ファイル読み込み時のみ設定される残り時間（null = 情報なし）
     var senteRemainingMs: Long? = null
     var goteRemainingMs: Long? = null
+    // 解析で得た評価値（先手視点。詰みは ±30000 など |x|>10000。null = 未解析）
+    var evalScore by mutableStateOf<Int?>(null)
+
+    // 樹形図で同じ行に続ける子。PV分岐は同じ候補順位のPVだけ、それ以外は最初の非PV子を続ける。
+    // 手作業で入力した手や別の候補の読み筋は、新しい行（枝分かれ）になる
+    fun continuationChild(): KifuNode? =
+        if (isPvBranch) children.firstOrNull { it.isPvBranch && it.pvColorIndex == pvColorIndex }
+        else children.firstOrNull { !it.isPvBranch }
 }
 
 data class PendingMove(

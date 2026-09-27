@@ -120,7 +120,7 @@ class MainActivity : ComponentActivity() {
                         var p: KifuNode? = currentNode
                         while (p != null) { path.add(0, p); p = p.parent }
                         var c = currentNode.children.firstOrNull()
-                        while (c != null) { path.add(c); c = c.children.firstOrNull() }
+                        while (c != null) { path.add(c); c = c.continuationChild() ?: c.children.firstOrNull() }
                     }
                     path
                 }
@@ -136,10 +136,9 @@ class MainActivity : ComponentActivity() {
                 val pvUsiList = remember { mutableStateMapOf<Int, List<String>>() }
                 var pinnedPvList by remember { mutableStateOf<Map<Int, String>>(emptyMap()) }
                 var pinnedPvUsiList by remember { mutableStateOf<Map<Int, List<String>>>(emptyMap()) }
-                val evalHistory = remember { mutableStateMapOf<Int, Int>() }
-                var savedMainEvalHistory by remember { mutableStateOf<Map<Int, Int>>(emptyMap()) }
-                val analysisHistory = remember { mutableStateMapOf<Int, Map<Int, String>>() }
-                val analysisUsiHistory = remember { mutableStateMapOf<Int, Map<Int, List<String>>>() }
+                // 解析結果は局面（ノード）ごとに保持する。手数で持つと別の手順の同じ手数の結果が表示されてしまう
+                val analysisHistory = remember { mutableStateMapOf<KifuNode, Map<Int, String>>() }
+                val analysisUsiHistory = remember { mutableStateMapOf<KifuNode, Map<Int, List<String>>>() }
 
                 var bestmoveReceived by remember { mutableStateOf(false) }
                 var humanPlayer by remember { mutableStateOf<Player?>(null) }
@@ -206,7 +205,8 @@ class MainActivity : ComponentActivity() {
                     capturedBoard: Map<Pair<Int, Int>, Piece>,
                     capturedTurn: Player,
                     capturedMoveCount: Int,
-                    capturedLastTo: Pair<Int, Int>? ->
+                    capturedLastTo: Pair<Int, Int>?,
+                    capturedNode: KifuNode? ->
                     Log.d("callback_used", "手数=$capturedMoveCount turn=$capturedTurn line=$rawLine")
                     val line = rawLine.trim()
                     Log.d("EngineOutput", line)
@@ -233,15 +233,17 @@ class MainActivity : ComponentActivity() {
                             if (parsed.isNotEmpty()) {
                                 pvList[rank] = parsed
                                 engineOutput = pvList.toSortedMap().values.joinToString("\n---\n")
-                                analysisHistory[capturedMoveCount] = pvList.toMap()
-                                analysisUsiHistory[capturedMoveCount] = pvUsiList.toMap()
+                                if (capturedNode != null) {
+                                    analysisHistory[capturedNode] = pvList.toMap()
+                                    analysisUsiHistory[capturedNode] = pvUsiList.toMap()
+                                }
                                 if (rank == 1 && parsed.lines().any { scoreLineRegex.matches(it) }) {
                                     val scoreLine = parsed.lines().find { scoreLineRegex.matches(it) }
                                     val score = scoreLine?.substringBefore(" ")?.toIntOrNull()
-                                    if (score != null) evalHistory[capturedMoveCount] = score  // ← 変更
+                                    if (score != null) capturedNode?.evalScore = score
                                 } else if (rank == 1 && (parsed.contains("手詰") || parsed.contains("詰み"))) {
                                     val isSenteWin = parsed.contains("先手勝ち")
-                                    evalHistory[capturedMoveCount] = if (isSenteWin) 30000 else -30000
+                                    capturedNode?.evalScore = if (isSenteWin) 30000 else -30000
                                 }
                             }
                         }
@@ -252,9 +254,12 @@ class MainActivity : ComponentActivity() {
                 }
 
                 LaunchedEffect(currentNode) {
-                    val moveCount = currentNode.moveCount
-                    val savedPv = analysisHistory[moveCount]
-                    val savedUsi = analysisUsiHistory[moveCount]
+                    // 表示中のPV手順から外れた（手作業で別の手を指した等）ら、固定していた読み筋カードを解除
+                    if (pvBranchPath != null && currentNode !in currentPath) {
+                        pvBranchPath = null; pinnedPvList = emptyMap(); pinnedPvUsiList = emptyMap()
+                    }
+                    val savedPv = analysisHistory[currentNode]
+                    val savedUsi = analysisUsiHistory[currentNode]
                     if (savedPv != null && savedUsi != null) {
                         pvList.clear()
                         pvList.putAll(savedPv)
@@ -274,7 +279,7 @@ class MainActivity : ComponentActivity() {
                     delay(1000)
                     isEngineReady = false
                     engine.onOutputReceived = { rawLine ->
-                        runOnUiThread { processOutput(rawLine, emptyMap(), Player.SENTE, 0, null) }
+                        runOnUiThread { processOutput(rawLine, emptyMap(), Player.SENTE, 0, null, null) }
                     }
 
                     kotlinx.coroutines.withContext(kotlinx.coroutines.Dispatchers.IO) {
@@ -299,7 +304,7 @@ class MainActivity : ComponentActivity() {
                     val capturedLastTo = node.lastTo
 
                     engine.onOutputReceived = { rawLine ->
-                        runOnUiThread { processOutput(rawLine, capturedBoard, capturedTurn, capturedMoveCount, capturedLastTo) }
+                        runOnUiThread { processOutput(rawLine, capturedBoard, capturedTurn, capturedMoveCount, capturedLastTo, node) }
                     }
                     Log.d("callback_set", "手数=$capturedMoveCount turn=$capturedTurn")
                     engine.sendCommand("stop")
@@ -342,7 +347,7 @@ class MainActivity : ComponentActivity() {
                     val capturedLastTo2 = node.lastTo
                     engine.onOutputReceived = { rawLine ->
                         runOnUiThread {
-                            processOutput(rawLine, capturedBoard, capturedTurn, capturedMoveCount, capturedLastTo2)
+                            processOutput(rawLine, capturedBoard, capturedTurn, capturedMoveCount, capturedLastTo2, node)
                             if (rawLine.trim().startsWith("bestmove") && humanPlayer != null) {
                                 val moveStr = rawLine.trim().split(Regex("\\s+")).getOrNull(1)
                                 if (moveStr != null && moveStr != "(none)") {
@@ -433,7 +438,13 @@ class MainActivity : ComponentActivity() {
                                     .navigationBarsPadding()
                                     .padding(horizontal = 8.dp, vertical = 4.dp)
                             ) {
-                                SliderControlSection(currentNode, currentPath, evalHistory) { currentNode = it }
+                                KifuTreeSection(currentNode, currentPath) { node ->
+                                    // 樹形図のタップで表示中のPV手順の外へ移動したら、PV表示を解除する
+                                    if (pvBranchPath != null && node !in currentPath) {
+                                        pvBranchPath = null; pinnedPvList = emptyMap(); pinnedPvUsiList = emptyMap()
+                                    }
+                                    currentNode = node
+                                }
                                 Spacer(modifier = Modifier.height(8.dp))
                                 Row(modifier = Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.spacedBy(8.dp), verticalAlignment = Alignment.CenterVertically) {
                                     val clipboard = LocalClipboardManager.current
@@ -450,11 +461,12 @@ class MainActivity : ComponentActivity() {
                                                 isAnalysisMode = false; isAutoAnalysis = false; humanPlayer = null
                                                 currentNode = initialNode
                                                 initialNode.children.clear()
+                                                initialNode.evalScore = null
                                                 senteName = senteColorName; goteName = goteColorName; gameResult = ""
                                                 pvList.clear(); pvUsiList.clear()
                                                 pinnedPvList = emptyMap(); pinnedPvUsiList = emptyMap()
                                                 pvBranchPath = null
-                                                evalHistory.clear(); savedMainEvalHistory = emptyMap(); analysisHistory.clear(); analysisUsiHistory.clear()
+                                                analysisHistory.clear(); analysisUsiHistory.clear()
                                                 selectedSquare = null; selectedHandPiece = null
                                                 resetKey++
                                                 prefs.edit()
@@ -529,7 +541,7 @@ class MainActivity : ComponentActivity() {
                                             names.gote?.let { goteName = it; prefs.edit().putString("gote_name", it).apply() }
                                             gameResult = extractGameResult(text) ?: ""
                                             prefs.edit().putString("game_result", gameResult).apply()
-                                            pinnedPvList = emptyMap(); pinnedPvUsiList = emptyMap(); pvBranchPath = null; evalHistory.clear(); savedMainEvalHistory = emptyMap()
+                                            pinnedPvList = emptyMap(); pinnedPvUsiList = emptyMap(); pvBranchPath = null
                                             humanPlayer = null
                                             if (newNode != null) {
                                                 currentNode = freshRoot; saveKifu(freshRoot)
@@ -589,32 +601,18 @@ class MainActivity : ComponentActivity() {
                                     }
 
                                     OutlinedButton(onClick = {
-                                        fun clearPv(n: KifuNode) { n.children.removeIf { it.isPvBranch }; n.children.forEach { clearPv(it) } }
-                                        val pvBranchPoint = pvBranchPath?.firstOrNull()?.parent
-
-                                        // currentNodeが属する実際のルートを取得してPV除去
-                                        var treeRoot: KifuNode = currentNode
-                                        while (treeRoot.parent != null) { treeRoot = treeRoot.parent!! }
-                                        clearPv(treeRoot)
-                                        if (pvBranchPoint != null) {
-                                            currentNode = pvBranchPoint
-                                        } else {
-                                            // 親を辿り、自分が最初の非PV子でない最初の祖先（分岐点）へジャンプ
-                                            var p: KifuNode? = currentNode
-                                            while (p?.parent != null) {
-                                                val parent = p.parent!!
-                                                if (parent.children.firstOrNull { !it.isPvBranch } != p) {
-                                                    currentNode = parent; break
-                                                }
-                                                p = parent
-                                            }
+                                        // 枝分かれの元を辿って本譜（最初の非PV子の列）上の分岐点へ戻る。
+                                        // 枝分かれの手順や形勢は削除せず残す
+                                        val ancestors = mutableListOf<KifuNode>()
+                                        var p: KifuNode? = currentNode
+                                        while (p != null) { ancestors.add(0, p); p = p.parent }
+                                        var mainNode = ancestors[0]
+                                        for (next in ancestors.drop(1)) {
+                                            if (mainNode.children.firstOrNull { !it.isPvBranch } !== next) break
+                                            mainNode = next
                                         }
-                                        pinnedPvList = emptyMap(); pvBranchPath = null
-                                        if (savedMainEvalHistory.isNotEmpty()) {
-                                            evalHistory.clear()
-                                            evalHistory.putAll(savedMainEvalHistory)
-                                            savedMainEvalHistory = emptyMap()
-                                        }
+                                        currentNode = mainNode
+                                        pinnedPvList = emptyMap(); pinnedPvUsiList = emptyMap(); pvBranchPath = null
                                     },
                                         enabled = !isOnMainLine,
                                         modifier = Modifier.weight(0.3f).height(72.dp),
@@ -645,6 +643,8 @@ class MainActivity : ComponentActivity() {
                                     }
                                 }, isBoardFlipped, Modifier.sizeIn(maxWidth = 500.dp, maxHeight = 500.dp), currentNode.lastFrom, currentNode.lastTo, currentNode.pvColorIndex, bestMoveArrowUsi, onBoardBoxPositioned, bestMoveArrowColor)
                                 PlayerStatusSection(if(botP==Player.SENTE) senteName else goteName, if(botP==Player.SENTE) "▲" else "△", currentPlayer==botP, if(botP==Player.SENTE) senteHand else goteHand, selectedHandPiece, currentPlayer, isBoardFlipped, handOnTop = true, gameResult = gameResult, remainingMs = if(botP==Player.SENTE) currentNode.senteRemainingMs else currentNode.goteRemainingMs, onNameClick = { editingPlayerMark = if(botP==Player.SENTE) "▲" else "△" }, onPiecePositioned = onHandPiecePositioned) { if (isHumanTurn) { selectedHandPiece = it; selectedSquare = null } }
+                                // bottomBar に隠れる分をスクロールで見られるようにする
+                                Spacer(modifier = Modifier.height(innerPadding.calculateBottomPadding()))
                             }
                             Column(
                                 modifier = Modifier
@@ -669,16 +669,11 @@ class MainActivity : ComponentActivity() {
                                                     pinnedPvList = pinned; pinnedPvUsiList = pinnedUsi
                                                     pvBranchPath = branchNodes
                                                     currentNode = lastNode; isAnalysisMode = analysisMode
-                                                    val branchPointMoveCount = branchNodes.firstOrNull()?.parent?.moveCount ?: 0
-                                                    if (savedMainEvalHistory.isEmpty()) {
-                                                        savedMainEvalHistory = evalHistory.toMap()
-                                                    }
-                                                    val keysToRemove = evalHistory.keys.filter { it > branchPointMoveCount }
-                                                    keysToRemove.forEach { evalHistory.remove(it) }
                                                 }
                                             }
                                         }
                                     }
+                                Spacer(modifier = Modifier.height(innerPadding.calculateBottomPadding()))
                             }
                         }
                     }
@@ -708,12 +703,6 @@ class MainActivity : ComponentActivity() {
                                                     pinnedPvList = pinned; pinnedPvUsiList = pinnedUsi
                                                     pvBranchPath = branchNodes
                                                     currentNode = lastNode; isAnalysisMode = analysisMode
-                                                    val branchPointMoveCount = branchNodes.firstOrNull()?.parent?.moveCount ?: 0
-                                                    if (savedMainEvalHistory.isEmpty()) {
-                                                        savedMainEvalHistory = evalHistory.toMap()
-                                                    }
-                                                    val keysToRemove = evalHistory.keys.filter { it > branchPointMoveCount }
-                                                    keysToRemove.forEach { evalHistory.remove(it) }
                                                 }
                                             }
                                         }
@@ -904,7 +893,6 @@ class MainActivity : ComponentActivity() {
                                                             pvList.clear(); pvUsiList.clear()
                                                             pinnedPvList = emptyMap(); pinnedPvUsiList = emptyMap()
                                                             pvBranchPath = null
-                                                            evalHistory.clear(); savedMainEvalHistory = emptyMap()
                                                             analysisHistory.clear(); analysisUsiHistory.clear()
                                                             selectedSquare = null; selectedHandPiece = null
                                                             prefs.edit()
@@ -1181,7 +1169,7 @@ fun MainScreenPreview() {
     val n1 = KifuNode(board, emptyHand, emptyHand, Player.GOTE, "▲7六歩", root)
     val n2 = KifuNode(board, senteHand, emptyHand, Player.SENTE, "△3四歩", n1)
     val path = listOf(root, n1, n2)
-    val evalHistory = mapOf(0 to 0, 1 to 120, 2 to -80)
+    n1.evalScore = 120; n2.evalScore = -80
     val pvText = "評価: +120 (先手指しやすい)\n読み筋: ▲2六歩 △3二金 ▲2五歩"
 
     ShogiGUITheme {
@@ -1197,7 +1185,7 @@ fun MainScreenPreview() {
                             .fillMaxWidth()
                             .padding(horizontal = 8.dp, vertical = 4.dp)
                     ) {
-                        SliderControlSection(n1, path, evalHistory) {}
+                        KifuTreeSection(n1, path) {}
                         Spacer(modifier = Modifier.height(8.dp))
                         Row(
                             modifier = Modifier.fillMaxWidth(),
