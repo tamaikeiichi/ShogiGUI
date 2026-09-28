@@ -6,6 +6,7 @@
     <string name="menu_reset">リセット</string>
     <string name="menu_analyze_to_end">現局面から最後まで解析</string>
     <string name="menu_export_main_line_csa">本譜をエクスポート(CSA)</string>
+    <string name="menu_delete_branches">分岐を削除</string>
     <string name="menu_play_as_sente">先手番を持って対局</string>
     <string name="menu_play_as_gote">後手番を持って対局</string>
     <string name="menu_settings">設定</string>

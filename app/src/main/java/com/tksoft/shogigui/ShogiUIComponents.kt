@@ -21,7 +21,6 @@ import androidx.compose.ui.Modifier
 import androidx.compose.ui.draw.clip
 import androidx.compose.ui.geometry.Offset
 import androidx.compose.ui.graphics.StrokeCap
-import androidx.compose.ui.graphics.drawscope.Stroke
 import androidx.compose.ui.layout.onSizeChanged
 import androidx.compose.ui.platform.LocalDensity
 import androidx.compose.ui.unit.IntSize
@@ -332,20 +331,22 @@ private fun KifuTreeView(
         }
     }
 
-    val pathColor = MaterialTheme.colorScheme.primary
-    val branchColor = MaterialTheme.colorScheme.outline
-    val pvColor1 = MaterialTheme.colorScheme.primary
-    val pvColor2 = MaterialTheme.colorScheme.secondary
-    val pvColor3 = MaterialTheme.colorScheme.tertiary
-    val cursorColor = MaterialTheme.colorScheme.primary
-    val cursorHaloColor = MaterialTheme.colorScheme.primaryContainer
+    // M3 Slider のデフォルト配色 (SliderDefaults.colors)
+    val activeTrackColor = MaterialTheme.colorScheme.primary
+    val inactiveTrackColor = MaterialTheme.colorScheme.secondaryContainer
+    val activeTickColor = MaterialTheme.colorScheme.onPrimary
+    val inactiveTickColor = MaterialTheme.colorScheme.onSecondaryContainer
+    val thumbColor = MaterialTheme.colorScheme.primary
     val containerColor = MaterialTheme.colorScheme.surfaceContainerHighest
+    // 現在の手順上で、現在の手までの手 (= Slider のアクティブ側)
+    val pathIndex = remember(currentPath) { HashMap<KifuNode, Int>().also { m -> currentPath.forEachIndexed { i, n -> m[n] = i } } }
+    val currentPathIdx = pathIndex[currentNode] ?: -1
 
-    // M3 Expressive: トーナルなコンテナ + 大きめの角丸
+    // M3 Expressive: トーナルなコンテナ + やや控えめな角丸
     Canvas(
         modifier = modifier
             .height(viewHeight)
-            .clip(MaterialTheme.shapes.extraLarge)
+            .clip(MaterialTheme.shapes.large)
             .background(containerColor)
             .onSizeChanged { viewSize = it }
             .pointerInput(root) {
@@ -378,43 +379,70 @@ private fun KifuTreeView(
         if (!initialized) return@Canvas
         val colPx = colPx()
         val rowPx = rowPx()
-        val dotR = (minOf(colPx, rowPx) * 0.3f).coerceIn(2.dp.toPx(), 5.dp.toPx())
-        val left = -dotR * 4; val right = size.width + dotR * 4
+        // Slider の寸法 (SliderTokens) を基に、トラックは細め (6dp)。つまみ 4x24dp・つまみとトラックの隙間 6dp・目盛り径 3dp。
+        // 縦に縮小したときは行間に収まるよう縮める
+        val trackH = minOf(6.dp.toPx(), rowPx * 0.25f)
+        val thumbW = 4.dp.toPx()
+        val thumbH = minOf(20.dp.toPx(), rowPx * 0.5f)
+        val thumbGap = 6.dp.toPx()
+        val tickR = minOf(1.5f.dp.toPx(), trackH / 4f)
+        val left = -trackH * 2; val right = size.width + trackH * 2
         fun pos(i: Int) = Offset(offsetX + layout.col[i] * colPx, offsetY + layout.row[i] * rowPx)
-        fun lineColor(node: KifuNode, onPath: Boolean) = if (node.isPvBranch) when (node.pvColorIndex) {
-            1 -> pvColor1; 2 -> pvColor2; 3 -> pvColor3; else -> branchColor
-        } else if (onPath) pathColor else branchColor
-
-        // 線（現在の手順は太く濃く、PV分岐は候補順位の色）
-        for (i in layout.nodes.indices) {
-            val p = layout.parentIdx[i]
-            if (p < 0) continue
-            val a = pos(p); val b = pos(i)
-            if (b.x < left || a.x > right) continue
-            val node = layout.nodes[i]
-            val onPath = node in pathSet
-            drawLine(
-                color = lineColor(node, onPath).copy(alpha = if (onPath) 0.9f else 0.45f),
-                start = a, end = b,
-                strokeWidth = (if (onPath) 2.dp else 1.dp).toPx(),
-                cap = StrokeCap.Round
-            )
-        }
-
-        // 現在の手のハロー（ドットの背面）
+        fun isActive(node: KifuNode) = (pathIndex[node] ?: Int.MAX_VALUE) <= currentPathIdx
+        fun trackColor(node: KifuNode) = if (isActive(node)) activeTrackColor else inactiveTrackColor
         val cursorIdx = layout.indexOf[currentNode]
-        cursorIdx?.let { i -> drawCircle(cursorHaloColor, radius = dotR + 5.dp.toPx(), center = pos(i)) }
+        val cut = thumbW / 2 + thumbGap // つまみの左右はトラックを切り欠く
 
-        // ドット
-        for (i in layout.nodes.indices) {
-            val c = pos(i)
-            if (c.x < left || c.x > right) continue
-            val node = layout.nodes[i]
-            val onPath = node in pathSet
-            drawCircle(lineColor(node, onPath).copy(alpha = if (onPath) 1f else 0.6f), radius = dotR, center = c)
+        // トラック: 未到達側を先に、到達側を上に描く。
+        // 線は端を切りっぱなしにし、各ドットの位置に円を置いて角丸・継ぎ目にする（つまみの位置は除く）
+        for (pass in 0..1) {
+            val wantActive = pass == 1
+            for (i in layout.nodes.indices) {
+                val p = layout.parentIdx[i]
+                if (p < 0) continue
+                val node = layout.nodes[i]
+                if (isActive(node) != wantActive) continue
+                var a = pos(p); var b = pos(i)
+                if (b.x < left || a.x > right) continue
+                val len = (b - a).getDistance()
+                if (len <= 0f) continue
+                val dir = (b - a) / len
+                var l = len
+                if (p == cursorIdx) { a += dir * cut; l -= cut }
+                if (i == cursorIdx) { b -= dir * cut; l -= cut }
+                if (l <= 0f) continue
+                // 分岐して別の行へ下りる斜めの線はごく細く、現在の手の左右によらず常にアクティブ側の濃い色
+                val diagonal = layout.row[p] != layout.row[i]
+                if (diagonal) drawLine(activeTrackColor, a, b, strokeWidth = 1.dp.toPx(), cap = StrokeCap.Round)
+                else drawLine(trackColor(node), a, b, strokeWidth = trackH, cap = StrokeCap.Butt)
+            }
+            for (i in layout.nodes.indices) {
+                if (i == cursorIdx) continue
+                val node = layout.nodes[i]
+                // 根は子（最初の手）の色に合わせる
+                val colorNode = if (layout.parentIdx[i] < 0) node.continuationChild() ?: node.children.firstOrNull() ?: node else node
+                if (isActive(colorNode) != wantActive) continue
+                val c = pos(i)
+                if (c.x < left || c.x > right) continue
+                // トラック端の丸みは、つまみに接していない側だけ
+                val nearThumb = cursorIdx?.let { (pos(it) - c).getDistance() < cut + trackH / 2 } ?: false
+                if (!nearThumb) drawCircle(trackColor(colorNode), radius = trackH / 2, center = c)
+            }
         }
 
-        // 形勢棒グラフ（解析済みの全ての手）: 各手のドットを中心に上下へ伸ばす。詰みは不透明
+        // 目盛り（各手）。密集して見分けられないときは省く
+        if (colPx >= tickR * 4) {
+            for (i in layout.nodes.indices) {
+                if (i == cursorIdx) continue
+                val c = pos(i)
+                if (c.x < left || c.x > right) continue
+                val colorNode = if (layout.parentIdx[i] < 0) layout.nodes[i].continuationChild() ?: layout.nodes[i] else layout.nodes[i]
+                if (cursorIdx != null && (pos(cursorIdx) - c).getDistance() < cut) continue
+                drawCircle(if (isActive(colorNode)) activeTickColor else inactiveTickColor, radius = tickR, center = c)
+            }
+        }
+
+        // 形勢棒グラフ（解析済みの全ての手）: 各手の位置を中心に上下へ伸ばす。詰みは不透明
         val barWidth = colPx.coerceAtLeast(2f)
         for (i in layout.nodes.indices) {
             val score = layout.nodes[i].evalScore ?: continue
@@ -431,9 +459,15 @@ private fun KifuTreeView(
             drawLine(barColor, c, Offset(c.x, c.y - normalized * barHalfPx()), strokeWidth = barWidth)
         }
 
-        // 現在の手
+        // 現在の手: Slider のつまみ（縦長の角丸バー）
         cursorIdx?.let { i ->
-            drawCircle(cursorColor, radius = dotR + 5.dp.toPx(), center = pos(i), style = Stroke(width = 2.dp.toPx()))
+            val c = pos(i)
+            drawRoundRect(
+                thumbColor,
+                topLeft = Offset(c.x - thumbW / 2, c.y - thumbH / 2),
+                size = androidx.compose.ui.geometry.Size(thumbW, thumbH),
+                cornerRadius = androidx.compose.ui.geometry.CornerRadius(thumbW / 2)
+            )
         }
     }
 }

@@ -478,6 +478,30 @@ class MainActivity : ComponentActivity() {
                                                 showMenu = false
                                             })
                                         DropdownMenuItem(
+                                            text = { Text(stringResource(R.string.menu_delete_branches)) },
+                                            onClick = {
+                                                // 本譜（最初の非PV子の列）だけを残し、それ以外の子（分岐・読み筋）を削除する。
+                                                // 本譜の各手の評価値はノードに残るので形勢グラフもそのまま
+                                                val root = getRootNode(currentNode)
+                                                val mainLine = HashSet<KifuNode>()
+                                                var n: KifuNode? = root
+                                                while (n != null) {
+                                                    mainLine.add(n)
+                                                    val next = n.children.firstOrNull { !it.isPvBranch }
+                                                    n.children.removeAll { it !== next }
+                                                    n = next
+                                                }
+                                                // 削除した分岐上にいたら、本譜上の分岐点へ戻る
+                                                var p: KifuNode? = currentNode
+                                                while (p != null && p !in mainLine) p = p.parent
+                                                currentNode = p ?: root
+                                                pinnedPvList = emptyMap(); pinnedPvUsiList = emptyMap(); pvBranchPath = null
+                                                analysisHistory.keys.retainAll(mainLine); analysisUsiHistory.keys.retainAll(mainLine)
+                                                selectedSquare = null; selectedHandPiece = null
+                                                saveKifu(root)
+                                                showMenu = false
+                                            })
+                                        DropdownMenuItem(
                                             text = { Text(stringResource(R.string.menu_analyze_to_end)) },
                                             onClick = { isAutoAnalysis = true; pinnedPvList = emptyMap(); pinnedPvUsiList = emptyMap(); showMenu = false })
                                         DropdownMenuItem(

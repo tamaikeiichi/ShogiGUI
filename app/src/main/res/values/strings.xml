@@ -6,6 +6,7 @@
     <string name="menu_reset">Reset</string>
     <string name="menu_analyze_to_end">Analyze to the end from here</string>
     <string name="menu_export_main_line_csa">Export main line (CSA)</string>
+    <string name="menu_delete_branches">Delete branches</string>
     <string name="menu_play_as_sente">Play as Sente</string>
     <string name="menu_play_as_gote">Play as Gote</string>
     <string name="menu_settings">Settings</string>
