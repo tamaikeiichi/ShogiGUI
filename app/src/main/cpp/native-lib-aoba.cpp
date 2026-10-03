@@ -9,6 +9,7 @@
 #include <queue>
 #include <atomic>
 #include <memory>
+#include <chrono>
 
 #include "AobaNNUE/source/misc.h"
 #include "AobaNNUE/source/bitboard.h"
@@ -84,12 +85,23 @@ static std::shared_ptr<AobaCinBuf> g_cin_buf;
 // ヒープ確保: exit() による global dtor でも破棄されない
 static std::mutex& g_cin_mutex = *new std::mutex();
 
-// nativeStart の多重起動を防ぐ
-static std::atomic<bool> g_running{false};
+// nativeStart の多重起動を防ぐ。
+// nativeStop は "quit" を投入するだけで前のエンジンの終了を待たないため、
+// 直後の nativeStart は前のエンジンが run_engine_entry を抜けるまで待つ
+static bool g_running = false;
+static std::mutex& g_running_mutex = *new std::mutex();
+static std::condition_variable& g_running_cv = *new std::condition_variable();
 
 extern "C" JNIEXPORT void JNICALL
 Java_com_tksoft_shogigui_AobaEngine_nativeStart(JNIEnv* env, jobject thiz) {
-    if (g_running.exchange(true)) return;
+    {
+        std::unique_lock<std::mutex> lock(g_running_mutex);
+        if (!g_running_cv.wait_for(lock, std::chrono::seconds(10), []{ return !g_running; })) {
+            __android_log_print(ANDROID_LOG_WARN, "ShogiJNI_Aoba", "nativeStart: previous engine did not exit in time");
+            return;
+        }
+        g_running = true;
+    }
 
     env->GetJavaVM(&g_vm);
     {
@@ -155,7 +167,11 @@ Java_com_tksoft_shogigui_AobaEngine_nativeStart(JNIEnv* env, jobject thiz) {
         g_obj = nullptr;
     }
 
-    g_running.store(false);
+    {
+        std::lock_guard<std::mutex> lock(g_running_mutex);
+        g_running = false;
+    }
+    g_running_cv.notify_all();
 }
 
 extern "C" JNIEXPORT void JNICALL
