@@ -23,6 +23,9 @@ target_compile_definitions(yaneuraou PRIVATE
     NDEBUG
     NO_ASSUME_VLA
     USE_LARGE_PAGES
+    # 探索スレッドを 8MB スタックで作る (thread_win32_osx.h の NativeThread)。
+    # 未定義だと std::thread になり、Android の既定 (約1MB) では深い探索でスタックオーバーフローする
+    USE_PTHREADS
 )
 
 target_compile_options(yaneuraou PRIVATE
@@ -62,6 +65,9 @@ target_compile_definitions(aobannue PRIVATE
     NDEBUG
     NO_ASSUME_VLA
     USE_LARGE_PAGES
+    # 探索スレッドを 8MB スタックで作る (thread_win32_osx.h の NativeThread)。
+    # 未定義だと std::thread になり、Android の既定 (約1MB) では深い探索でスタックオーバーフローする
+    USE_PTHREADS
 )
 
 target_compile_options(aobannue PRIVATE
