@@ -591,6 +591,9 @@ private fun gameResultToCsaEndTag(gameResult: String): String = when {
     gameResult.contains("時間切れ") -> "%TIME_UP"
     gameResult.contains("入玉") -> "%KACHI"
     gameResult.contains("詰み") -> "%TSUMI"
+    // 反則勝ち（KIF の「反則勝ち」行由来）は相手側の反則として記録する
+    gameResult.startsWith("先手勝ち（反則勝ち）") -> "%-ILLEGAL_ACTION"
+    gameResult.startsWith("後手勝ち（反則勝ち）") -> "%+ILLEGAL_ACTION"
     gameResult.contains("反則") -> "%ILLEGAL_MOVE"
     gameResult.contains("千日手") -> "%SENNICHITE"
     gameResult.contains("持将棋") -> "%JISHOGI"
@@ -660,6 +663,9 @@ fun exportMainLineToCsa(
     return sb.toString()
 }
 
+private val kifEndLineRegex =
+    Regex("""^(\d+)\s+(投了|切れ負け|時間切れ|反則負け|詰み|入玉勝ち|宣言勝ち|反則勝ち|千日手|持将棋|中断)(?:\s|\(|$)""")
+
 fun extractGameResult(text: String): String? {
     var lastTurn: Char? = null
     for (line in text.lines()) {
@@ -671,6 +677,24 @@ fun extractGameResult(text: String): String? {
         }
         val kifMatch = Regex("""まで\d+手で(先手|後手)の勝ち""").find(t)
         if (kifMatch != null) return "${kifMatch.groupValues[1]}勝ち"
+        // KIF の終局行（例: "109 投了   ( 0:03/00:04:42)"）。手数が奇数なら先手の手番での終局。
+        // 「まで〜の勝ち」行が無い棋譜（将棋ウォーズ等）でも勝敗を取れるようにする
+        kifEndLineRegex.find(t)?.let { m ->
+            val moverIsSente = m.groupValues[1].toInt() % 2 == 1
+            val mover = if (moverIsSente) "先手" else "後手"
+            val other = if (moverIsSente) "後手" else "先手"
+            when (m.groupValues[2]) {
+                // 手番側の負け
+                "投了" -> return "${other}勝ち（投了）"
+                "切れ負け", "時間切れ" -> return "${other}勝ち（時間切れ）"
+                "反則負け" -> return "${other}勝ち（反則負け）"
+                "詰み" -> return "${other}勝ち（詰み）"
+                // 手番側の勝ち
+                "入玉勝ち", "宣言勝ち" -> return "${mover}勝ち（入玉宣言）"
+                "反則勝ち" -> return "${mover}勝ち（反則勝ち）"
+                "千日手", "持将棋", "中断" -> return m.groupValues[2]
+            }
+        }
         // %TORYO/%TIME_UP/%ILLEGAL_MOVE: 手番側（lastTurnの相手）が負け
         // %KACHI/%TSUMI: 最後に指した側が勝ち
         when (t) {

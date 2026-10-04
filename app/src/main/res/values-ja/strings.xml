@@ -27,7 +27,8 @@
     <!-- 設定ダイアログ -->
     <string name="settings_title_prefix">設定 </string>
     <string name="settings_engine_label">エンジン</string>
-    <string name="settings_think_time">思考時間: %1$dms</string>
+    <string name="settings_think_time_label">自動解析の思考時間</string>
+    <string name="settings_think_time_unit">秒</string>
     <string name="settings_multipv_label">候補手 (MultiPV)</string>
     <string name="settings_threads_label">スレッド数</string>
     <string name="settings_save">保存</string>

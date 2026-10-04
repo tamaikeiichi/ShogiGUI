@@ -22,13 +22,16 @@ import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.draw.rotate
 import androidx.compose.ui.geometry.Offset
-import androidx.compose.ui.geometry.Rect
 import androidx.compose.ui.graphics.Color
-import androidx.compose.ui.graphics.Paint
 import androidx.compose.ui.graphics.Path
-import androidx.compose.ui.graphics.StrokeCap
+import androidx.compose.ui.text.rememberTextMeasurer
+import androidx.compose.ui.text.drawText
+import androidx.compose.ui.text.TextStyle
+import androidx.compose.ui.text.TextMeasurer
+import androidx.compose.ui.graphics.drawscope.rotate
+import androidx.compose.ui.graphics.Brush
+import androidx.compose.ui.graphics.drawscope.DrawScope
 import androidx.compose.ui.graphics.drawscope.Stroke
-import androidx.compose.ui.graphics.drawscope.drawIntoCanvas
 import androidx.compose.ui.graphics.drawscope.scale
 import androidx.compose.ui.layout.LayoutCoordinates
 import androidx.compose.ui.layout.onGloballyPositioned
@@ -68,12 +71,11 @@ fun ShogiBoard(
     lastFrom: Pair<Int, Int>? = null,
     lastTo: Pair<Int, Int>? = null,
     pvColorIndex: Int = 0,
-    // 解析中の候補1番目の指し手 (USI形式、例: "7g7f")。解析が中止されると null になり矢印は消える。
-    bestMoveUsi: String? = null,
+    // 解析中に盤上へ描く矢印（候補手・本譜の次の手）。空になると（解析停止）薄くして残す。
+    // 駒打ち (from == null) は DropMoveArrowOverlay 側で描く
+    moveArrows: List<MoveArrow> = emptyList(),
     // 盤面9x9マス部分の画面上の位置を通知する（打つ手の矢印を持ち駒から盤面へ引くために使用）
     onBoardBoxPositioned: (LayoutCoordinates) -> Unit = {},
-    // 矢印の色。呼び出し側で「候補1番目」として表示しているPVカードと同じ色を渡す想定。
-    bestMoveColor: Color = MaterialTheme.colorScheme.primary,
 
 ) {
     val boardColor = when (pvColorIndex) {
@@ -168,7 +170,7 @@ fun ShogiBoard(
                     }
                 }
             }
-                BestMoveArrow(bestMoveUsi = bestMoveUsi, boardState = boardState, arrowColor = bestMoveColor, modifier = Modifier.fillMaxSize())
+                BoardMoveArrows(arrows = moveArrows, boardState = boardState, isFlipped = isFlipped, modifier = Modifier.fillMaxSize())
             }
             // ... (段ラベル部分は変更なし)
 
@@ -198,20 +200,129 @@ fun ShogiBoard(
     }
 }
 
-// 解析中の候補1番目の指し手を示す矢印 (M3 Expressive: 太くまるいストロークとバネの弾みで表示/消去する)
+// 盤上に描く指し手の矢印。from == null は駒打ち（持ち駒から引くので DropMoveArrowOverlay 側で描く）。
+// fillColor == null は塗りつぶしなし（輪郭だけ）の矢印。
+// rankLabel は候補手の順位で、移動先のマスに fillColor の数字で表示する
+data class MoveArrow(
+    val from: Pair<Int, Int>?,
+    val to: Pair<Int, Int>,
+    val dropPieceType: PieceType?,
+    val fillColor: Color?,
+    val edgeColor: Color,
+    val rankLabel: String? = null
+)
+
+fun moveArrowFromUsi(usiMove: String, fillColor: Color?, edgeColor: Color, rankLabel: String? = null): MoveArrow? {
+    val (from, to) = usiMoveSquares(usiMove) ?: return null
+    return MoveArrow(from, to, usiDropPieceType(usiMove), fillColor, edgeColor, rankLabel)
+}
+
+// 候補手の順位の数字を移動先のマスの中央に描く。駒の上でも読めるよう、数字の背後に
+// 半透明でふちをぼかした円（放射グラデーション）を敷く。同じマスへの候補が複数あれば横に並べる。
+// upsideDown: 盤ごと 180° 回転して表示しているとき、数字だけ正立させる
+private fun DrawScope.drawRankLabels(
+    labels: List<Pair<Offset, MoveArrow>>, cell: Float, measurer: TextMeasurer,
+    backdropColor: Color, alpha: Float, upsideDown: Boolean
+) {
+    labels.filter { it.second.rankLabel != null && it.second.fillColor != null }
+        .groupBy { it.first }
+        .forEach { (center, list) ->
+            val step = cell * 0.42f
+            list.forEachIndexed { i, (_, arrow) ->
+                // 回転表示時は並び順も左右反転して、画面上で左から順位順になるようにする
+                val shift = (i - (list.size - 1) / 2f) * step * (if (upsideDown) -1 else 1)
+                val c = Offset(center.x + shift, center.y)
+                val r = cell * 0.36f
+                drawCircle(
+                    Brush.radialGradient(
+                        0f to backdropColor.copy(alpha = 0.7f * alpha),
+                        0.5f to backdropColor.copy(alpha = 0.5f * alpha),
+                        1f to Color.Transparent,
+                        center = c, radius = r
+                    ),
+                    radius = r, center = c
+                )
+                val layout = measurer.measure(
+                    arrow.rankLabel!!,
+                    TextStyle(
+                        color = arrow.fillColor!!, fontSize = (cell * 0.42f).toSp(), fontWeight = FontWeight.Bold
+                    )
+                )
+                val topLeft = Offset(c.x - layout.size.width / 2f, c.y - layout.size.height / 2f)
+                rotate(if (upsideDown) 180f else 0f, pivot = c) {
+                    drawText(layout, topLeft = topLeft, alpha = alpha)
+                }
+            }
+        }
+}
+
+// 矢印を1つの多角形（軸＋矢じり）として描く。塗りと輪郭が重なって濃くならないので、
+// 塗りつぶしあり・なし（輪郭のみ）のどちらも同じ形で描ける
+private fun DrawScope.drawMoveArrow(
+    fromCenter: Offset, toCenter: Offset, cell: Float, startInset: Float,
+    fillColor: Color?, edgeColor: Color, haloColor: Color, alpha: Float
+) {
+    val dx = toCenter.x - fromCenter.x
+    val dy = toCenter.y - fromCenter.y
+    val dist = hypot(dx, dy)
+    if (dist < 1f) return
+    val ux = dx / dist
+    val uy = dy / dist
+    val px = -uy
+    val py = ux
+
+    val shaftHalf = cell * 0.10f
+    val headLength = cell * 0.46f
+    val headHalf = cell * 0.22f
+    val endInset = cell * 0.12f
+
+    val start = Offset(fromCenter.x + ux * startInset, fromCenter.y + uy * startInset)
+    val tip = Offset(toCenter.x - ux * endInset, toCenter.y - uy * endInset)
+    val neck = Offset(tip.x - ux * headLength, tip.y - uy * headLength)
+    val path = Path().apply {
+        moveTo(start.x + px * shaftHalf, start.y + py * shaftHalf)
+        lineTo(neck.x + px * shaftHalf, neck.y + py * shaftHalf)
+        lineTo(neck.x + px * headHalf, neck.y + py * headHalf)
+        lineTo(tip.x, tip.y)
+        lineTo(neck.x - px * headHalf, neck.y - py * headHalf)
+        lineTo(neck.x - px * shaftHalf, neck.y - py * shaftHalf)
+        lineTo(start.x - px * shaftHalf, start.y - py * shaftHalf)
+        close()
+    }
+    // 始点（移動元の駒の上）は透かし、先端に向かって不透明にする。
+    // 1つの駒から複数の矢印が出ても駒が隠れないように。矢じりは不透明のまま
+    val total = hypot(tip.x - start.x, tip.y - start.y)
+    val neckFraction = if (total > 0f) (1f - headLength / total).coerceIn(0f, 1f) else 0f
+    fun fade(color: Color, a: Float) = Brush.linearGradient(
+        0f to color.copy(alpha = color.alpha * a * arrowStartAlpha),
+        neckFraction to color.copy(alpha = color.alpha * a),
+        1f to color.copy(alpha = color.alpha * a),
+        start = start, end = tip
+    )
+    val round = androidx.compose.ui.graphics.StrokeJoin.Round
+    // 縁取り（駒の上でも視認できるようコントラストを確保）
+    drawPath(path, fade(haloColor, arrowOutlineAlpha * alpha), style = Stroke(width = cell * 0.10f, join = round))
+    if (fillColor != null) {
+        drawPath(path, fade(fillColor, arrowBodyAlpha * alpha))
+        drawPath(path, fade(edgeColor, arrowEdgeAlpha * alpha), style = Stroke(width = cell * 0.035f, join = round))
+    } else {
+        drawPath(path, fade(edgeColor, arrowEdgeAlpha * alpha), style = Stroke(width = cell * 0.06f, join = round))
+    }
+}
+
+// 解析中の指し手の矢印 (M3 Expressive: バネの弾みで表示/消去する)
 // 解析を停止しても矢印自体は消さず、透明度を上げて（薄く）残す。局面が変わったとき
 // (指し手が進む・棋譜を移動する等) だけ、直前の矢印は無関係になるので消す。
 @Composable
-fun BestMoveArrow(
-    bestMoveUsi: String?,
+fun BoardMoveArrows(
+    arrows: List<MoveArrow>,
     boardState: Map<Pair<Int, Int>, Piece>,
-    modifier: Modifier = Modifier,
-    arrowColor: Color = MaterialTheme.colorScheme.primary
+    isFlipped: Boolean = false,
+    modifier: Modifier = Modifier
 ) {
-    var lastSquares by remember(boardState) { mutableStateOf<Pair<Pair<Int, Int>?, Pair<Int, Int>>?>(null) }
-    val squares = bestMoveUsi?.let { usiMoveSquares(it) }
-    if (squares != null) lastSquares = squares
-    val hasArrow = lastSquares != null
+    var lastArrows by remember(boardState) { mutableStateOf<List<MoveArrow>>(emptyList()) }
+    if (arrows.isNotEmpty()) lastArrows = arrows
+    val hasArrow = lastArrows.isNotEmpty()
 
     // 矢印の伸びるバネアニメーション（表示/非表示の切り替え時のみ）
     val growProgress by animateFloatAsState(
@@ -220,91 +331,50 @@ fun BestMoveArrow(
             spring(dampingRatio = Spring.DampingRatioMediumBouncy, stiffness = Spring.StiffnessMedium)
         else
             tween(durationMillis = 150),
-        label = "bestMoveArrowGrow"
+        label = "moveArrowGrow"
     )
 
     // 解析中はしっかり表示、解析停止後（局面はそのまま）は消さずに薄く残す
     val alpha by animateFloatAsState(
         targetValue = when {
-            squares != null -> 1f
+            arrows.isNotEmpty() -> 1f
             hasArrow -> restingArrowAlpha
             else -> 0f
         },
         animationSpec = tween(durationMillis = 300),
-        label = "bestMoveArrowAlpha"
+        label = "moveArrowAlpha"
     )
 
-    val shown = lastSquares
-    if (shown == null || growProgress <= 0f) return
-    val outlineColor = MaterialTheme.colorScheme.surface
+    val shown = lastArrows
+    if (shown.isEmpty() || growProgress <= 0f) return
+    val haloColor = MaterialTheme.colorScheme.surface
+    val labelBackdropColor = MaterialTheme.colorScheme.inverseSurface
+    val measurer = rememberTextMeasurer()
 
     Canvas(modifier = modifier) {
         val cell = size.width / 9f
-        val (from, to) = shown
-        val toCenter = Offset((to.second + 0.5f) * cell, (to.first + 0.5f) * cell)
-
-        if (from == null) {
-            // 駒打ち: 持ち駒から盤面へ引く矢印は DropMoveArrowOverlay (画面全体オーバーレイ) 側で描画する
-            return@Canvas
-        }
-
-        val fromCenter = Offset((from.second + 0.5f) * cell, (from.first + 0.5f) * cell)
-        val dx = toCenter.x - fromCenter.x
-        val dy = toCenter.y - fromCenter.y
-        val dist = hypot(dx, dy)
-        if (dist < 1f) return@Canvas
-        val ux = dx / dist
-        val uy = dy / dist
-
-        val strokeWidth = cell * 0.20f
-        val headLength = cell * 0.46f
-        val headWidth = cell * 0.36f
-        val startInset = cell * 0.10f
-        val endInset = cell * 0.12f
-
-        val lineStart = Offset(fromCenter.x + ux * startInset, fromCenter.y + uy * startInset)
-        val headTip = Offset(toCenter.x - ux * endInset, toCenter.y - uy * endInset)
-        val lineEnd = Offset(headTip.x - ux * headLength, headTip.y - uy * headLength)
-        val perpX = -uy
-        val perpY = ux
-        val baseL = Offset(lineEnd.x + perpX * headWidth / 2f, lineEnd.y + perpY * headWidth / 2f)
-        val baseR = Offset(lineEnd.x - perpX * headWidth / 2f, lineEnd.y - perpY * headWidth / 2f)
-        val headPath = Path().apply {
-            moveTo(headTip.x, headTip.y)
-            lineTo(baseL.x, baseL.y)
-            lineTo(baseR.x, baseR.y)
-            close()
-        }
-
-        // 移動元マスを起点にバネで伸びるアニメーション
-        scale(growProgress.coerceIn(0f, 1f), pivot = fromCenter) {
-            val bounds = Rect(Offset.Zero, size)
-            // 縁取り（駒の上でも視認できるようコントラストを確保）
-            // 棒と矢じりを同じレイヤーに不透明で描いてからレイヤーごと透過させることで、
-            // 重なり部分が二重に濃くならないようにする
-            val outlineLayerAlpha = arrowOutlineAlpha * alpha
-            drawIntoCanvas { canvas ->
-                canvas.saveLayer(bounds, Paint().apply { this.alpha = outlineLayerAlpha })
-                drawLine(outlineColor, lineStart, lineEnd, strokeWidth + cell * 0.06f, cap = StrokeCap.Round)
-                drawPath(headPath, outlineColor, style = Stroke(width = cell * 0.05f, join = androidx.compose.ui.graphics.StrokeJoin.Round))
-                canvas.restore()
+        val labels = ArrayList<Pair<Offset, MoveArrow>>()
+        for (arrow in shown) {
+            val from = arrow.from ?: continue
+            val fromCenter = Offset((from.second + 0.5f) * cell, (from.first + 0.5f) * cell)
+            val toCenter = Offset((arrow.to.second + 0.5f) * cell, (arrow.to.first + 0.5f) * cell)
+            // 移動元マスを起点にバネで伸びるアニメーション
+            scale(growProgress.coerceIn(0f, 1f), pivot = fromCenter) {
+                drawMoveArrow(fromCenter, toCenter, cell, cell * 0.10f, arrow.fillColor, arrow.edgeColor, haloColor, alpha)
             }
-
-            // 本体
-            val bodyLayerAlpha = arrowBodyAlpha * alpha
-            drawIntoCanvas { canvas ->
-                canvas.saveLayer(bounds, Paint().apply { this.alpha = bodyLayerAlpha })
-                drawLine(arrowColor, lineStart, lineEnd, strokeWidth, cap = StrokeCap.Round)
-                drawPath(headPath, arrowColor)
-                canvas.restore()
-            }
+            labels.add(toCenter to arrow)
         }
+        // 順位の数字は全ての矢印より上に描く
+        drawRankLabels(labels, cell, measurer, labelBackdropColor, alpha * growProgress.coerceIn(0f, 1f), isFlipped)
     }
 }
 
-// 矢印の不透明度（盤面が透けて見えるよう少し薄めに設定）
-private const val arrowBodyAlpha = 0.62f
+// 矢印の不透明度（盤面が少し透けて見える程度）
+private const val arrowBodyAlpha = 0.85f
+private const val arrowEdgeAlpha = 0.9f
 private const val arrowOutlineAlpha = 0.38f
+// 矢印の始点の不透明度（先端を 1 としたときの比率）
+private const val arrowStartAlpha = 0.25f
 // 解析停止後（局面は同じ）に矢印を消さず残しておくときの薄さ
 private const val restingArrowAlpha = 0.35f
 
@@ -313,12 +383,13 @@ private const val restingArrowAlpha = 0.35f
 // (isFlipped による rotate() 変換も自動的に考慮される)。
 @Composable
 fun DropMoveArrowOverlay(
-    visible: Boolean,
-    handCoordinates: LayoutCoordinates?,
+    // 駒打ちの矢印（from == null のもの）。空なら非表示
+    arrows: List<MoveArrow>,
+    // 局面。変わったら直前の矢印は無関係になるので消す（同じ間は解析停止後も薄く残す）
+    boardState: Map<Pair<Int, Int>, Piece>,
+    handCoordinates: (PieceType) -> LayoutCoordinates?,
     boardCoordinates: LayoutCoordinates?,
-    toSquare: Pair<Int, Int>?,
     modifier: Modifier = Modifier,
-    arrowColor: Color = MaterialTheme.colorScheme.primary,
     // 盤・持ち駒側のスクロール位置。このオーバーレイ自体はスクロールしない画面全体の
     // Box に置かれているため、onGloballyPositioned の再通知だけに頼ると盤や持ち駒が
     // スクロールで動いても矢印が再合成されず取り残されることがある。呼び出し側で
@@ -329,97 +400,75 @@ fun DropMoveArrowOverlay(
 ) {
     var ownCoordinates by remember { mutableStateOf<LayoutCoordinates?>(null) }
 
-    val own = ownCoordinates
-    val points = if (visible && toSquare != null &&
-        handCoordinates != null && handCoordinates.isAttached &&
-        boardCoordinates != null && boardCoordinates.isAttached &&
-        own != null && own.isAttached
-    ) {
-        try {
-            // scrollValue を実際に読むことで、Compose の strong skipping によりこの
-            // Composable が「未使用パラメータ」として再合成をスキップされるのを防ぐ。
-            // スクロールのたびにこのブロックを再実行させ、handCoordinates/boardCoordinates
-            // (常に現在位置を返すライブオブジェクト) から矢印の位置を計算し直させる。
-            @Suppress("UNUSED_EXPRESSION")
-            scrollValue
-            val cell = boardCoordinates.size.width / 9f
-            val toLocalInBoard = Offset((toSquare.second + 0.5f) * cell, (toSquare.first + 0.5f) * cell)
-            val handLocalCenter = Offset(handCoordinates.size.width / 2f, handCoordinates.size.height / 2f)
-            val fromInOwn = own.localPositionOf(handCoordinates, handLocalCenter)
-            val toInOwn = own.localPositionOf(boardCoordinates, toLocalInBoard)
-            Triple(fromInOwn, toInOwn, cell)
-        } catch (e: Exception) { null }
-    } else null
+    // 解析停止で arrows が空になっても、局面が同じ間は最後の矢印を薄くして残す。
+    // 位置は毎回 LayoutCoordinates から計算し直すので、スクロールしても追従する
+    // 「解析中かどうか」は駒打ちに限らず矢印全体で判定する。解析中は駒打ちの候補が無くなれば
+    // （最善手が駒打ちから盤上の手に変わった等）駒打ちの矢印も消す。そうしないと古い矢印が順位ごと残る
+    var lastArrows by remember(boardState) { mutableStateOf<List<MoveArrow>>(emptyList()) }
+    if (arrows.isNotEmpty()) lastArrows = arrows.filter { it.from == null }
+    val resting = arrows.isEmpty()
 
-    var lastPoints by remember { mutableStateOf<Triple<Offset, Offset, Float>?>(null) }
-    if (points != null) lastPoints = points
+    val own = ownCoordinates
+    val points = if (boardCoordinates != null && boardCoordinates.isAttached && own != null && own.isAttached) {
+        // scrollValue を実際に読むことで、Compose の strong skipping によりこの
+        // Composable が「未使用パラメータ」として再合成をスキップされるのを防ぐ。
+        @Suppress("UNUSED_EXPRESSION")
+        scrollValue
+        lastArrows.mapNotNull { arrow ->
+            val hand = arrow.dropPieceType?.let(handCoordinates) ?: return@mapNotNull null
+            if (!hand.isAttached) return@mapNotNull null
+            try {
+                val cell = boardCoordinates.size.width / 9f
+                val toLocalInBoard = Offset((arrow.to.second + 0.5f) * cell, (arrow.to.first + 0.5f) * cell)
+                val handLocalCenter = Offset(hand.size.width / 2f, hand.size.height / 2f)
+                val fromInOwn = own.localPositionOf(hand, handLocalCenter)
+                val toInOwn = own.localPositionOf(boardCoordinates, toLocalInBoard)
+                DropArrowPoints(fromInOwn, toInOwn, cell, arrow)
+            } catch (e: Exception) { null }
+        }
+    } else emptyList()
+
+    var lastPoints by remember { mutableStateOf<List<DropArrowPoints>>(emptyList()) }
+    if (points.isNotEmpty()) lastPoints = points
+
+    // 解析中はしっかり表示、解析停止後（局面はそのまま）は消さずに薄く残す
+    val restAlpha by animateFloatAsState(
+        targetValue = if (resting) restingArrowAlpha else 1f,
+        animationSpec = tween(durationMillis = 300),
+        label = "dropArrowAlpha"
+    )
 
     val progress by animateFloatAsState(
-        targetValue = if (points != null) 1f else 0f,
-        animationSpec = if (points != null)
+        targetValue = if (points.isNotEmpty()) 1f else 0f,
+        animationSpec = if (points.isNotEmpty())
             spring(dampingRatio = Spring.DampingRatioMediumBouncy, stiffness = Spring.StiffnessMedium)
         else
             tween(durationMillis = 150),
         label = "dropArrowProgress"
     )
 
-    val outlineColor = MaterialTheme.colorScheme.surface
+    val haloColor = MaterialTheme.colorScheme.surface
+    val labelBackdropColor = MaterialTheme.colorScheme.inverseSurface
+    val measurer = rememberTextMeasurer()
 
     Canvas(modifier = modifier.onGloballyPositioned { ownCoordinates = it }) {
-        val shown = lastPoints ?: return@Canvas
         if (progress <= 0f) return@Canvas
-        val (fromCenter, toCenter, cell) = shown
-        val alpha = progress.coerceIn(0f, 1f)
-
-        val dx = toCenter.x - fromCenter.x
-        val dy = toCenter.y - fromCenter.y
-        val dist = hypot(dx, dy)
-        if (dist < 1f) return@Canvas
-        val ux = dx / dist
-        val uy = dy / dist
-
-        val strokeWidth = cell * 0.20f
-        val headLength = cell * 0.46f
-        val headWidth = cell * 0.36f
-        val endInset = cell * 0.12f
-
-        val lineStart = fromCenter
-        val headTip = Offset(toCenter.x - ux * endInset, toCenter.y - uy * endInset)
-        val lineEnd = Offset(headTip.x - ux * headLength, headTip.y - uy * headLength)
-        val perpX = -uy
-        val perpY = ux
-        val baseL = Offset(lineEnd.x + perpX * headWidth / 2f, lineEnd.y + perpY * headWidth / 2f)
-        val baseR = Offset(lineEnd.x - perpX * headWidth / 2f, lineEnd.y - perpY * headWidth / 2f)
-        val headPath = Path().apply {
-            moveTo(headTip.x, headTip.y)
-            lineTo(baseL.x, baseL.y)
-            lineTo(baseR.x, baseR.y)
-            close()
-        }
-
-        // 持ち駒の位置を起点にバネで伸びるアニメーション
-        scale(progress.coerceIn(0f, 1f), pivot = fromCenter) {
-            val bounds = Rect(Offset.Zero, size)
-            // 棒と矢じりを同じレイヤーに不透明で描いてからレイヤーごと透過させることで、
-            // 重なり部分が二重に濃くならないようにする
-            val outlineLayerAlpha = arrowOutlineAlpha * alpha
-            drawIntoCanvas { canvas ->
-                canvas.saveLayer(bounds, Paint().apply { this.alpha = outlineLayerAlpha })
-                drawLine(outlineColor, lineStart, lineEnd, strokeWidth + cell * 0.06f, cap = StrokeCap.Round)
-                drawPath(headPath, outlineColor, style = Stroke(width = cell * 0.05f, join = androidx.compose.ui.graphics.StrokeJoin.Round))
-                canvas.restore()
-            }
-
-            val bodyLayerAlpha = arrowBodyAlpha * alpha
-            drawIntoCanvas { canvas ->
-                canvas.saveLayer(bounds, Paint().apply { this.alpha = bodyLayerAlpha })
-                drawLine(arrowColor, lineStart, lineEnd, strokeWidth, cap = StrokeCap.Round)
-                drawPath(headPath, arrowColor)
-                canvas.restore()
+        val grow = progress.coerceIn(0f, 1f)
+        val alpha = grow * restAlpha
+        for ((fromCenter, toCenter, cell, arrow) in lastPoints) {
+            // 持ち駒の位置を起点にバネで伸びるアニメーション
+            scale(grow, pivot = fromCenter) {
+                drawMoveArrow(fromCenter, toCenter, cell, 0f, arrow.fillColor, arrow.edgeColor, haloColor, alpha)
             }
         }
+        // このオーバーレイは回転していない座標系なので、数字はそのまま正立で描ける
+        val cell = lastPoints.firstOrNull()?.cell ?: return@Canvas
+        drawRankLabels(lastPoints.map { it.to to it.arrow }, cell, measurer, labelBackdropColor,
+            alpha, upsideDown = false)
     }
 }
+
+private data class DropArrowPoints(val from: Offset, val to: Offset, val cell: Float, val arrow: MoveArrow)
 
 @Composable
 fun HandView(

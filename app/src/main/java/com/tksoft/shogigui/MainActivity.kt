@@ -397,18 +397,35 @@ class MainActivity : ComponentActivity() {
                     }
                 }
 
-                // 解析中のみ候補1番目の指し手を盤面矢印として表示。解析停止で null になり矢印は消える。
-                // 「候補1番目」は MultiPV の順位ではなく、手番側から見て評価値が最も良いもの
-                // (PVカードの並び替えと同じ基準 = extractScore(pvText, currentPlayer) の降順) で決める。
-                // こうしないと後手番のときにカードの1番目と矢印が指す手がずれてしまう。
-                // (矢印の色自体は primary 固定)
-                val topPvRank = if (isAnalysisMode || isAutoAnalysis)
-                    pvList.entries.maxByOrNull { (_, pvText) -> extractScore(pvText, currentPlayer) }?.key
-                else null
-                val bestMoveArrowUsi = topPvRank?.let { pvUsiList[it]?.firstOrNull() }
-                val bestMoveArrowColor = MaterialTheme.colorScheme.primary
-                val bestMoveSquares = bestMoveArrowUsi?.let { usiMoveSquares(it) }
-                val bestMoveDropPieceType = bestMoveArrowUsi?.let { usiDropPieceType(it) }
+                // 解析中は盤面に矢印を表示する。解析停止で空になり、矢印は薄くして残す。
+                // - 候補手: 現局面の解析結果（候補カード）の数だけ、カードと同じ色で塗りつぶした矢印。
+                //   評価値の低い順に描き、最善手（カードの1番目）を一番上にする。
+                //   移動先のマスにはカードの並び順（1, 2, 3, ...）を表示する
+                // - 本譜の次の手: 本譜上で解析しているとき、塗りつぶしなしの矢印を一番上に描く
+                val pvFillColors = listOf(getPvColor(1), getPvColor(2), getPvColor(3), getPvColor(4))
+                val pvEdgeColors = listOf(MaterialTheme.colorScheme.primary, MaterialTheme.colorScheme.secondary,
+                    MaterialTheme.colorScheme.tertiary, MaterialTheme.colorScheme.outline)
+                val nextMoveEdgeColor = MaterialTheme.colorScheme.onSurface
+                val moveArrows: List<MoveArrow> = if (!(isAnalysisMode || isAutoAnalysis)) emptyList() else buildList {
+                    val candidates = pvList.entries.sortedBy { (_, pvText) -> extractScore(pvText, currentPlayer) }
+                    candidates.forEachIndexed { idx, (rank, _) ->
+                        val usi = pvUsiList[rank]?.firstOrNull() ?: return@forEachIndexed
+                        val i = (rank - 1).coerceIn(0, 3)
+                        val order = candidates.size - idx // カードの並び（評価値の高い順）での順位
+                        moveArrowFromUsi(usi, pvFillColors[i], pvEdgeColors[i], order.toString())?.let { add(it) }
+                    }
+                    // isOnMainLine は PV 手順の表示中 (pvBranchPath != null) は常に false になり、
+                    // 分岐から樹形図・矢印ボタンで本譜へ戻っても false のままのことがあるので、木構造だけで判定する
+                    val currentOnMainLine = generateSequence(currentNode) { it.parent }
+                        .all { n -> n.parent?.let { it.children.firstOrNull { c -> !c.isPvBranch } === n } ?: true }
+                    if (currentOnMainLine) {
+                        currentNode.children.firstOrNull { !it.isPvBranch }?.let { next ->
+                            val to = next.lastTo ?: return@let
+                            val dropType = if (next.lastFrom == null) next.board[to]?.type else null
+                            add(MoveArrow(next.lastFrom, to, dropType, fillColor = null, edgeColor = nextMoveEdgeColor))
+                        }
+                    }
+                }
 
                 // 駒打ちの矢印は「持ち駒 → 盤面」を横断して引く必要があるため、
                 // 両コンポーネントの画面上の位置を LayoutCoordinates で保持しておく
@@ -665,7 +682,7 @@ class MainActivity : ComponentActivity() {
                                         if(n != null) currentNode = n
                                         if(p != null) promotionPendingBy = p
                                     }
-                                }, isBoardFlipped, Modifier.sizeIn(maxWidth = 500.dp, maxHeight = 500.dp), currentNode.lastFrom, currentNode.lastTo, currentNode.pvColorIndex, bestMoveArrowUsi, onBoardBoxPositioned, bestMoveArrowColor)
+                                }, isBoardFlipped, Modifier.sizeIn(maxWidth = 500.dp, maxHeight = 500.dp), currentNode.lastFrom, currentNode.lastTo, currentNode.pvColorIndex, moveArrows, onBoardBoxPositioned)
                                 PlayerStatusSection(if(botP==Player.SENTE) senteName else goteName, if(botP==Player.SENTE) "▲" else "△", currentPlayer==botP, if(botP==Player.SENTE) senteHand else goteHand, selectedHandPiece, currentPlayer, isBoardFlipped, handOnTop = true, gameResult = gameResult, remainingMs = if(botP==Player.SENTE) currentNode.senteRemainingMs else currentNode.goteRemainingMs, onNameClick = { editingPlayerMark = if(botP==Player.SENTE) "▲" else "△" }, onPiecePositioned = onHandPiecePositioned) { if (isHumanTurn) { selectedHandPiece = it; selectedSquare = null } }
                                 // bottomBar に隠れる分をスクロールで見られるようにする
                                 Spacer(modifier = Modifier.height(innerPadding.calculateBottomPadding()))
@@ -713,7 +730,7 @@ class MainActivity : ComponentActivity() {
                                     if(n != null) currentNode = n
                                     if(p != null) promotionPendingBy = p
                                 }
-                            }, isBoardFlipped, Modifier.padding(16.dp), currentNode.lastFrom, currentNode.lastTo, currentNode.pvColorIndex, bestMoveArrowUsi, onBoardBoxPositioned, bestMoveArrowColor)
+                            }, isBoardFlipped, Modifier.padding(16.dp), currentNode.lastFrom, currentNode.lastTo, currentNode.pvColorIndex, moveArrows, onBoardBoxPositioned)
                             PlayerStatusSection(if(botP==Player.SENTE) senteName else goteName, if(botP==Player.SENTE) "▲" else "△", currentPlayer==botP, if(botP==Player.SENTE) senteHand else goteHand, selectedHandPiece, currentPlayer, isBoardFlipped, handOnTop = true, gameResult = gameResult, remainingMs = if(botP==Player.SENTE) currentNode.senteRemainingMs else currentNode.goteRemainingMs, onNameClick = { editingPlayerMark = if(botP==Player.SENTE) "▲" else "△" }, onPiecePositioned = onHandPiecePositioned) { if (isHumanTurn) { selectedHandPiece = it; selectedSquare = null } }
                             Column(modifier = Modifier.padding(8.dp)) {
                                 (if (pinnedPvList.isNotEmpty()) pinnedPvList else pvList.toMap()).entries
@@ -738,11 +755,10 @@ class MainActivity : ComponentActivity() {
                 }
 
                 DropMoveArrowOverlay(
-                    visible = bestMoveArrowUsi != null && bestMoveSquares?.first == null,
-                    handCoordinates = bestMoveDropPieceType?.let { handPieceCoords[Pair(currentPlayer, it)] },
+                    arrows = moveArrows,
+                    boardState = boardState,
+                    handCoordinates = { type -> handPieceCoords[Pair(currentPlayer, type)] },
                     boardCoordinates = boardBoxCoords,
-                    toSquare = bestMoveSquares?.second,
-                    arrowColor = bestMoveArrowColor,
                     modifier = Modifier.fillMaxSize(),
                     scrollValue = boardAreaScrollState.value
                 )
@@ -757,7 +773,9 @@ class MainActivity : ComponentActivity() {
                                 fontSize = 10.sp,
                                 fontWeight = FontWeight.Normal
                             )) {
+                                append("(")
                                 append(if (selectedEngine == "aoba") "AobaNNUE" else "Suisho5-YaneuraOu-v7.5.0")
+                                append(")")
                             }
                         },
                         style = MaterialTheme.typography.bodyMedium
@@ -776,11 +794,26 @@ class MainActivity : ComponentActivity() {
                                 }
                                 // 思考時間
                                 Column {
-                                    Text(stringResource(R.string.settings_think_time, analysisTimeMs), style = MaterialTheme.typography.labelMedium)
+                                    // 自動解析で1手あたりに使う時間（単発の解析は停止するまで考え続ける）。
+                                    // 短い時間ほど細かく選べるよう、スライダーは対数目盛り（倍になるごとに同じ距離）で連続的に動かし、0.1秒単位に丸める。
+                                    // 以前の版で保存した半端な値 (ms) もそのまま使用し、スライダーを動かしたときだけ丸める。
+                                    // 表示は常に小数1桁 ("1.0") にし、数字も等幅にして、値によって行の長さ（折り返し）が変わらないようにする
+                                    val thinkTimeSec = "%.1f".format(java.util.Locale.US, analysisTimeMs / 1000.0)
+                                    Row(verticalAlignment = Alignment.Bottom) {
+                                        Text(stringResource(R.string.settings_think_time_label), style = MaterialTheme.typography.labelMedium)
+                                        Spacer(modifier = Modifier.width(8.dp))
+                                        Text(
+                                            text = thinkTimeSec,
+                                            style = MaterialTheme.typography.titleLarge.copy(fontFeatureSettings = "tnum"),
+                                            color = MaterialTheme.colorScheme.primary
+                                        )
+                                        Spacer(modifier = Modifier.width(2.dp))
+                                        Text(stringResource(R.string.settings_think_time_unit), style = MaterialTheme.typography.labelMedium, color = MaterialTheme.colorScheme.primary)
+                                    }
                                     Slider(
-                                        value = analysisTimeMs.toFloat(),
-                                        onValueChange = { analysisTimeMs = it.roundToInt().toLong() },
-                                        valueRange = 100f..5000f
+                                        value = thinkTimeToSlider(analysisTimeMs),
+                                        onValueChange = { analysisTimeMs = sliderToThinkTime(it) },
+                                        valueRange = 0f..1f
                                     )
                                 }
                                 
@@ -1250,4 +1283,16 @@ fun MainScreenPreview() {
             }
         }
     }
+}
+
+// 設定の思考時間（自動解析で1手に使う時間 [ms]）とスライダー位置 (0..1) の対応。対数目盛りで 0.1秒〜5秒
+private const val minThinkTimeMs = 100L
+private const val maxThinkTimeMs = 5000L
+private fun thinkTimeToSlider(ms: Long): Float {
+    val t = ms.coerceIn(minThinkTimeMs, maxThinkTimeMs).toDouble()
+    return (kotlin.math.ln(t / minThinkTimeMs) / kotlin.math.ln(maxThinkTimeMs.toDouble() / minThinkTimeMs)).toFloat()
+}
+private fun sliderToThinkTime(pos: Float): Long {
+    val t = minThinkTimeMs * Math.pow(maxThinkTimeMs.toDouble() / minThinkTimeMs, pos.coerceIn(0f, 1f).toDouble())
+    return (Math.round(t / 100.0) * 100).coerceIn(minThinkTimeMs, maxThinkTimeMs)
 }

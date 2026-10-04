@@ -27,7 +27,8 @@
     <!-- Settings dialog -->
     <string name="settings_title_prefix">Settings </string>
     <string name="settings_engine_label">Engine</string>
-    <string name="settings_think_time">Think time: %1$dms</string>
+    <string name="settings_think_time_label">Think time (auto analysis)</string>
+    <string name="settings_think_time_unit">s</string>
     <string name="settings_multipv_label">Candidate moves (MultiPV)</string>
     <string name="settings_threads_label">Thread count</string>
     <string name="settings_save">Save</string>
