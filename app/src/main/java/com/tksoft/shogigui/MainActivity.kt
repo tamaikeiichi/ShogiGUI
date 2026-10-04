@@ -5,7 +5,7 @@ import android.os.Bundle
 import androidx.activity.ComponentActivity
 import androidx.activity.compose.rememberLauncherForActivityResult
 import androidx.activity.compose.setContent
-import androidx.activity.enableEdgeToEdge
+import androidx.core.view.WindowCompat
 import androidx.activity.result.contract.ActivityResultContracts
 import androidx.compose.foundation.basicMarquee
 import androidx.compose.foundation.layout.*
@@ -65,7 +65,16 @@ class MainActivity : ComponentActivity() {
     @OptIn(ExperimentalMaterial3Api::class, ExperimentalMaterial3ExpressiveApi::class)
     override fun onCreate(savedInstanceState: Bundle?) {
         super.onCreate(savedInstanceState)
-        enableEdgeToEdge()
+        // エッジ ツー エッジ表示。androidx の enableEdgeToEdge() は旧バージョン向けに非推奨 API
+        // (Window.setStatusBarColor 等) を呼び Play Console で警告されるため、バーの色・カットアウトは
+        // テーマ (res/values*/themes.xml) で指定し、ここではレイアウトとアイコンの明暗だけを設定する
+        WindowCompat.setDecorFitsSystemWindows(window, false)
+        val isNight = (resources.configuration.uiMode and android.content.res.Configuration.UI_MODE_NIGHT_MASK) ==
+            android.content.res.Configuration.UI_MODE_NIGHT_YES
+        WindowCompat.getInsetsController(window, window.decorView).apply {
+            isAppearanceLightStatusBars = !isNight
+            isAppearanceLightNavigationBars = !isNight
+        }
 
         val prefs = getSharedPreferences("kifu_prefs", MODE_PRIVATE)
         if (rootNode == null) {
