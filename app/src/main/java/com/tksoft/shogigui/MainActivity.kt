@@ -1,5 +1,6 @@
 package com.tksoft.shogigui
 
+import android.content.Intent
 import android.net.Uri
 import android.os.Bundle
 import androidx.activity.ComponentActivity
@@ -56,10 +57,26 @@ class MainActivity : ComponentActivity() {
     private var savedGoteName: String = goteColorName
     private var savedGameResult: String = ""
     private val resumeCount = mutableIntStateOf(0)
+    // 他アプリの共有ボタン (ACTION_SEND) で受け取った棋譜テキスト。読み込んだら null に戻す
+    private val sharedKifuText = mutableStateOf<String?>(null)
 
     override fun onResume() {
         super.onResume()
         resumeCount.intValue++
+    }
+
+    override fun onNewIntent(intent: Intent) {
+        super.onNewIntent(intent)
+        setIntent(intent)
+        handleShareIntent(intent)
+    }
+
+    private fun handleShareIntent(intent: Intent?) {
+        if (intent?.action != Intent.ACTION_SEND) return
+        // 履歴 (最近使ったアプリ) からの再起動では同じ共有インテントが再送されるので無視する
+        if (intent.flags and Intent.FLAG_ACTIVITY_LAUNCHED_FROM_HISTORY != 0) return
+        val text = intent.getCharSequenceExtra(Intent.EXTRA_TEXT)?.toString()
+        if (!text.isNullOrBlank()) sharedKifuText.value = text
     }
 
     @OptIn(ExperimentalMaterial3Api::class, ExperimentalMaterial3ExpressiveApi::class)
@@ -89,6 +106,9 @@ class MainActivity : ComponentActivity() {
                 KifuNode(createInitialBoard(), emptyMap(), emptyMap(), Player.SENTE)
             }
         }
+
+        // 画面再生成時に同じ共有インテントを二重に読み込まないよう、初回作成時のみ処理する
+        if (savedInstanceState == null) handleShareIntent(intent)
 
         setContent {
             ShogiGUITheme {
@@ -377,6 +397,47 @@ class MainActivity : ComponentActivity() {
                     }
                 }
 
+                // 棋譜テキスト (CSA / USI / KIF) を読み込んで新しい棋譜にする。
+                // クリップボードからの読み込みと、他アプリからの共有 (ACTION_SEND) で共通に使う
+                val loadKifuText: (String) -> Unit = { text ->
+                    val freshRoot = KifuNode(createInitialBoard(), emptyMap(), emptyMap(), Player.SENTE)
+                    val newNode = when {
+                        text.lines().any { Regex("^[+-]\\d{4}[A-Z]{2}").containsMatchIn(it.trim()) } ->
+                            parseCsa(text, freshRoot, saveKifu)
+                        text.contains("moves") || text.lines().any { Regex("^[1-9][a-i][1-9][a-i][+]?$").matches(it.trim()) } ->
+                            parseKifu(text, freshRoot, saveKifu)
+                        else ->
+                            parseKif(text, freshRoot, saveKifu)
+                    }
+                    val names = extractPlayerNames(text)
+                    names.sente?.let { senteName = it; prefs.edit().putString("sente_name", it).apply() }
+                    names.gote?.let { goteName = it; prefs.edit().putString("gote_name", it).apply() }
+                    gameResult = extractGameResult(text) ?: ""
+                    prefs.edit().putString("game_result", gameResult).apply()
+                    pinnedPvList = emptyMap(); pinnedPvUsiList = emptyMap(); pvBranchPath = null
+                    humanPlayer = null
+                    if (newNode != null) {
+                        currentNode = freshRoot; saveKifu(freshRoot)
+                        val capturedSente = names.sente ?: senteName
+                        val capturedGote = names.gote ?: goteName
+                        val capturedResult = gameResult
+                        val gameDate = extractGameDate(text)
+                        coroutineScope.launch(Dispatchers.IO) {
+                            KifuHistoryManager.saveKifu(
+                                this@MainActivity, freshRoot,
+                                capturedSente, capturedGote, capturedResult, gameDate
+                            )
+                        }
+                    }
+                }
+
+                // 他アプリの共有ボタンから受け取った棋譜テキストを読み込む
+                LaunchedEffect(sharedKifuText.value) {
+                    val text = sharedKifuText.value ?: return@LaunchedEffect
+                    sharedKifuText.value = null
+                    loadKifuText(text)
+                }
+
                 // バックグラウンドから復帰時にエンジンが準備中のまま止まっていたら再起動する
                 // (1回の再作成で readyok が来るとは限らないため、タイムアウト付きで複数回試す)
                 LaunchedEffect(resumeCount.intValue) {
@@ -576,37 +637,7 @@ class MainActivity : ComponentActivity() {
                                             })
                                     }
                                     OutlinedButton(onClick = {
-                                        clipboard.getText()?.text?.let { text ->
-                                            val freshRoot = KifuNode(createInitialBoard(), emptyMap(), emptyMap(), Player.SENTE)
-                                            val newNode = when {
-                                                text.lines().any { Regex("^[+-]\\d{4}[A-Z]{2}").containsMatchIn(it.trim()) } ->
-                                                    parseCsa(text, freshRoot, saveKifu)
-                                                text.contains("moves") || text.lines().any { Regex("^[1-9][a-i][1-9][a-i][+]?$").matches(it.trim()) } ->
-                                                    parseKifu(text, freshRoot, saveKifu)
-                                                else ->
-                                                    parseKif(text, freshRoot, saveKifu)
-                                            }
-                                            val names = extractPlayerNames(text)
-                                            names.sente?.let { senteName = it; prefs.edit().putString("sente_name", it).apply() }
-                                            names.gote?.let { goteName = it; prefs.edit().putString("gote_name", it).apply() }
-                                            gameResult = extractGameResult(text) ?: ""
-                                            prefs.edit().putString("game_result", gameResult).apply()
-                                            pinnedPvList = emptyMap(); pinnedPvUsiList = emptyMap(); pvBranchPath = null
-                                            humanPlayer = null
-                                            if (newNode != null) {
-                                                currentNode = freshRoot; saveKifu(freshRoot)
-                                                val capturedSente = names.sente ?: senteName
-                                                val capturedGote = names.gote ?: goteName
-                                                val capturedResult = gameResult
-                                                val gameDate = extractGameDate(text)
-                                                coroutineScope.launch(Dispatchers.IO) {
-                                                    KifuHistoryManager.saveKifu(
-                                                        this@MainActivity, freshRoot,
-                                                        capturedSente, capturedGote, capturedResult, gameDate
-                                                    )
-                                                }
-                                            }
-                                        }
+                                        clipboard.getText()?.text?.let(loadKifuText)
                                     }, modifier = Modifier.weight(0.3f).height(72.dp),
                                         shape = MaterialTheme.shapes.extraLarge) {
                                         Column(horizontalAlignment = Alignment.CenterHorizontally) { Icon(Icons.Default.ContentPaste, stringResource(R.string.action_load_from_clipboard_desc));
