@@ -1047,7 +1047,7 @@ class MainActivity : ComponentActivity() {
                                                                 color = MaterialTheme.colorScheme.onSurfaceVariant)
                                                         }
                                                         if (entry.gameResult.isNotEmpty()) {
-                                                            Text(entry.gameResult,
+                                                            Text(localizeGameResult(this@MainActivity, entry.gameResult),
                                                                 style = MaterialTheme.typography.bodySmall,
                                                                 color = MaterialTheme.colorScheme.primary)
                                                         }

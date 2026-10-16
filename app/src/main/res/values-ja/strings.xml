@@ -69,4 +69,21 @@
     <string name="eval_status_gote_dominant">後手優勢</string>
     <string name="eval_status_sente_winning">先手勝勢</string>
     <string name="eval_status_gote_winning">後手勝勢</string>
+    <string name="time_remaining">持ち時間 %1$s</string>
+    <string name="time_used">消費時間 %1$s</string>
+    <string name="result_sente_wins">先手勝ち</string>
+    <string name="result_gote_wins">後手勝ち</string>
+    <string name="result_with_reason">%1$s（%2$s）</string>
+    <string name="result_reason_resign">投了</string>
+    <string name="result_reason_time_up">時間切れ</string>
+    <string name="result_reason_illegal_move">反則負け</string>
+    <string name="result_reason_checkmate">詰み</string>
+    <string name="result_reason_entering_king">入玉宣言</string>
+    <string name="result_reason_opponent_foul">反則勝ち</string>
+    <string name="result_reason_sente_foul">先手反則</string>
+    <string name="result_reason_gote_foul">後手反則</string>
+    <string name="result_sennichite">千日手</string>
+    <string name="result_jishogi">持将棋</string>
+    <string name="result_suspended">中断</string>
+    <string name="result_draw">引き分け</string>
 </resources>

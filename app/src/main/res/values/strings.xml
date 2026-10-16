@@ -69,4 +69,21 @@
     <string name="eval_status_gote_dominant">Gote dominant</string>
     <string name="eval_status_sente_winning">Sente winning</string>
     <string name="eval_status_gote_winning">Gote winning</string>
+    <string name="time_remaining">Time remaining %1$s</string>
+    <string name="time_used">Time used %1$s</string>
+    <string name="result_sente_wins">Sente wins</string>
+    <string name="result_gote_wins">Gote wins</string>
+    <string name="result_with_reason">%1$s (%2$s)</string>
+    <string name="result_reason_resign">resignation</string>
+    <string name="result_reason_time_up">time out</string>
+    <string name="result_reason_illegal_move">illegal move</string>
+    <string name="result_reason_checkmate">checkmate</string>
+    <string name="result_reason_entering_king">entering king declaration</string>
+    <string name="result_reason_opponent_foul">foul by opponent</string>
+    <string name="result_reason_sente_foul">foul by Sente</string>
+    <string name="result_reason_gote_foul">foul by Gote</string>
+    <string name="result_sennichite">Repetition draw (sennichite)</string>
+    <string name="result_jishogi">Impasse (jishogi)</string>
+    <string name="result_suspended">Suspended</string>
+    <string name="result_draw">Draw</string>
 </resources>

@@ -23,6 +23,7 @@ import androidx.compose.ui.geometry.Offset
 import androidx.compose.ui.graphics.StrokeCap
 import androidx.compose.ui.layout.onSizeChanged
 import androidx.compose.ui.platform.LocalDensity
+import androidx.compose.ui.platform.LocalContext
 import androidx.compose.ui.unit.IntSize
 import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.input.pointer.pointerInput
@@ -491,7 +492,7 @@ fun PlayerInfoContent(name: String, mark: String, isFlipped: Boolean = false, ga
         }
         if (remainingMs != null) {
             Text(
-                text = formatRemainingTime(remainingMs),
+                text = formatRemainingTime(LocalContext.current, remainingMs),
                 style = MaterialTheme.typography.titleMedium.copy(fontSize = 14.sp),
                 color = if (remainingMs in 0L..59_999L) MaterialTheme.colorScheme.error
                         else MaterialTheme.colorScheme.onSurfaceVariant,
@@ -502,7 +503,7 @@ fun PlayerInfoContent(name: String, mark: String, isFlipped: Boolean = false, ga
         }
         if (gameResult.isNotEmpty() && isRight) {
             Text(
-                text = gameResult,
+                text = localizeGameResult(LocalContext.current, gameResult),
                 style = MaterialTheme.typography.labelSmall,
                 color = MaterialTheme.colorScheme.onSurfaceVariant,
                 modifier = Modifier.padding(horizontal = 8.dp)

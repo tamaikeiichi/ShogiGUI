@@ -286,12 +286,12 @@ fun sfenToBoard(sfen: String): SfenPosition {
     return SfenPosition(board, turn, senteHand, goteHand)
 }
 
-fun formatRemainingTime(ms: Long): String {
+fun formatRemainingTime(context: Context, ms: Long): String {
     if (ms < 0L) {
         // 初期時間不明：消費時間を表示（格納値 = -(consumed + 1)）
         val totalSecs = (-ms - 1L) / 1000L
         val m = totalSecs / 60; val s = totalSecs % 60
-        return "消費時間 ${m}:${s.toString().padStart(2, '0')}"
+        return context.getString(R.string.time_used, "${m}:${s.toString().padStart(2, '0')}")
     }
     val totalSecs = ms / 1000L
     val h = totalSecs / 3600
@@ -299,7 +299,37 @@ fun formatRemainingTime(ms: Long): String {
     val s = totalSecs % 60
     val time = if (h > 0) "$h:${m.toString().padStart(2, '0')}:${s.toString().padStart(2, '0')}"
                else "${m}:${s.toString().padStart(2, '0')}"
-    return "持ち時間 $time"
+    return context.getString(R.string.time_remaining, time)
+}
+
+// gameResult はアプリ内部では日本語表記 ("先手勝ち（投了）" 等) で保存・CSA変換に使っているので、
+// 表示するときだけ現在の言語の文字列に変換する。未知の表記はそのまま返す。
+fun localizeGameResult(context: Context, gameResult: String): String {
+    fun reasonRes(reason: String): Int? = when (reason) {
+        "投了" -> R.string.result_reason_resign
+        "時間切れ" -> R.string.result_reason_time_up
+        "反則負け" -> R.string.result_reason_illegal_move
+        "詰み" -> R.string.result_reason_checkmate
+        "入玉宣言" -> R.string.result_reason_entering_king
+        "反則勝ち" -> R.string.result_reason_opponent_foul
+        "先手反則" -> R.string.result_reason_sente_foul
+        "後手反則" -> R.string.result_reason_gote_foul
+        else -> null
+    }
+    Regex("""^(先手|後手)勝ち(?:（(.+)）)?$""").matchEntire(gameResult)?.let { m ->
+        val winner = context.getString(if (m.groupValues[1] == "先手") R.string.result_sente_wins else R.string.result_gote_wins)
+        val reason = m.groupValues[2]
+        if (reason.isEmpty()) return winner
+        val reasonText = reasonRes(reason)?.let { context.getString(it) } ?: reason
+        return context.getString(R.string.result_with_reason, winner, reasonText)
+    }
+    return when (gameResult) {
+        "千日手" -> context.getString(R.string.result_sennichite)
+        "持将棋" -> context.getString(R.string.result_jishogi)
+        "中断" -> context.getString(R.string.result_suspended)
+        "引き分け" -> context.getString(R.string.result_draw)
+        else -> gameResult
+    }
 }
 
 fun createInitialBoard(): Map<Pair<Int, Int>, Piece> {
