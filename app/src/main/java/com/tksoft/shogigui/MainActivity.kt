@@ -8,6 +8,7 @@ import androidx.activity.compose.rememberLauncherForActivityResult
 import androidx.activity.compose.setContent
 import androidx.core.view.WindowCompat
 import androidx.activity.result.contract.ActivityResultContracts
+import androidx.compose.foundation.background
 import androidx.compose.foundation.basicMarquee
 import androidx.compose.foundation.layout.*
 import androidx.compose.foundation.lazy.LazyColumn
@@ -24,6 +25,8 @@ import androidx.compose.ui.Modifier
 import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.graphics.graphicsLayer
 import androidx.compose.ui.platform.LocalClipboardManager
+import androidx.compose.ui.platform.LocalDensity
+import androidx.compose.ui.layout.onSizeChanged
 import androidx.compose.ui.res.painterResource
 import androidx.compose.ui.res.stringResource
 import androidx.compose.ui.unit.dp
@@ -228,6 +231,9 @@ class MainActivity : ComponentActivity() {
                     createEngine(selectedEngine)
                 ) }
                 var engineOutput by remember { mutableStateOf(getString(R.string.engine_waiting)) }
+                // USI の "id name" で通知されたエンジン名と、準備完了時に一時表示する名前
+                var engineIdName by remember { mutableStateOf<String?>(null) }
+                var engineReadyToast by remember { mutableStateOf<String?>(null) }
 
                 val processOutput = {
                     rawLine: String,
@@ -240,6 +246,7 @@ class MainActivity : ComponentActivity() {
                     val line = rawLine.trim()
                     Log.d("EngineOutput", line)
                     when {
+                        line.startsWith("id name ") -> engineIdName = line.removePrefix("id name ").trim()
                         line == "usiok" -> {
                             engine.sendCommand("setoption name Threads value $threadCount")
                             engine.sendCommand("setoption name MultiPV value $multiPvCount")
@@ -256,7 +263,12 @@ class MainActivity : ComponentActivity() {
                             }
                             engine.sendCommand("isready")
                         }
-                        line == "readyok" -> isEngineReady = true
+                        line == "readyok" -> {
+                            if (!isEngineReady) {
+                                engineReadyToast = engineIdName ?: engineDisplayName(selectedEngine)
+                            }
+                            isEngineReady = true
+                        }
                         line.startsWith("info") -> {
                             if (isPvStale) { pvList.clear(); isPvStale = false }
                             val rank = Regex("multipv (\\d+)").find(line)?.groupValues?.get(1)?.toInt() ?: 1
@@ -315,6 +327,7 @@ class MainActivity : ComponentActivity() {
                     Log.d("EngineDebug", "[$effectId] LaunchedEffect(engine) start engine=$engine resumeCount=${resumeCount.intValue}")
                     delay(1000)
                     isEngineReady = false
+                    engineIdName = null
                     engine.onOutputReceived = { rawLine ->
                         runOnUiThread { processOutput(rawLine, emptyMap(), Player.SENTE, 0, null, null) }
                     }
@@ -519,6 +532,10 @@ class MainActivity : ComponentActivity() {
                 // 取り残されるため）。
                 val boardAreaScrollState = rememberScrollState()
 
+                // 準備完了ポップアップを bottomBar のすぐ上に出すため、bottomBar の高さを測る
+                var bottomBarHeightPx by remember { mutableIntStateOf(0) }
+                val density = LocalDensity.current
+
                 Box(modifier = Modifier.fillMaxSize()) {
                 Scaffold(
                     modifier = Modifier.fillMaxSize(),
@@ -526,7 +543,9 @@ class MainActivity : ComponentActivity() {
                     bottomBar = {
                         Surface(
                             color = MaterialTheme.colorScheme.surfaceContainer.copy(alpha = 0.85f),
-                            modifier = Modifier.fillMaxWidth()
+                            modifier = Modifier
+                                .fillMaxWidth()
+                                .onSizeChanged { bottomBarHeightPx = it.height }
                         ) {
                             Column(
                                 modifier = Modifier
@@ -811,6 +830,27 @@ class MainActivity : ComponentActivity() {
                     modifier = Modifier.fillMaxSize(),
                     scrollValue = boardAreaScrollState.value
                 )
+
+                // エンジン準備完了の通知 (約1秒)。クリック系の Modifier を付けないので
+                // タッチイベントは下の画面にそのまま届く
+                LaunchedEffect(engineReadyToast) {
+                    if (engineReadyToast != null) {
+                        delay(2000)
+                        engineReadyToast = null
+                    }
+                }
+                androidx.compose.animation.AnimatedVisibility(
+                    visible = engineReadyToast != null,
+                    enter = androidx.compose.animation.fadeIn(),
+                    exit = androidx.compose.animation.fadeOut(),
+                    modifier = Modifier
+                        .align(Alignment.BottomCenter)
+                        .padding(bottom = with(density) { bottomBarHeightPx.toDp() } + 8.dp)
+                ) {
+                    var shownName by remember { mutableStateOf("") }
+                    engineReadyToast?.let { shownName = it }
+                    EngineReadyToast(shownName)
+                }
                 }
 
                 if (showSettingsDialog) {
@@ -1265,6 +1305,26 @@ class MainActivity : ComponentActivity() {
     }
 }
 
+/** エンジン準備完了のポップアップ本体。Surface は背後へのタッチを遮るため、Box + background で描画する */
+@Composable
+fun EngineReadyToast(engineName: String) {
+    Box(
+        modifier = Modifier
+            .padding(horizontal = 32.dp)
+            .background(
+                MaterialTheme.colorScheme.inverseSurface.copy(alpha = 0.5f),
+                MaterialTheme.shapes.medium
+            )
+    ) {
+        Text(
+            text = stringResource(R.string.engine_ready_toast, engineName),
+            color = MaterialTheme.colorScheme.inverseOnSurface,
+            style = MaterialTheme.typography.bodyMedium,
+            modifier = Modifier.padding(horizontal = 20.dp, vertical = 12.dp)
+        )
+    }
+}
+
 @Preview(showBackground = true, showSystemUi = true)
 @Composable
 fun MainScreenPreview() {
@@ -1315,6 +1375,9 @@ fun MainScreenPreview() {
                 }
             }
         ) { innerPadding ->
+            // プレビューは静的描画で onSizeChanged の結果が反映されないため、
+            // Scaffold の innerPadding (= bottomBar の高さ) で準備完了ポップアップを配置する
+            Box(modifier = Modifier.fillMaxSize()) {
             Column(
                 modifier = Modifier
                     .fillMaxSize()
@@ -1329,6 +1392,14 @@ fun MainScreenPreview() {
                     PvInfoCard(1, pvText, "") {}
                     PvInfoCard(2, "評価: +80 (互角)\n読み筋: ▲7八金 △8四歩", "") {}
                 }
+            }
+            Box(
+                modifier = Modifier
+                    .align(Alignment.BottomCenter)
+                    .padding(bottom = innerPadding.calculateBottomPadding() + 8.dp)
+            ) {
+                EngineReadyToast("TsuyouraOu11micro")
+            }
             }
         }
     }

@@ -86,4 +86,5 @@
     <string name="result_jishogi">Impasse (jishogi)</string>
     <string name="result_suspended">Suspended</string>
     <string name="result_draw">Draw</string>
+    <string name="engine_ready_toast">%1$s is ready</string>
 </resources>
