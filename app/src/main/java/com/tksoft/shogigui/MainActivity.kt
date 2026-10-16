@@ -1312,7 +1312,7 @@ fun EngineReadyToast(engineName: String) {
         modifier = Modifier
             .padding(horizontal = 32.dp)
             .background(
-                MaterialTheme.colorScheme.inverseSurface.copy(alpha = 0.5f),
+                MaterialTheme.colorScheme.inverseSurface.copy(alpha = 0.4f),
                 MaterialTheme.shapes.medium
             )
     ) {
