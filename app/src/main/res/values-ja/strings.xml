@@ -86,5 +86,5 @@
     <string name="result_jishogi">持将棋</string>
     <string name="result_suspended">中断</string>
     <string name="result_draw">引き分け</string>
-    <string name="engine_ready_toast">%1$s の準備ができました</string>
+    <string name="engine_ready_toast">%1$s 準備完了</string>
 </resources>

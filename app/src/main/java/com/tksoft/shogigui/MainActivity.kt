@@ -835,7 +835,7 @@ class MainActivity : ComponentActivity() {
                 // タッチイベントは下の画面にそのまま届く
                 LaunchedEffect(engineReadyToast) {
                     if (engineReadyToast != null) {
-                        delay(2000)
+                        delay(2500)
                         engineReadyToast = null
                     }
                 }
