@@ -225,7 +225,7 @@ class MainActivity : ComponentActivity() {
                 
                 var selectedEngine by remember { mutableStateOf(prefs.getString("selected_engine", "suisho5") ?: "suisho5") }
                 var engine by remember { mutableStateOf<UsiEngineInterface>(
-                    if (selectedEngine == "aoba") AobaEngine() else UsiEngine()
+                    createEngine(selectedEngine)
                 ) }
                 var engineOutput by remember { mutableStateOf(getString(R.string.engine_waiting)) }
 
@@ -245,6 +245,14 @@ class MainActivity : ComponentActivity() {
                             engine.sendCommand("setoption name MultiPV value $multiPvCount")
                             if (engine is AobaEngine) {
                                 engine.sendCommand("setoption name EvalDir value aoba_eval")
+                            }
+                            (engine as? YaneuraOu9Engine)?.let { e ->
+                                // progress.bin も EvalDir から読まれるので絶対パスで指定する
+                                e.sendCommand("setoption name EvalDir value ${java.io.File(filesDir, e.evalDirName).absolutePath}")
+                                // eval_options.txt (FV_SCALE 24) も isready 時に読まれるが、念のため明示する
+                                e.sendCommand("setoption name FV_SCALE value 24")
+                                e.sendCommand("setoption name USI_Hash value 256")
+                                e.sendCommand("setoption name BookFile value no_book")
                             }
                             engine.sendCommand("isready")
                         }
@@ -316,6 +324,7 @@ class MainActivity : ComponentActivity() {
                         if (engine is AobaEngine) {
                             copyAssetsToFileDir("aoba_nn.bin", "aoba_eval", filesDir, assets, targetName = "nn.bin")
                         }
+                        (engine as? YaneuraOu9Engine)?.copyEvalFiles(filesDir, assets)
                     }
                     Log.d("EngineDebug", "[$effectId] LaunchedEffect(engine) calling engine.start() engine=$engine")
                     engine.start(filesDir.absolutePath)
@@ -452,7 +461,7 @@ class MainActivity : ComponentActivity() {
                         Log.d("EngineDebug", "restarting engine (attempt $attempt/$maxAttempts): old=$engine")
                         val old = engine
                         withContext(Dispatchers.IO) { old.stop() }
-                        engine = if (selectedEngine == "aoba") AobaEngine() else UsiEngine()
+                        engine = createEngine(selectedEngine)
                         Log.d("EngineDebug", "restarted engine: new=$engine")
 
                         var waited = 0L
@@ -814,7 +823,7 @@ class MainActivity : ComponentActivity() {
                                 fontWeight = FontWeight.Normal
                             )) {
                                 append("(")
-                                append(if (selectedEngine == "aoba") "AobaNNUE" else "Suisho5-YaneuraOu-v7.5.0")
+                                append(engineDisplayName(selectedEngine))
                                 append(")")
                             }
                         },
@@ -825,11 +834,11 @@ class MainActivity : ComponentActivity() {
                                 // エンジン選択
                                 Column {
                                     Text(stringResource(R.string.settings_engine_label), style = MaterialTheme.typography.labelMedium)
-                                    Row(verticalAlignment = Alignment.CenterVertically) {
-                                        RadioButton(selected = pendingEngine == "suisho5", onClick = { pendingEngine = "suisho5" })
-                                        Text("Suisho5", modifier = Modifier.weight(1f))
-                                        RadioButton(selected = pendingEngine == "aoba", onClick = { pendingEngine = "aoba" })
-                                        Text("AobaNNUE", modifier = Modifier.weight(1f))
+                                    ENGINE_CHOICES.forEach { (id, label) ->
+                                        Row(verticalAlignment = Alignment.CenterVertically) {
+                                            RadioButton(selected = pendingEngine == id, onClick = { pendingEngine = id })
+                                            Text(label, modifier = Modifier.weight(1f))
+                                        }
                                     }
                                 }
                                 // 思考時間
@@ -902,7 +911,7 @@ class MainActivity : ComponentActivity() {
                                     val old = engine
                                     old.onOutputReceived = null
                                     selectedEngine = pendingEngine
-                                    engine = if (pendingEngine == "aoba") AobaEngine() else UsiEngine()
+                                    engine = createEngine(pendingEngine)
                                     // nativeStop()がブロックする可能性があるためメインスレッドを避ける
                                     coroutineScope.launch(Dispatchers.IO) { old.stop() }
                                 } else {

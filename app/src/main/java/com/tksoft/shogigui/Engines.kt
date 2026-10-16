@@ -1,0 +1,24 @@
+package com.tksoft.shogigui
+
+/** 設定画面で選べるエンジン (prefs の "selected_engine" の値, 表示名) */
+val ENGINE_CHOICES = listOf(
+    "suisho5" to "Suisho5",
+    "aoba" to "AobaNNUE",
+    "tsuyou11micro" to "TsuyouraOu11micro",
+    "tsuyou11mini" to "TsuyouraOu11mini",
+)
+
+fun createEngine(id: String): UsiEngineInterface = when (id) {
+    "aoba" -> AobaEngine()
+    "tsuyou11micro" -> TsuyouMicroEngine()
+    "tsuyou11mini" -> TsuyouMiniEngine()
+    else -> UsiEngine()
+}
+
+/** 設定画面のタイトルに出す、評価関数と探索部の名前 */
+fun engineDisplayName(id: String): String = when (id) {
+    "aoba" -> "AobaNNUE"
+    "tsuyou11micro" -> "TsuyouraOu11micro-YaneuraOu-v9.80git"
+    "tsuyou11mini" -> "TsuyouraOu11mini-YaneuraOu-v9.80git"
+    else -> "Suisho5-YaneuraOu-v7.5.0"
+}

@@ -1,0 +1,218 @@
+// やねうら王 V9系 (YaneuraOu9/) 用の JNI ラッパー。
+// 評価関数のarchitectureごとに別の .so としてビルドされるため、
+// JNI 関数名のクラス部分は CMake から JNI_CLASS (例: TsuyouMicroEngine) で与える。
+#include <jni.h>
+#include <string>
+#include <iostream>
+#include <streambuf>
+#include <android/log.h>
+#include <unistd.h>
+#include <mutex>
+#include <condition_variable>
+#include <queue>
+#include <atomic>
+#include <memory>
+#include <chrono>
+
+#include "YaneuraOu9/source/misc.h"
+#include "YaneuraOu9/source/bitboard.h"
+#include "YaneuraOu9/source/position.h"
+#include "YaneuraOu9/source/types.h"
+
+#if !defined(JNI_CLASS)
+#error "JNI_CLASS must be defined (Kotlin class name that declares the native methods)"
+#endif
+
+#define JNI_FN_IMPL(cls, name) Java_com_tksoft_shogigui_##cls##_##name
+#define JNI_FN_EXPAND(cls, name) JNI_FN_IMPL(cls, name)
+#define JNI_FN(name) JNI_FN_EXPAND(JNI_CLASS, name)
+
+#define LOG_TAG "ShogiJNI_YO9"
+
+static JavaVM* g_vm = nullptr;
+static jobject g_obj = nullptr;
+static jmethodID g_mid = nullptr;
+// ヒープ確保: exit() による global dtor でも破棄されない
+static std::mutex& g_mutex = *new std::mutex();
+
+// cout -> Kotlinコールバックへリダイレクトするバッファ
+class Yo9OutBuf : public std::streambuf {
+protected:
+    int_type overflow(int_type c) override {
+        if (c != EOF) {
+            if (c == '\n') sendToKotlin();
+            else           line += (char)c;
+        }
+        return c;
+    }
+private:
+    std::string line;
+    void sendToKotlin() {
+        if (line.empty()) return;
+        __android_log_print(ANDROID_LOG_DEBUG, LOG_TAG, "Engine: %s", line.c_str());
+        std::lock_guard<std::mutex> lock(g_mutex);
+        if (!g_obj || !g_vm) { line.clear(); return; }
+        JNIEnv* env;
+        bool attached = false;
+        if (g_vm->GetEnv((void**)&env, JNI_VERSION_1_6) == JNI_EDETACHED) {
+            if (g_vm->AttachCurrentThread(&env, nullptr) != JNI_OK) { line.clear(); return; }
+            attached = true;
+        }
+        jstring jline = env->NewStringUTF(line.c_str());
+        env->CallVoidMethod(g_obj, g_mid, jline);
+        env->DeleteLocalRef(jline);
+        if (attached) g_vm->DetachCurrentThread();
+        line.clear();
+    }
+};
+
+// cin をブロッキングキューで置き換えるバッファ
+class Yo9CinBuf : public std::streambuf {
+public:
+    void push_line(const std::string& s) {
+        { std::lock_guard<std::mutex> lock(mtx_); queue_.push(s + "\n"); }
+        cv_.notify_one();
+    }
+protected:
+    int_type underflow() override {
+        if (gptr() < egptr()) return traits_type::to_int_type(*gptr());
+        std::unique_lock<std::mutex> lock(mtx_);
+        cv_.wait(lock, [this]{ return !queue_.empty(); });
+        line_ = std::move(queue_.front());
+        queue_.pop();
+        lock.unlock();
+        if (line_.empty()) return traits_type::eof();
+        setg(&line_[0], &line_[0], &line_[0] + line_.size());
+        return traits_type::to_int_type(*gptr());
+    }
+private:
+    std::string line_;
+    std::mutex mtx_;
+    std::condition_variable cv_;
+    std::queue<std::string> queue_;
+};
+
+// shared_ptr で管理: nativeSendCommand がローカルコピーを保持している間は
+// nativeStart が終了してもオブジェクトが破壊されない
+static std::shared_ptr<Yo9CinBuf> g_cin_buf;
+// ヒープ確保: exit() による global dtor でも破棄されない
+static std::mutex& g_cin_mutex = *new std::mutex();
+
+// nativeStart の多重起動を防ぐ。
+// nativeStop は "quit" を投入するだけで前のエンジンの終了を待たないため、
+// 直後の nativeStart は前のエンジンが run_engine_entry を抜けるまで待つ
+static bool g_running = false;
+static std::mutex& g_running_mutex = *new std::mutex();
+static std::condition_variable& g_running_cv = *new std::condition_variable();
+
+extern "C" JNIEXPORT void JNICALL
+JNI_FN(nativeStart)(JNIEnv* env, jobject thiz) {
+    {
+        std::unique_lock<std::mutex> lock(g_running_mutex);
+        if (!g_running_cv.wait_for(lock, std::chrono::seconds(10), []{ return !g_running; })) {
+            __android_log_print(ANDROID_LOG_WARN, LOG_TAG, "nativeStart: previous engine did not exit in time");
+            return;
+        }
+        g_running = true;
+    }
+
+    env->GetJavaVM(&g_vm);
+    {
+        std::lock_guard<std::mutex> lock(g_mutex);
+        g_obj = env->NewGlobalRef(thiz);
+        jclass clazz = env->GetObjectClass(thiz);
+        g_mid = env->GetMethodID(clazz, "onOutput", "(Ljava/lang/String;)V");
+    }
+
+    auto sendDebug = [&](const char* msg) {
+        JNIEnv* myEnv;
+        if (g_vm->GetEnv((void**)&myEnv, JNI_VERSION_1_6) == JNI_EDETACHED)
+            g_vm->AttachCurrentThread(&myEnv, nullptr);
+        jstring jmsg = myEnv->NewStringUTF(msg);
+        myEnv->CallVoidMethod(g_obj, g_mid, jmsg);
+        myEnv->DeleteLocalRef(jmsg);
+    };
+
+    sendDebug("info string JNI YO9: Engine thread started (arch " COMPILED_ARCH ")");
+
+    // cin をキュー経由に差し替え (ヒープ確保して shared_ptr で管理)
+    auto cin_buf = std::make_shared<Yo9CinBuf>();
+    {
+        std::lock_guard<std::mutex> lock(g_cin_mutex);
+        g_cin_buf = cin_buf;
+    }
+    std::streambuf* old_cin = std::cin.rdbuf(cin_buf.get());
+
+    // 最初のコマンド "usi" を事前投入
+    cin_buf->push_line("usi");
+
+    // cout -> Kotlinコールバックに差し替え
+    Yo9OutBuf out_buf;
+    std::streambuf* old_cout = std::cout.rdbuf(&out_buf);
+
+    static bool initialized = false;
+    if (!initialized) {
+        char* argv[] = {(char*)"yaneuraou9"};
+        YaneuraOu::CommandLine::g.set_arg(1, argv);
+        YaneuraOu::Bitboards::init();
+        YaneuraOu::Position::init();
+        initialized = true;
+    }
+
+    sendDebug("info string JNI YO9: run_engine_entry start");
+    YaneuraOu::run_engine_entry();  // "quit" が来るまでブロック
+
+    // cinとcoutを先に戻す(以降の出力/入力はエンジンには届かない)
+    std::cin.rdbuf(old_cin);
+    std::cout.rdbuf(old_cout);
+
+    // グローバル参照を外す。cin_buf ローカル変数が生きている間は
+    // 他スレッドが push_line を呼んでも安全(shared_ptr が守る)
+    {
+        std::lock_guard<std::mutex> lock(g_cin_mutex);
+        g_cin_buf.reset();
+    }
+
+    {
+        std::lock_guard<std::mutex> lock(g_mutex);
+        env->DeleteGlobalRef(g_obj);
+        g_obj = nullptr;
+    }
+
+    {
+        std::lock_guard<std::mutex> lock(g_running_mutex);
+        g_running = false;
+    }
+    g_running_cv.notify_all();
+}
+
+extern "C" JNIEXPORT void JNICALL
+JNI_FN(nativeSendCommand)(JNIEnv* env, jobject thiz, jstring command) {
+    const char* cmd = env->GetStringUTFChars(command, nullptr);
+    __android_log_print(ANDROID_LOG_DEBUG, LOG_TAG, "sendCommand: %s", cmd);
+    // ローカルコピーを取ることで、nativeStart が終了しても安全に使える
+    std::shared_ptr<Yo9CinBuf> buf;
+    {
+        std::lock_guard<std::mutex> lock(g_cin_mutex);
+        buf = g_cin_buf;
+    }
+    if (buf) buf->push_line(std::string(cmd));
+    env->ReleaseStringUTFChars(command, cmd);
+}
+
+extern "C" JNIEXPORT void JNICALL
+JNI_FN(nativeStop)(JNIEnv* env, jobject thiz) {
+    std::shared_ptr<Yo9CinBuf> buf;
+    {
+        std::lock_guard<std::mutex> lock(g_cin_mutex);
+        buf = g_cin_buf;
+    }
+    if (buf) buf->push_line("quit");
+}
+
+extern "C" JNIEXPORT void JNICALL
+JNI_FN(nativeSetWorkDir)(JNIEnv* env, jobject thiz, jstring path) {
+    const char* p = env->GetStringUTFChars(path, nullptr);
+    chdir(p);
+    env->ReleaseStringUTFChars(path, p);
+}
