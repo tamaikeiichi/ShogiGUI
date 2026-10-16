@@ -22,3 +22,10 @@ fun engineDisplayName(id: String): String = when (id) {
     "tsuyou11mini" -> "TsuyouraOu11mini-YaneuraOu-v9.80git"
     else -> "Suisho5-YaneuraOu-v7.5.0"
 }
+
+/** 評価関数に付属するバナー画像 (準備完了ポップアップの背景に使う)。無ければ null */
+fun engineBannerRes(id: String): Int? = when (id) {
+    "tsuyou11micro" -> R.drawable.banner_tsuyou11micro
+    "tsuyou11mini" -> R.drawable.banner_tsuyou11mini
+    else -> null
+}

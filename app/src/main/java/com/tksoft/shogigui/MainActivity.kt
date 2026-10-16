@@ -10,6 +10,10 @@ import androidx.core.view.WindowCompat
 import androidx.activity.result.contract.ActivityResultContracts
 import androidx.compose.foundation.background
 import androidx.compose.foundation.basicMarquee
+import androidx.compose.foundation.Image
+import androidx.compose.ui.draw.clip
+import androidx.compose.ui.graphics.Shadow
+import androidx.compose.ui.layout.ContentScale
 import androidx.compose.foundation.layout.*
 import androidx.compose.foundation.lazy.LazyColumn
 import androidx.compose.foundation.lazy.items
@@ -234,6 +238,7 @@ class MainActivity : ComponentActivity() {
                 // USI の "id name" で通知されたエンジン名と、準備完了時に一時表示する名前
                 var engineIdName by remember { mutableStateOf<String?>(null) }
                 var engineReadyToast by remember { mutableStateOf<String?>(null) }
+                var engineReadyBanner by remember { mutableStateOf<Int?>(null) }
 
                 val processOutput = {
                     rawLine: String,
@@ -265,6 +270,7 @@ class MainActivity : ComponentActivity() {
                         }
                         line == "readyok" -> {
                             if (!isEngineReady) {
+                                engineReadyBanner = engineBannerRes(selectedEngine)
                                 engineReadyToast = engineIdName ?: engineDisplayName(selectedEngine)
                             }
                             isEngineReady = true
@@ -849,7 +855,7 @@ class MainActivity : ComponentActivity() {
                 ) {
                     var shownName by remember { mutableStateOf("") }
                     engineReadyToast?.let { shownName = it }
-                    EngineReadyToast(shownName)
+                    EngineReadyToast(shownName, engineReadyBanner)
                 }
                 }
 
@@ -1305,21 +1311,38 @@ class MainActivity : ComponentActivity() {
     }
 }
 
-/** エンジン準備完了のポップアップ本体。Surface は背後へのタッチを遮るため、Box + background で描画する */
+/**
+ * エンジン準備完了のポップアップ本体。Surface は背後へのタッチを遮るため、Box + background で描画する。
+ * @param bannerRes 評価関数に付属するバナー画像 (あれば背景に半透明でクロップ表示する)
+ */
 @Composable
-fun EngineReadyToast(engineName: String) {
+fun EngineReadyToast(engineName: String, bannerRes: Int? = null) {
+    val shape = MaterialTheme.shapes.medium
     Box(
         modifier = Modifier
             .padding(horizontal = 32.dp)
-            .background(
-                MaterialTheme.colorScheme.inverseSurface.copy(alpha = 0.4f),
-                MaterialTheme.shapes.medium
-            )
+            .clip(shape)
+            .background(MaterialTheme.colorScheme.inverseSurface.copy(alpha = 0.4f))
+            .then(if (bannerRes != null) Modifier.fillMaxWidth().heightIn(min = 72.dp) else Modifier),
+        contentAlignment = Alignment.CenterStart
     ) {
+        if (bannerRes != null) {
+            Image(
+                painter = painterResource(bannerRes),
+                contentDescription = null,
+                contentScale = ContentScale.Crop,
+                alpha = 0.6f,
+                modifier = Modifier.matchParentSize()
+            )
+        }
         Text(
             text = stringResource(R.string.engine_ready_toast, engineName),
-            color = MaterialTheme.colorScheme.inverseOnSurface,
-            style = MaterialTheme.typography.bodyMedium,
+            color = if (bannerRes != null) Color.White else MaterialTheme.colorScheme.inverseOnSurface,
+            style = MaterialTheme.typography.bodyMedium.copy(
+                // バナーの明るい部分の上でも読めるように影を付ける
+                shadow = if (bannerRes != null) Shadow(Color.Black, blurRadius = 6f) else null
+            ),
+            fontWeight = if (bannerRes != null) FontWeight.Bold else null,
             modifier = Modifier.padding(horizontal = 20.dp, vertical = 12.dp)
         )
     }
@@ -1398,7 +1421,7 @@ fun MainScreenPreview() {
                     .align(Alignment.BottomCenter)
                     .padding(bottom = innerPadding.calculateBottomPadding() + 8.dp)
             ) {
-                EngineReadyToast("TsuyouraOu11micro")
+                EngineReadyToast("TsuyouraOu11micro NNUE 9.80git 64Android", R.drawable.banner_tsuyou11micro)
             }
             }
         }
