@@ -537,6 +537,13 @@ fun Modifier.repeatingClickable(enabled: Boolean = true, initialDelay: Long = 50
     return if (!enabled) this else this.pointerInput(enabled) {
         // 押している間に端へ着くと enabled=false でこの pointerInput が外れ、tryAwaitRelease() がキャンセル例外で抜ける。
         // そのときも連打を止めるよう finally で止める（止めないと押し終えた後も連打が続き、逆方向へ戻れなくなる）
-        detectTapGestures(onPress = { val job = scope.launch { delay(initialDelay); while (true) { currentOnClick(); delay(delay) } }; try { tryAwaitRelease() } finally { job.cancel() } }, onTap = { currentOnClick() })
+        // 1回の押下は、連打が始まる前に離したときだけ1回とする。onTap を使うと長押しで連打した後の
+        // 指離しでも呼ばれて1回余分に進む（onTap は onPress の後始末より先に動くので、連打も1回多く出る）
+        detectTapGestures(onPress = {
+            var repeated = false
+            val job = scope.launch { delay(initialDelay); while (true) { repeated = true; currentOnClick(); delay(delay) } }
+            val released = try { tryAwaitRelease() } finally { job.cancel() }
+            if (released && !repeated) currentOnClick()
+        })
     }
 }

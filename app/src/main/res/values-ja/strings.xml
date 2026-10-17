@@ -69,6 +69,9 @@
     <string name="eval_status_gote_dominant">後手優勢</string>
     <string name="eval_status_sente_winning">先手勝勢</string>
     <string name="eval_status_gote_winning">後手勝勢</string>
+    <!-- 候補手カードの詰み表示。勝者の行は result_sente_wins / result_gote_wins を使う -->
+    <string name="mate_in_moves">%1$d手詰</string>
+    <string name="mate_now">詰み</string>
     <string name="time_remaining">持ち時間 %1$s</string>
     <string name="time_used">消費時間 %1$s</string>
     <string name="result_sente_wins">先手勝ち</string>

@@ -67,11 +67,14 @@ abstract class YaneuraOu9Engine(
     }
 
     private val commandQueue = java.util.concurrent.LinkedBlockingQueue<String>()
+    // stop() で入れてコマンド送信スレッドを終わらせる印（参照で比べるので、他のコマンド文字列とは一致しない）
+    private val quitCommand = String(charArrayOf())
 
     init {
         Thread({
             while (true) {
                 val command = commandQueue.take()
+                if (command === quitCommand) break
                 try {
                     nativeSendCommand(command)
                 } catch (_: Exception) {}
@@ -84,6 +87,7 @@ abstract class YaneuraOu9Engine(
     }
 
     override fun stop() {
+        commandQueue.put(quitCommand)
         android.util.Log.d("EngineDebug", "${javaClass.simpleName}.stop() called on $this")
         nativeStop()
         activeInstances.remove(javaClass, this)

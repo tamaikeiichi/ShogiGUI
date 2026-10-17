@@ -69,6 +69,9 @@
     <string name="eval_status_gote_dominant">Gote dominant</string>
     <string name="eval_status_sente_winning">Sente winning</string>
     <string name="eval_status_gote_winning">Gote winning</string>
+    <!-- Mate shown on candidate cards. The winner line uses result_sente_wins / result_gote_wins -->
+    <string name="mate_in_moves">Mate in %1$d</string>
+    <string name="mate_now">Checkmate</string>
     <string name="time_remaining">Time remaining %1$s</string>
     <string name="time_used">Time used %1$s</string>
     <string name="result_sente_wins">Sente wins</string>

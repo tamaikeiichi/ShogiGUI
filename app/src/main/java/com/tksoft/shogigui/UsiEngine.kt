@@ -55,11 +55,14 @@ class UsiEngine(private val dummyPath: String = "") : UsiEngineInterface {
     }
 
     private val commandQueue = java.util.concurrent.LinkedBlockingQueue<String>()
+    // stop() で入れてコマンド送信スレッドを終わらせる印（参照で比べるので、他のコマンド文字列とは一致しない）
+    private val quitCommand = String(charArrayOf())
 
     init {
         Thread({
             while (true) {
                 val command = commandQueue.take()
+                if (command === quitCommand) break
                 try {
                     android.util.Log.d("ShogiJNI", "sendCommand: $command")
                     nativeSendCommand(command)
@@ -73,6 +76,7 @@ class UsiEngine(private val dummyPath: String = "") : UsiEngineInterface {
     }
 
     override fun stop() {
+        commandQueue.put(quitCommand)
         android.util.Log.d("EngineDebug", "UsiEngine.stop() called on $this thread=${Thread.currentThread().name}")
         nativeStop()
         android.util.Log.d("EngineDebug", "UsiEngine.stop() nativeStop() returned for $this")

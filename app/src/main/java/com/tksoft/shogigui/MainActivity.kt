@@ -67,9 +67,17 @@ class MainActivity : ComponentActivity() {
     // 他アプリの共有ボタン (ACTION_SEND) で受け取った棋譜テキスト。読み込んだら null に戻す
     private val sharedKifuText = mutableStateOf<String?>(null)
 
+    // 画面が裏に回るときに棋譜を保存する処理（解析で付いた評価値は指し手のたびの保存に含まれないため）
+    private var saveOnStop: (() -> Unit)? = null
+
     override fun onResume() {
         super.onResume()
         resumeCount.intValue++
+    }
+
+    override fun onStop() {
+        saveOnStop?.invoke()
+        super.onStop()
     }
 
     override fun onNewIntent(intent: Intent) {
@@ -245,6 +253,8 @@ class MainActivity : ComponentActivity() {
                 // 新しい "go" より前の探索の出力（その探索の bestmove まで）は読み捨てる。
                 // 出力はメインスレッドで順に処理されるので、カウンタもメインスレッドだけで読み書きする
                 val searchCounter = remember { object { var pending = 0; var ignore = 0 } }
+                // 増やすと、解析・対局中の探索を今の局面でやり直す（設定の変更をすぐ反映させるため）
+                var searchRestartKey by remember { mutableIntStateOf(0) }
                 val sendGo: (String) -> Unit = { goCommand ->
                     searchCounter.ignore = searchCounter.pending
                     searchCounter.pending++
@@ -319,9 +329,10 @@ class MainActivity : ComponentActivity() {
                                     val scoreLine = parsed.lines().find { scoreLineRegex.matches(it) }
                                     val score = scoreLine?.substringBefore(" ")?.toIntOrNull()
                                     if (score != null) capturedNode?.evalScore = score
-                                } else if (rank == 1 && (parsed.contains("手詰") || parsed.contains("詰み"))) {
-                                    val isSenteWin = parsed.contains("先手勝ち")
-                                    capturedNode?.evalScore = if (isSenteWin) 30000 else -30000
+                                } else if (rank == 1) {
+                                    mateWinnerIsSente(this@MainActivity, parsed)?.let { isSenteWin ->
+                                        capturedNode?.evalScore = if (isSenteWin) 30000 else -30000
+                                    }
                                 }
                             }
                         }
@@ -329,6 +340,14 @@ class MainActivity : ComponentActivity() {
                             bestmoveReceived = true
                         }
                     }
+                }
+
+                // 解析で付いた評価値（形勢グラフ）を保存する。解析中は局面ごとに保存すると重いので、
+                // 解析を止めたときと画面が裏に回るときにまとめて保存する
+                SideEffect { saveOnStop = { saveKifu(currentNode) } }
+                val isAnalyzing = isAnalysisMode || isAutoAnalysis
+                LaunchedEffect(isAnalyzing) {
+                    if (!isAnalyzing) saveKifu(currentNode)
                 }
 
                 LaunchedEffect(currentNode) {
@@ -374,7 +393,7 @@ class MainActivity : ComponentActivity() {
                     Log.d("EngineDebug", "[$effectId] LaunchedEffect(engine) engine.start() returned engine=$engine")
                 }
 
-                LaunchedEffect(isAutoAnalysis, isAnalysisMode, isEngineReady, currentNode) {
+                LaunchedEffect(isAutoAnalysis, isAnalysisMode, isEngineReady, currentNode, searchRestartKey) {
                     if (!(isAnalysisMode || isAutoAnalysis) || !isEngineReady) return@LaunchedEffect
                     //engine.sendCommand("stop")  // ← 先にstopを送る
                     val node = currentNode  // ← var不要、currentNodeをそのまま使う
@@ -393,7 +412,9 @@ class MainActivity : ComponentActivity() {
                     pvList.clear()
                     pvUsiList.clear()
 
-                    val posCmd = buildPositionCommand(initialNode, node)
+                    // initialNode は起動時のルートのままで、棋譜を読み込むと別の木になるので、局面の実際のルートから
+                    // 手順を作る（手順が無いと千日手を判定できない）
+                    val posCmd = buildPositionCommand(getRootNode(node), node)
                         ?: boardToSfen(node.board, node.currentPlayer, node.senteHand, node.goteHand)
                             .takeIf { it.isNotEmpty() }?.let { "position sfen $it" }
                     if (posCmd != null) {
@@ -417,7 +438,7 @@ class MainActivity : ComponentActivity() {
                     }
                 }
 
-                LaunchedEffect(humanPlayer, currentNode, isEngineReady) {
+                LaunchedEffect(humanPlayer, currentNode, isEngineReady, searchRestartKey) {
                     val hp = humanPlayer ?: return@LaunchedEffect
                     if (!isEngineReady) return@LaunchedEffect
                     if (currentNode.currentPlayer == hp) return@LaunchedEffect
@@ -441,7 +462,7 @@ class MainActivity : ComponentActivity() {
                     engine.sendCommand("stop")
                     bestmoveReceived = false
                     pvList.clear(); pvUsiList.clear()
-                    val posCmd = buildPositionCommand(initialNode, node)
+                    val posCmd = buildPositionCommand(getRootNode(node), node)
                         ?: boardToSfen(node.board, node.currentPlayer, node.senteHand, node.goteHand)
                             .takeIf { it.isNotEmpty() }?.let { "position sfen $it" }
                     if (posCmd != null) {
@@ -457,7 +478,7 @@ class MainActivity : ComponentActivity() {
                     val newNode = when {
                         text.lines().any { Regex("^[+-]\\d{4}[A-Z]{2}").containsMatchIn(it.trim()) } ->
                             parseCsa(text, freshRoot, saveKifu)
-                        text.contains("moves") || text.lines().any { Regex("^[1-9][a-i][1-9][a-i][+]?$").matches(it.trim()) } ->
+                        text.contains("moves") || containsUsiSfen(text) || text.lines().any { Regex("^[1-9][a-i][1-9][a-i][+]?$").matches(it.trim()) } ->
                             parseKifu(text, freshRoot, saveKifu)
                         else ->
                             parseKif(text, freshRoot, saveKifu)
@@ -530,7 +551,7 @@ class MainActivity : ComponentActivity() {
                     MaterialTheme.colorScheme.tertiary, MaterialTheme.colorScheme.outline)
                 val nextMoveEdgeColor = MaterialTheme.colorScheme.onSurface
                 val moveArrows: List<MoveArrow> = if (!(isAnalysisMode || isAutoAnalysis)) emptyList() else buildList {
-                    val candidates = pvList.entries.sortedBy { (_, pvText) -> extractScore(pvText, currentPlayer) }
+                    val candidates = pvList.entries.sortedBy { (_, pvText) -> extractScore(this@MainActivity, pvText, currentPlayer) }
                     candidates.forEachIndexed { idx, (rank, _) ->
                         val usi = pvUsiList[rank]?.firstOrNull() ?: return@forEachIndexed
                         val i = (rank - 1).coerceIn(0, 3)
@@ -714,7 +735,8 @@ class MainActivity : ComponentActivity() {
                                             pinnedPvList = emptyMap(); pinnedPvUsiList = emptyMap(); isAnalysisMode = true
                                         }
                                     }, modifier = Modifier.weight(0.3f).height(72.dp),
-                                        enabled = isEngineReady,
+                                        // 停止はエンジンの準備中でもできるようにする（対局中にエンジンを切り替えた場合など）
+                                        enabled = isEngineReady || humanPlayer != null || isAnalysisMode || isAutoAnalysis,
                                         shape = MaterialTheme.shapes.extraLarge,
                                         colors = ButtonDefaults.outlinedButtonColors(containerColor = if (humanPlayer != null || isAnalysisMode || isAutoAnalysis) MaterialTheme.colorScheme.tertiaryContainer else Color.Transparent)) {
                                         Column(horizontalAlignment = Alignment.CenterHorizontally) {
@@ -722,8 +744,8 @@ class MainActivity : ComponentActivity() {
                                             Text(
                                                 when {
                                                     humanPlayer != null -> stringResource(R.string.action_stop_game)
-                                                    !isEngineReady -> stringResource(R.string.action_preparing)
                                                     isAnalysisMode || isAutoAnalysis -> stringResource(R.string.action_stop)
+                                                    !isEngineReady -> stringResource(R.string.action_preparing)
                                                     else -> stringResource(R.string.action_analyze)
                                                 },
                                                 style = MaterialTheme.typography.labelSmall,
@@ -796,7 +818,7 @@ class MainActivity : ComponentActivity() {
                                         pvList.toMap()
                                     })
                                     .entries
-                                    .sortedByDescending { (_, pvText) -> extractScore(pvText, currentPlayer) }
+                                    .sortedByDescending { (_, pvText) -> extractScore(this@MainActivity, pvText, currentPlayer) }
                                     .forEach { (rank, pvText) ->
                                         val alpha = if (isPvStale && pinnedPvList.isEmpty()) 0.5f else 1f
                                         Box(modifier = Modifier.graphicsLayer { this.alpha = alpha }) {
@@ -833,7 +855,7 @@ class MainActivity : ComponentActivity() {
                             PlayerStatusSection(if(botP==Player.SENTE) senteName else goteName, if(botP==Player.SENTE) "▲" else "△", currentPlayer==botP, if(botP==Player.SENTE) senteHand else goteHand, selectedHandPiece, currentPlayer, isBoardFlipped, handOnTop = true, gameResult = gameResult, remainingMs = if(botP==Player.SENTE) currentNode.senteRemainingMs else currentNode.goteRemainingMs, onNameClick = { editingPlayerMark = if(botP==Player.SENTE) "▲" else "△" }, onPiecePositioned = onHandPiecePositioned) { if (isHumanTurn) { selectedHandPiece = it; selectedSquare = null } }
                             Column(modifier = Modifier.padding(8.dp)) {
                                 (if (pinnedPvList.isNotEmpty()) pinnedPvList else pvList.toMap()).entries
-                                    .sortedByDescending { (_, pvText) -> extractScore(pvText, currentPlayer) }
+                                    .sortedByDescending { (_, pvText) -> extractScore(this@MainActivity, pvText, currentPlayer) }
                                     .forEach { (rank, pvText) ->
                                         val alpha = if (isPvStale && pinnedPvList.isEmpty()) 0.5f else 1f
                                         Box(modifier = Modifier.graphicsLayer { this.alpha = alpha }) {
@@ -999,8 +1021,12 @@ class MainActivity : ComponentActivity() {
                                     coroutineScope.launch(Dispatchers.IO) { old.stop() }
                                 } else {
                                     if (isEngineReady) {
+                                        // USI では探索中の setoption は想定されていない（探索中は反映されない）ので、
+                                        // 探索を止めてから設定し、解析・対局中なら今の局面で探索し直す
+                                        engine.sendCommand("stop")
                                         engine.sendCommand("setoption name MultiPV value $multiPvCount")
                                         engine.sendCommand("setoption name Threads value $threadCount")
+                                        if (isAnalysisMode || isAutoAnalysis || humanPlayer != null) searchRestartKey++
                                     }
                                 }
                                 showSettingsDialog = false

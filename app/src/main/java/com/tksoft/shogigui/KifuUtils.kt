@@ -50,14 +50,15 @@ fun parseInfo(
                         "mate" -> {
                             val v = value.toIntOrNull() ?: 0
                             val isLosing = value.startsWith("-")  // "-0" や "-N" は手番側が負け
-                            val winner = when {
-                                v > 0 -> if (turn == Player.SENTE) "先手勝ち" else "後手勝ち"
-                                v < 0 -> if (turn == Player.SENTE) "後手勝ち" else "先手勝ち"
-                                isLosing -> if (turn == Player.SENTE) "後手勝ち" else "先手勝ち"
-                                else -> if (turn == Player.SENTE) "先手勝ち" else "後手勝ち"
+                            val sideToMoveWins = when {
+                                v != 0 -> v > 0
+                                else -> !isLosing
                             }
+                            val senteWins = sideToMoveWins == (turn == Player.SENTE)
+                            val winner = context.getString(if (senteWins) R.string.result_sente_wins else R.string.result_gote_wins)
                             val moves = kotlin.math.abs(v)
-                            if (moves > 0) "${moves}手詰\n$winner" else "詰み\n$winner"
+                            val mate = if (moves > 0) context.getString(R.string.mate_in_moves, moves) else context.getString(R.string.mate_now)
+                            "$mate\n$winner"
                         }
                         else -> ""
                     }
@@ -94,13 +95,21 @@ fun parseInfo(
     return result.joinToString("\n")
 }
 
-fun extractScore(pvText: String, turn: Player): Int {
+// parseInfo() が出力した詰みの表示 ("3手詰\n先手勝ち" / "Mate in 3\nSente wins" 等) から勝者を返す。
+// 詰みでなければ null。表示は現在の言語の文字列なので、同じ文字列リソースと照合する
+fun mateWinnerIsSente(context: Context, pvText: String): Boolean? {
     val lines = pvText.lines()
-    val mateIdx = lines.indexOfFirst { it.contains("手詰") || it == "詰み" }
-    if (mateIdx >= 0) {
-        // winner line is either the mate line itself or the next line
-        val winnerText = lines.drop(mateIdx).take(2).joinToString("\n")
-        val isSenteWin = winnerText.contains("先手勝ち")
+    val mateNow = context.getString(R.string.mate_now)
+    val format = context.getString(R.string.mate_in_moves).split("%1\$d")
+    val mateInRegex = Regex(Regex.escape(format[0]) + "\\d+" + Regex.escape(format.getOrElse(1) { "" }))
+    val idx = lines.indexOfFirst { it == mateNow || mateInRegex.matches(it) }
+    if (idx < 0) return null
+    return lines.getOrNull(idx + 1) == context.getString(R.string.result_sente_wins)
+}
+
+fun extractScore(context: Context, pvText: String, turn: Player): Int {
+    val isSenteWin = mateWinnerIsSente(context, pvText)
+    if (isSenteWin != null) {
         return if (turn == Player.SENTE) {
             if (isSenteWin) Int.MAX_VALUE else Int.MIN_VALUE
         } else {
@@ -466,6 +475,8 @@ fun kifuTreeToJson(node: KifuNode): JSONObject {
     json.put("lastTo", if (node.lastTo != null) "${node.lastTo.first},${node.lastTo.second}" else null)
     node.senteRemainingMs?.let { json.put("senteRem", it) }
     node.goteRemainingMs?.let { json.put("goteRem", it) }
+    // 解析で得た評価値（形勢グラフ）も保存する
+    node.evalScore?.let { json.put("eval", it) }
     val childrenJson = JSONArray(); node.children.filter { !it.isPvBranch }.forEach { childrenJson.put(kifuTreeToJson(it)) }; json.put("children", childrenJson)
     return json
 }
@@ -489,6 +500,7 @@ fun jsonToKifuTree(json: JSONObject, parent: KifuNode? = null): KifuNode {
     val node = KifuNode(board, senteHand, goteHand, Player.valueOf(json.getString("turn")), json.getString("label"), parent, lastFrom, lastTo)
     node.senteRemainingMs = json.optLong("senteRem", Long.MIN_VALUE).takeIf { it != Long.MIN_VALUE }
     node.goteRemainingMs = json.optLong("goteRem", Long.MIN_VALUE).takeIf { it != Long.MIN_VALUE }
+    if (json.has("eval")) node.evalScore = json.getInt("eval")
     val childrenJson = json.getJSONArray("children")
     for (i in 0 until childrenJson.length()) { node.children.add(jsonToKifuTree(childrenJson.getJSONObject(i), node)) }
     return node
@@ -631,7 +643,8 @@ private fun parseCsaInitialPosition(text: String): CsaInitialPosition {
             t.length >= 2 && t[0] == 'P' && t[1] in '1'..'9' -> {
                 // 盤面を1段ずつすべて明示する形式（P{段}が9升×3文字=27文字続く）
                 val row = (t[1] - '0') - 1
-                val body = t.substring(2)
+                // 行末の空き升 " * " の空白は trim() で消えるので、9升分 (27文字) に戻す
+                val body = t.substring(2).padEnd(27)
                 for (col in 0 until 9) {
                     val start = col * 3
                     if (start + 3 > body.length) break
@@ -748,7 +761,10 @@ fun extractGameResult(text: String): String? {
     var lastTurn: Char? = null
     for (line in text.lines()) {
         val t = line.trim()
-        if (t.matches(Regex("[+-]\\d{4}[A-Z]{2}.*"))) lastTurn = t[0]
+        // CSA は1行にカンマ区切りで複数の手を書けるので、行の最後の手で判定する
+        if (t.matches(Regex("[+-]\\d{4}[A-Z]{2}.*"))) {
+            Regex("(?:^|,)([+-])\\d{4}[A-Z]{2}").findAll(t).lastOrNull()?.let { lastTurn = it.groupValues[1][0] }
+        }
         if (t.startsWith("結果：") || t.startsWith("結果:")) {
             val v = t.substringAfterLast("：").substringAfterLast(":").trim()
             if (v.isNotEmpty()) return v
@@ -819,6 +835,33 @@ fun extractPlayerNames(text: String): PlayerNames {
     return PlayerNames(sente, gote)
 }
 
+// KIF の「手合割」の駒落ちで、上手（後手）が取り除く駒の升。平手・未対応の手合は null。
+// 「左」「右」は上手から見た向きで、上手の左は1筋側（香落ち = 1一の香を落とす）
+private fun kifHandicapRemovedSquares(name: String): List<Pair<Int, Int>>? {
+    fun sq(file: Int, rank: Int) = Pair(rank - 1, 9 - file)
+    val rook = sq(8, 2); val bishop = sq(2, 2)
+    val lanceL = sq(1, 1); val lanceR = sq(9, 1)
+    val knightL = sq(2, 1); val knightR = sq(8, 1)
+    val silvers = listOf(sq(3, 1), sq(7, 1)); val golds = listOf(sq(4, 1), sq(6, 1))
+    val twoPieces = listOf(rook, bishop)
+    return when (name) {
+        "香落ち" -> listOf(lanceL)
+        "右香落ち" -> listOf(lanceR)
+        "角落ち" -> listOf(bishop)
+        "飛車落ち" -> listOf(rook)
+        "飛香落ち" -> listOf(rook, lanceL)
+        "二枚落ち" -> twoPieces
+        "三枚落ち" -> twoPieces + lanceL
+        "四枚落ち" -> twoPieces + lanceL + lanceR
+        "五枚落ち" -> twoPieces + lanceL + lanceR + knightL
+        "左五枚落ち" -> twoPieces + lanceL + lanceR + knightR
+        "六枚落ち" -> twoPieces + lanceL + lanceR + knightL + knightR
+        "八枚落ち" -> twoPieces + lanceL + lanceR + knightL + knightR + silvers
+        "十枚落ち" -> twoPieces + lanceL + lanceR + knightL + knightR + silvers + golds
+        else -> null
+    }
+}
+
 fun parseKif(text: String, root: KifuNode, onSaveRequested: (KifuNode) -> Unit): KifuNode? {
     var tempNode = root; var lastToPos: Pair<Int, Int>? = null
 
@@ -832,6 +875,13 @@ fun parseKif(text: String, root: KifuNode, onSaveRequested: (KifuNode) -> Unit):
         }
         Regex("""\${'$'}TIME_LIMIT:(\d+):(\d+)""").find(t)?.let { m ->
             initialMs = (m.groupValues[1].toLong() * 60 + m.groupValues[2].toLong()) * 60000L
+        }
+        // 駒落ち: 上手（後手）の駒を取り除き、上手から指す
+        Regex("""^手合割[：:]\s*(\S+)""").find(t)?.let { m ->
+            kifHandicapRemovedSquares(m.groupValues[1])?.let { removed ->
+                root.board = createInitialBoard() - removed.toSet()
+                root.currentPlayer = Player.GOTE
+            }
         }
     }
     // 0手目に初期持ち時間をセット（持ち時間不明なら消費0として -1L）
@@ -877,7 +927,9 @@ fun parseKif(text: String, root: KifuNode, onSaveRequested: (KifuNode) -> Unit):
             (cumH * 3600 + cumM * 60 + cumS) * 1000L else null
         try {
             val toPos = if (movePart.startsWith("同")) lastToPos ?: return@forEach else {
-                val col = "１２３４５６７８９".indexOf(movePart[0]); val row = "一二三四五六七八九".indexOf(movePart[1])
+                // 筋は全角 ("７六歩") と半角 ("7六歩") のどちらも受け付ける
+                val col = "１２３４５６７８９".indexOf(movePart[0]).takeIf { it >= 0 } ?: "123456789".indexOf(movePart[0])
+                val row = "一二三四五六七八九".indexOf(movePart[1])
                 if (col == -1 || row == -1) return@forEach
                 Pair(row, 8 - col)
             }
@@ -1001,7 +1053,8 @@ fun parseCsa(text: String, root: KifuNode, onSaveRequested: (KifuNode) -> Unit):
     root.goteRemainingMs = initialGoteMs
     var lastMovedPlayer: Player? = null
 
-    text.lines().forEach { line ->
+    // CSA は1行にカンマ区切りで複数の文を書ける ("+7776FU,T12" / "+7776FU,-3334FU") ので、文ごとに処理する
+    text.lines().flatMap { it.split(',') }.forEach { line ->
         val t = line.trim()
 
         // T行：直前の指し手の消費時間（秒、小数ミリ秒対応）
@@ -1042,8 +1095,22 @@ fun parseCsa(text: String, root: KifuNode, onSaveRequested: (KifuNode) -> Unit):
     return if (tempNode != root) tempNode else null
 }
 
+// USI の局面指定 "sfen <盤面> <手番> <持ち駒> [手数]" を探す
+private val usiSfenRegex = Regex("""\bsfen\s+(\S+)\s+([bw])\s+(\S+)""")
+
+// テキストが USI の sfen 局面指定を含むか（棋譜の形式の判定用）
+fun containsUsiSfen(text: String): Boolean = usiSfenRegex.containsMatchIn(text)
+
 fun parseKifu(text: String, root: KifuNode, onSaveRequested: (KifuNode) -> Unit): KifuNode? {
-    val moves = (if (text.contains("moves")) text.substringAfter("moves").trim() else text.trim()).split(Regex("\\s+")).filter { it.length >= 4 }
+    // "position sfen ..." なら開始局面をその局面にする（"startpos" や局面指定なしは平手のまま）
+    val sfenMatch = usiSfenRegex.find(text.substringBefore("moves"))
+    if (sfenMatch != null) {
+        val (boardPart, turnPart, handPart) = sfenMatch.destructured
+        val pos = sfenToBoard("$boardPart $turnPart $handPart")
+        root.board = pos.board; root.senteHand = pos.senteHand; root.goteHand = pos.goteHand; root.currentPlayer = pos.turn
+    }
+    val moves = (if (text.contains("moves")) text.substringAfter("moves").trim() else if (sfenMatch != null) "" else text.trim())
+        .split(Regex("\\s+")).filter { it.length >= 4 }
     var tempNode = root
     moves.forEach { moveStr ->
         try {
@@ -1058,7 +1125,8 @@ fun parseKifu(text: String, root: KifuNode, onSaveRequested: (KifuNode) -> Unit)
             }
         } catch (e: Exception) {}
     }
-    return if (tempNode != root) tempNode else null
+    // 手が無くても sfen で局面を指定していれば、その局面を読み込む
+    return if (tempNode != root || sfenMatch != null) tempNode else null
 }
 
 fun applyUsiMoveToNode(
