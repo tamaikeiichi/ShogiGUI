@@ -152,7 +152,9 @@ JNI_FN(nativeStart)(JNIEnv* env, jobject thiz) {
 
     static bool initialized = false;
     if (!initialized) {
-        char* argv[] = {(char*)"yaneuraou9"};
+        // CommandLine::g は argv のポインタをそのまま保持し、2回目以降の起動でも argv[0] を読むので、
+        // スタック上の配列だと nativeStart を抜けた後に無効な領域を指してしまう (再起動時に SIGSEGV)。static にしておく
+        static char* argv[] = {(char*)"yaneuraou9"};
         YaneuraOu::CommandLine::g.set_arg(1, argv);
         YaneuraOu::Bitboards::init();
         YaneuraOu::Position::init();

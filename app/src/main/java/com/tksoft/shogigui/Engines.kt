@@ -8,6 +8,9 @@ val ENGINE_CHOICES = listOf(
     "tsuyou11mini" to "TsuyouraOu11mini",
 )
 
+/** 新規インストール時のエンジン */
+const val DEFAULT_ENGINE = "tsuyou11mini"
+
 fun createEngine(id: String): UsiEngineInterface = when (id) {
     "aoba" -> AobaEngine()
     "tsuyou11micro" -> TsuyouMicroEngine()

@@ -18,6 +18,7 @@ import androidx.compose.foundation.layout.*
 import androidx.compose.foundation.lazy.LazyColumn
 import androidx.compose.foundation.lazy.items
 import androidx.compose.foundation.rememberScrollState
+import androidx.compose.foundation.selection.selectable
 import androidx.compose.foundation.verticalScroll
 import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.filled.ContentPaste
@@ -109,6 +110,11 @@ class MainActivity : ComponentActivity() {
         }
 
         val prefs = getSharedPreferences("kifu_prefs", MODE_PRIVATE)
+        // 既定エンジンを suisho5 から tsuyou11mini に変えたので、エンジンを選ばずに使っていた
+        // 既存ユーザー（何かしら保存済み）は今まで通り suisho5 に固定する
+        if (!prefs.contains("selected_engine") && prefs.all.isNotEmpty()) {
+            prefs.edit().putString("selected_engine", "suisho5").apply()
+        }
         if (rootNode == null) {
             val saved = prefs.getString("current_tree", null)
             savedSenteName = prefs.getString("sente_name", senteColorName) ?: senteColorName
@@ -238,7 +244,7 @@ class MainActivity : ComponentActivity() {
                 var goteName by remember { mutableStateOf(savedGoteName) }
                 var gameResult by remember { mutableStateOf(savedGameResult) }
                 
-                var selectedEngine by remember { mutableStateOf(prefs.getString("selected_engine", "suisho5") ?: "suisho5") }
+                var selectedEngine by remember { mutableStateOf(prefs.getString("selected_engine", DEFAULT_ENGINE) ?: DEFAULT_ENGINE) }
                 var engine by remember { mutableStateOf<UsiEngineInterface>(
                     createEngine(selectedEngine)
                 ) }
@@ -932,8 +938,16 @@ class MainActivity : ComponentActivity() {
                                 Column {
                                     Text(stringResource(R.string.settings_engine_label), style = MaterialTheme.typography.labelMedium)
                                     ENGINE_CHOICES.forEach { (id, label) ->
-                                        Row(verticalAlignment = Alignment.CenterVertically) {
-                                            RadioButton(selected = pendingEngine == id, onClick = { pendingEngine = id })
+                                        // 名前の部分をタップしても選べるよう、行全体を選択対象にする
+                                        Row(
+                                            verticalAlignment = Alignment.CenterVertically,
+                                            modifier = Modifier.fillMaxWidth().heightIn(min = 48.dp).selectable(
+                                                selected = pendingEngine == id,
+                                                onClick = { pendingEngine = id },
+                                                role = androidx.compose.ui.semantics.Role.RadioButton,
+                                            ),
+                                        ) {
+                                            RadioButton(selected = pendingEngine == id, onClick = null)
                                             Text(label, modifier = Modifier.weight(1f))
                                         }
                                     }
