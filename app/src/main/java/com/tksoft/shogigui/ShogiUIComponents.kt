@@ -535,6 +535,8 @@ fun KifuTreeSectionPreview() {
 fun Modifier.repeatingClickable(enabled: Boolean = true, initialDelay: Long = 500L, delay: Long = 100L, onClick: () -> Unit): Modifier {
     val currentOnClick by rememberUpdatedState(onClick); val scope = rememberCoroutineScope()
     return if (!enabled) this else this.pointerInput(enabled) {
-        detectTapGestures(onPress = { val job = scope.launch { delay(initialDelay); while (true) { currentOnClick(); delay(delay) } }; tryAwaitRelease(); job.cancel() }, onTap = { currentOnClick() })
+        // 押している間に端へ着くと enabled=false でこの pointerInput が外れ、tryAwaitRelease() がキャンセル例外で抜ける。
+        // そのときも連打を止めるよう finally で止める（止めないと押し終えた後も連打が続き、逆方向へ戻れなくなる）
+        detectTapGestures(onPress = { val job = scope.launch { delay(initialDelay); while (true) { currentOnClick(); delay(delay) } }; try { tryAwaitRelease() } finally { job.cancel() } }, onTap = { currentOnClick() })
     }
 }

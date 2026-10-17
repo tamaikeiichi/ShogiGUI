@@ -240,6 +240,29 @@ class MainActivity : ComponentActivity() {
                 var engineReadyToast by remember { mutableStateOf<String?>(null) }
                 var engineReadyBanner by remember { mutableStateOf<Int?>(null) }
 
+                // 局面を切り替えると "stop" を送って新しく探索させるが、エンジンは前の探索の info と bestmove を
+                // その後も出力する。それを新しい局面の結果として扱わないよう、"go" の数と bestmove の数を数え、
+                // 新しい "go" より前の探索の出力（その探索の bestmove まで）は読み捨てる。
+                // 出力はメインスレッドで順に処理されるので、カウンタもメインスレッドだけで読み書きする
+                val searchCounter = remember { object { var pending = 0; var ignore = 0 } }
+                val sendGo: (String) -> Unit = { goCommand ->
+                    searchCounter.ignore = searchCounter.pending
+                    searchCounter.pending++
+                    engine.sendCommand(goCommand)
+                }
+                // 読み捨てる出力なら false
+                val acceptEngineLine: (String) -> Boolean = { rawLine ->
+                    val line = rawLine.trim()
+                    when {
+                        line.startsWith("bestmove") -> {
+                            searchCounter.pending = (searchCounter.pending - 1).coerceAtLeast(0)
+                            if (searchCounter.ignore > 0) { searchCounter.ignore--; false } else true
+                        }
+                        line.startsWith("info") -> searchCounter.ignore == 0
+                        else -> true
+                    }
+                }
+
                 val processOutput = {
                     rawLine: String,
                     capturedBoard: Map<Pair<Int, Int>, Piece>,
@@ -334,8 +357,9 @@ class MainActivity : ComponentActivity() {
                     delay(1000)
                     isEngineReady = false
                     engineIdName = null
+                    searchCounter.pending = 0; searchCounter.ignore = 0
                     engine.onOutputReceived = { rawLine ->
-                        runOnUiThread { processOutput(rawLine, emptyMap(), Player.SENTE, 0, null, null) }
+                        runOnUiThread { if (acceptEngineLine(rawLine)) processOutput(rawLine, emptyMap(), Player.SENTE, 0, null, null) }
                     }
 
                     kotlinx.coroutines.withContext(kotlinx.coroutines.Dispatchers.IO) {
@@ -361,7 +385,7 @@ class MainActivity : ComponentActivity() {
                     val capturedLastTo = node.lastTo
 
                     engine.onOutputReceived = { rawLine ->
-                        runOnUiThread { processOutput(rawLine, capturedBoard, capturedTurn, capturedMoveCount, capturedLastTo, node) }
+                        runOnUiThread { if (acceptEngineLine(rawLine)) processOutput(rawLine, capturedBoard, capturedTurn, capturedMoveCount, capturedLastTo, node) }
                     }
                     Log.d("callback_set", "手数=$capturedMoveCount turn=$capturedTurn")
                     engine.sendCommand("stop")
@@ -376,9 +400,9 @@ class MainActivity : ComponentActivity() {
                         engine.sendCommand(posCmd)
                         Log.d("posCmd", posCmd)
                         if (isAutoAnalysis) {
-                            engine.sendCommand("go movetime $analysisTimeMs")
+                            sendGo("go movetime $analysisTimeMs")
                         } else {
-                            engine.sendCommand("go infinite")
+                            sendGo("go infinite")
                         }
                     }
 
@@ -404,6 +428,7 @@ class MainActivity : ComponentActivity() {
                     val capturedLastTo2 = node.lastTo
                     engine.onOutputReceived = { rawLine ->
                         runOnUiThread {
+                            if (!acceptEngineLine(rawLine)) return@runOnUiThread
                             processOutput(rawLine, capturedBoard, capturedTurn, capturedMoveCount, capturedLastTo2, node)
                             if (rawLine.trim().startsWith("bestmove") && humanPlayer != null) {
                                 val moveStr = rawLine.trim().split(Regex("\\s+")).getOrNull(1)
@@ -421,7 +446,7 @@ class MainActivity : ComponentActivity() {
                             .takeIf { it.isNotEmpty() }?.let { "position sfen $it" }
                     if (posCmd != null) {
                         engine.sendCommand(posCmd)
-                        engine.sendCommand("go movetime $analysisTimeMs")
+                        sendGo("go movetime $analysisTimeMs")
                     }
                 }
 
@@ -860,7 +885,11 @@ class MainActivity : ComponentActivity() {
                 }
 
                 if (showSettingsDialog) {
+                    // ダイアログ内では下書きの値を動かし、保存を押したときだけ反映する（外側タップで閉じたら破棄）
                     var pendingEngine by remember { mutableStateOf(selectedEngine) }
+                    var pendingTimeMs by remember { mutableLongStateOf(analysisTimeMs) }
+                    var pendingMultiPv by remember { mutableIntStateOf(multiPvCount) }
+                    var pendingThreads by remember { mutableIntStateOf(threadCount) }
                     AlertDialog(onDismissRequest = { showSettingsDialog = false }, title = { Text(
                         text = buildAnnotatedString {
                             append(stringResource(R.string.settings_title_prefix))
@@ -893,9 +922,9 @@ class MainActivity : ComponentActivity() {
                                     // 短い時間ほど細かく選べるよう、スライダーは対数目盛り（倍になるごとに同じ距離）で連続的に動かし、
                                     // 値は0.01秒単位に丸める。つまみは丸めた値ではなく指の位置をそのまま追うので、滑らかに動く。
                                     // 以前の版で保存した半端な値 (ms) もそのまま使用し、スライダーを動かしたときだけ丸める。
-                                    var thinkSliderPos by remember { mutableFloatStateOf(thinkTimeToSlider(analysisTimeMs)) }
+                                    var thinkSliderPos by remember { mutableFloatStateOf(thinkTimeToSlider(pendingTimeMs)) }
                                     // 表示は常に小数2桁 ("1.00") にし、数字も等幅にして、値によって行の長さ（折り返し）が変わらないようにする
-                                    val thinkTimeSec = "%.2f".format(java.util.Locale.US, analysisTimeMs / 1000.0)
+                                    val thinkTimeSec = "%.2f".format(java.util.Locale.US, pendingTimeMs / 1000.0)
                                     Row(verticalAlignment = Alignment.Bottom) {
                                         Text(stringResource(R.string.settings_think_time_label), style = MaterialTheme.typography.labelMedium)
                                         Spacer(modifier = Modifier.width(8.dp))
@@ -911,7 +940,7 @@ class MainActivity : ComponentActivity() {
                                         value = thinkSliderPos,
                                         onValueChange = {
                                             thinkSliderPos = it
-                                            analysisTimeMs = sliderToThinkTime(it)
+                                            pendingTimeMs = sliderToThinkTime(it)
                                         },
                                         valueRange = 0f..1f
                                     )
@@ -922,11 +951,11 @@ class MainActivity : ComponentActivity() {
                                     Row(verticalAlignment = Alignment.Bottom) {
                                         Text(stringResource(R.string.settings_multipv_label), style = MaterialTheme.typography.labelMedium)
                                         Spacer(modifier = Modifier.width(8.dp))
-                                        Text(text = multiPvCount.toString(), style = MaterialTheme.typography.titleLarge, color = MaterialTheme.colorScheme.primary)
+                                        Text(text = pendingMultiPv.toString(), style = MaterialTheme.typography.titleLarge, color = MaterialTheme.colorScheme.primary)
                                     }
                                     Slider(
-                                        value = multiPvCount.toFloat(),
-                                        onValueChange = { multiPvCount = it.roundToInt() },
+                                        value = pendingMultiPv.toFloat(),
+                                        onValueChange = { pendingMultiPv = it.roundToInt() },
                                         valueRange = 1f..3f,
                                         steps = 1
                                     )
@@ -937,11 +966,11 @@ class MainActivity : ComponentActivity() {
                                     Row(verticalAlignment = Alignment.Bottom) {
                                         Text(stringResource(R.string.settings_threads_label), style = MaterialTheme.typography.labelMedium)
                                         Spacer(modifier = Modifier.width(8.dp))
-                                        Text(text = threadCount.toString(), style = MaterialTheme.typography.titleLarge, color = MaterialTheme.colorScheme.primary)
+                                        Text(text = pendingThreads.toString(), style = MaterialTheme.typography.titleLarge, color = MaterialTheme.colorScheme.primary)
                                     }
                                     Slider(
-                                        value = threadCount.toFloat(),
-                                        onValueChange = { threadCount = it.roundToInt() },
+                                        value = pendingThreads.toFloat(),
+                                        onValueChange = { pendingThreads = it.roundToInt() },
                                         valueRange = 1f..8f,
                                         steps = 6
                                     )
@@ -950,6 +979,9 @@ class MainActivity : ComponentActivity() {
                         },
                         confirmButton = {
                             TextButton(onClick = {
+                                analysisTimeMs = pendingTimeMs
+                                multiPvCount = pendingMultiPv
+                                threadCount = pendingThreads
                                 prefs.edit().putLong("analysis_time", analysisTimeMs)
                                     .putInt("multi_pv", multiPvCount)
                                     .putInt("thread_count", threadCount)
@@ -1282,7 +1314,7 @@ class MainActivity : ComponentActivity() {
     ) {
         val clickedPos = Pair(row, col)
         if (selectedHandPiece != null) {
-            if (boardState[clickedPos] == null && selectedHandPiece.first == currentPlayer) {
+            if (selectedHandPiece.first == currentPlayer && isLegalDrop(boardState, selectedHandPiece.second, currentPlayer, clickedPos)) {
                 val (player, type) = selectedHandPiece
                 val moveLabel = "${9 - col}${rowToKanji('a' + row)}${type.label}打"
                 executeMove(null, clickedPos, Piece(type, player), null, false, currentNode, moveLabel, false, onSaveRequested) { onUpdate(null, null, it, null) }
@@ -1298,15 +1330,19 @@ class MainActivity : ComponentActivity() {
                     val movingPiece = boardState[currentSelected]
                     val targetPiece = boardState[clickedPos]
                     if (movingPiece != null && movingPiece.owner == currentPlayer && movingPiece.owner != targetPiece?.owner) {
-                        if (isValidMovePattern(currentSelected, clickedPos, movingPiece, boardState)) {
+                        // 王手放置になる手は指せない
+                        if (isLegalBoardMove(boardState, currentSelected, clickedPos)) {
                             val canPromote = !movingPiece.isPromoted && movingPiece.type.promotedLabel != null
                             val isSenteZone = clickedPos.first <= 2 || currentSelected.first <= 2
                             val isGoteZone = clickedPos.first >= 6 || currentSelected.first >= 6
                             val enteringZone = if (movingPiece.owner == Player.SENTE) isSenteZone else isGoteZone
-                            if (canPromote && enteringZone) onUpdate(null, null, null, PendingMove(currentSelected, clickedPos, movingPiece, targetPiece))
+                            // 成らないと行き所のない駒になる場合は、選ばせずに成る
+                            val mustPromote = canPromote && isDeadSquare(movingPiece.type, movingPiece.owner, clickedPos.first)
+                            if (canPromote && enteringZone && !mustPromote) onUpdate(null, null, null, PendingMove(currentSelected, clickedPos, movingPiece, targetPiece))
                             else {
-                                val moveLabel = formatUsiMove("${9-currentSelected.second}${('a'+currentSelected.first)}${9-clickedPos.second}${('a'+clickedPos.first)}", boardState, currentNode.lastTo)
-                                executeMove(currentSelected, clickedPos, movingPiece, targetPiece, false, currentNode, moveLabel, false, onSaveRequested) { onUpdate(null, null, it, null) }
+                                val usi = "${9-currentSelected.second}${('a'+currentSelected.first)}${9-clickedPos.second}${('a'+clickedPos.first)}${if (mustPromote) "+" else ""}"
+                                val moveLabel = formatUsiMove(usi, boardState, currentNode.lastTo)
+                                executeMove(currentSelected, clickedPos, movingPiece, targetPiece, mustPromote, currentNode, moveLabel, false, onSaveRequested) { onUpdate(null, null, it, null) }
                             }
                         }
                     } else if (targetPiece?.owner == movingPiece?.owner) onUpdate(clickedPos, null, null, null)

@@ -360,7 +360,7 @@ fun isValidMovePattern(from: Pair<Int, Int>, to: Pair<Int, Int>, piece: Piece, b
     return if (piece.isPromoted) {
         when (piece.type) {
             PieceType.ROOK -> (dr == 0 || dc == 0) && isPathClear() || (adr <= 1 && adc <= 1)
-            PieceType.BISHOP -> (adr == dc) && isPathClear() || (adr <= 1 && adc <= 1)
+            PieceType.BISHOP -> (adr == adc) && isPathClear() || (adr <= 1 && adc <= 1)
             else -> (dr == forward && adc <= 1) || (dr == 0 && adc == 1) || (dr == -forward && dc == 0)
         }
     } else {
@@ -377,8 +377,56 @@ fun isValidMovePattern(from: Pair<Int, Int>, to: Pair<Int, Int>, piece: Piece, b
     }
 }
 
+// 行き所のない駒になる段か（先手は0段目=一段目が奥）。歩・香は奥の1段、桂は奥の2段
+fun isDeadSquare(type: PieceType, owner: Player, row: Int): Boolean {
+    val depth = if (owner == Player.SENTE) row else 8 - row
+    return when (type) {
+        PieceType.PAWN, PieceType.LANCE -> depth == 0
+        PieceType.KNIGHT -> depth <= 1
+        else -> false
+    }
+}
+
+// player の玉に相手の駒の利きがあるか（玉が無い局面では false）
+fun isKingInCheck(board: Map<Pair<Int, Int>, Piece>, player: Player): Boolean {
+    val king = board.entries.find { it.value.type == PieceType.KING && it.value.owner == player }?.key ?: return false
+    return board.any { (pos, p) -> p.owner != player && isValidMovePattern(pos, king, p, board) }
+}
+
+// 盤上の駒の移動が、駒の動き・自駒の取り・王手放置の点で合法か（成り/不成の選択は別に判定する）
+fun isLegalBoardMove(board: Map<Pair<Int, Int>, Piece>, from: Pair<Int, Int>, to: Pair<Int, Int>): Boolean {
+    val piece = board[from] ?: return false
+    if (from == to || board[to]?.owner == piece.owner) return false
+    if (!isValidMovePattern(from, to, piece, board)) return false
+    val after = board.toMutableMap().apply { remove(from); put(to, piece) }
+    return !isKingInCheck(after, piece.owner)
+}
+
+// 駒打ちが合法か: 空きマス・行き所のない駒・二歩・王手放置・打ち歩詰め
+fun isLegalDrop(board: Map<Pair<Int, Int>, Piece>, type: PieceType, player: Player, to: Pair<Int, Int>): Boolean {
+    if (board[to] != null || isDeadSquare(type, player, to.first)) return false
+    if (type == PieceType.PAWN && board.any { (pos, p) ->
+            pos.second == to.second && p.owner == player && p.type == PieceType.PAWN && !p.isPromoted }) return false
+    val after = board + (to to Piece(type, player))
+    if (isKingInCheck(after, player)) return false
+    if (type == PieceType.PAWN) {
+        val opponent = if (player == Player.SENTE) Player.GOTE else Player.SENTE
+        // 歩の王手は隣接しているので合い駒できない。相手に王手を外す盤上の手が無ければ打ち歩詰め
+        if (isKingInCheck(after, opponent)) {
+            val escapes = after.entries.filter { it.value.owner == opponent }.any { (from, _) ->
+                (0 until 9).any { r -> (0 until 9).any { c -> isLegalBoardMove(after, from, Pair(r, c)) } }
+            }
+            if (!escapes) return false
+        }
+    }
+    return true
+}
+
 fun executeMove(from: Pair<Int, Int>?, to: Pair<Int, Int>, piece: Piece, captured: Piece?, promote: Boolean, parentNode: KifuNode, label: String, isPvBranch: Boolean = false, onSaveRequested: (KifuNode) -> Unit, onUpdate: (KifuNode) -> Unit) {
-    val existing = parentNode.children.find { it.moveLabel == label }
+    // 同じ手が既にあればそのノードへ移動する。表記 ("5八金" 等) には右・左・直の区別が無く、
+    // 別の駒の手でも同じ表記になるので、移動元・移動先・指した後の駒で比べる
+    val placed = piece.copy(isPromoted = promote || piece.isPromoted)
+    val existing = parentNode.children.find { !it.isPvBranch && it.lastFrom == from && it.lastTo == to && it.board[to] == placed }
     if (existing != null) { onUpdate(existing); return }
     val newBoard = parentNode.board.toMutableMap()
     var newSenteHand = parentNode.senteHand; var newGoteHand = parentNode.goteHand
@@ -394,7 +442,7 @@ fun executeMove(from: Pair<Int, Int>?, to: Pair<Int, Int>, piece: Piece, capture
         else { newGoteHand = newGoteHand.toMutableMap().apply { this[captured.type] = (this[captured.type] ?: 0) + 1 } }
     }
     if (from != null) newBoard.remove(from)
-    newBoard[to] = piece.copy(isPromoted = promote || piece.isPromoted)
+    newBoard[to] = placed
     val newNode = KifuNode(newBoard, newSenteHand, newGoteHand, if (parentNode.currentPlayer == Player.SENTE) Player.GOTE else Player.SENTE, label, parentNode, from, to, isPvBranch = isPvBranch)
     parentNode.children.add(newNode)
     var root = newNode; while (root.parent != null) root = root.parent!!
@@ -793,9 +841,30 @@ fun parseKif(text: String, root: KifuNode, onSaveRequested: (KifuNode) -> Unit):
     var goteConsumedMs = 0L
 
     val moveLineRegex = Regex("""^\d+\s+(.+?)(?:\s*\(\s*\d+:\d+\s*/\s*(\d+):(\d+):(\d+)\s*\))?\s*$""")
+    val variationRegex = Regex("""^変化[：:]\s*(\d+)手""")
+    // 本譜の最後の局面（変化の手順を読む前に記録しておく）
+    var mainLineEnd: KifuNode? = null
     text.lines().forEach { rawLine ->
         val line = rawLine.trim()
         if (line.startsWith("*") || line.startsWith("#")) return@forEach
+        // 「変化：N手」以降はN手目の別の手順。直前に読んだ手順のN-1手目の局面から分岐させる
+        variationRegex.find(line)?.let { m ->
+            if (mainLineEnd == null) mainLineEnd = tempNode
+            val branchMove = m.groupValues[1].toInt()
+            var p = tempNode
+            while (p.moveCount > branchMove - 1 && p.parent != null) p = p.parent!!
+            tempNode = p
+            lastToPos = p.lastTo
+            // 分岐点までの消費時間に戻す（残り時間 = 持ち時間 - 消費、不明なら -(消費+1) で格納）
+            fun consumedOf(rem: Long?) = when {
+                rem == null -> 0L
+                initialMs != null -> initialMs!! - rem
+                else -> -rem - 1L
+            }
+            senteConsumedMs = consumedOf(p.senteRemainingMs)
+            goteConsumedMs = consumedOf(p.goteRemainingMs)
+            return@forEach
+        }
         if (listOf("中断", "投了", "持将棋", "千日手", "切れ負け", "詰み", "まで").any { line.contains(it) }) return@forEach
         val lineMatch = moveLineRegex.find(line) ?: return@forEach
         val movePart = lineMatch.groupValues[1].trim()
@@ -822,7 +891,9 @@ fun parseKif(text: String, root: KifuNode, onSaveRequested: (KifuNode) -> Unit):
             } else {
                 tempNode.board[fromPos!!] ?: return@forEach
             }
-            val promote = !piece.isPromoted && piece.type.promotedLabel != null && movePart.contains("成") && !movePart.contains("成${piece.type.label}")
+            // 「成」でも「不成」「成銀」(成駒の移動) は成りではない
+            val promote = !piece.isPromoted && piece.type.promotedLabel != null && movePart.contains("成") &&
+                !movePart.contains("不成") && !movePart.contains("成${piece.type.label}")
             val label = if (isDrop) {
                 "${9 - toPos.second}${when (toPos.first) {
                     0 -> "一"; 1 -> "二"; 2 -> "三"; 3 -> "四"; 4 -> "五"; 5 -> "六"; 6 -> "七"; 7 -> "八"; 8 -> "九"
@@ -857,7 +928,8 @@ fun parseKif(text: String, root: KifuNode, onSaveRequested: (KifuNode) -> Unit):
             }
         } catch (e: Exception) { Log.e("parseKif", "Error: ${e.message}, line: $line") }
     }
-    return if (tempNode != root) tempNode else null
+    val end = mainLineEnd ?: tempNode
+    return if (end != root) end else null
 }
 
 fun parseCsa(text: String, root: KifuNode, onSaveRequested: (KifuNode) -> Unit): KifuNode? {
