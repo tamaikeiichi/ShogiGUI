@@ -890,10 +890,12 @@ class MainActivity : ComponentActivity() {
                                 // 思考時間
                                 Column {
                                     // 自動解析で1手あたりに使う時間（単発の解析は停止するまで考え続ける）。
-                                    // 短い時間ほど細かく選べるよう、スライダーは対数目盛り（倍になるごとに同じ距離）で連続的に動かし、0.1秒単位に丸める。
+                                    // 短い時間ほど細かく選べるよう、スライダーは対数目盛り（倍になるごとに同じ距離）で連続的に動かし、
+                                    // 値は0.01秒単位に丸める。つまみは丸めた値ではなく指の位置をそのまま追うので、滑らかに動く。
                                     // 以前の版で保存した半端な値 (ms) もそのまま使用し、スライダーを動かしたときだけ丸める。
-                                    // 表示は常に小数1桁 ("1.0") にし、数字も等幅にして、値によって行の長さ（折り返し）が変わらないようにする
-                                    val thinkTimeSec = "%.1f".format(java.util.Locale.US, analysisTimeMs / 1000.0)
+                                    var thinkSliderPos by remember { mutableFloatStateOf(thinkTimeToSlider(analysisTimeMs)) }
+                                    // 表示は常に小数2桁 ("1.00") にし、数字も等幅にして、値によって行の長さ（折り返し）が変わらないようにする
+                                    val thinkTimeSec = "%.2f".format(java.util.Locale.US, analysisTimeMs / 1000.0)
                                     Row(verticalAlignment = Alignment.Bottom) {
                                         Text(stringResource(R.string.settings_think_time_label), style = MaterialTheme.typography.labelMedium)
                                         Spacer(modifier = Modifier.width(8.dp))
@@ -906,8 +908,11 @@ class MainActivity : ComponentActivity() {
                                         Text(stringResource(R.string.settings_think_time_unit), style = MaterialTheme.typography.labelMedium, color = MaterialTheme.colorScheme.primary)
                                     }
                                     Slider(
-                                        value = thinkTimeToSlider(analysisTimeMs),
-                                        onValueChange = { analysisTimeMs = sliderToThinkTime(it) },
+                                        value = thinkSliderPos,
+                                        onValueChange = {
+                                            thinkSliderPos = it
+                                            analysisTimeMs = sliderToThinkTime(it)
+                                        },
                                         valueRange = 0f..1f
                                     )
                                 }
@@ -1428,8 +1433,8 @@ fun MainScreenPreview() {
     }
 }
 
-// 設定の思考時間（自動解析で1手に使う時間 [ms]）とスライダー位置 (0..1) の対応。対数目盛りで 0.1秒〜5秒
-private const val minThinkTimeMs = 100L
+// 設定の思考時間（自動解析で1手に使う時間 [ms]）とスライダー位置 (0..1) の対応。対数目盛りで 0.05秒〜5秒
+private const val minThinkTimeMs = 50L
 private const val maxThinkTimeMs = 5000L
 private fun thinkTimeToSlider(ms: Long): Float {
     val t = ms.coerceIn(minThinkTimeMs, maxThinkTimeMs).toDouble()
@@ -1437,5 +1442,6 @@ private fun thinkTimeToSlider(ms: Long): Float {
 }
 private fun sliderToThinkTime(pos: Float): Long {
     val t = minThinkTimeMs * Math.pow(maxThinkTimeMs.toDouble() / minThinkTimeMs, pos.coerceIn(0f, 1f).toDouble())
-    return (Math.round(t / 100.0) * 100).coerceIn(minThinkTimeMs, maxThinkTimeMs)
+    // 0.01秒単位に丸める
+    return (Math.round(t / 10.0) * 10).coerceIn(minThinkTimeMs, maxThinkTimeMs)
 }
