@@ -28,3 +28,7 @@
 -keepclassmembers class com.tksoft.shogigui.AobaEngine {
     void onOutput(java.lang.String);
 }
+# native-lib-yaneuraou9.cpp (TsuyouMicroEngine / TsuyouMiniEngine etc.)
+-keepclassmembers class com.tksoft.shogigui.YaneuraOu9Engine {
+    void onOutput(java.lang.String);
+}
