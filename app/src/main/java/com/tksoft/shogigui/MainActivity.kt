@@ -585,9 +585,8 @@ class MainActivity : ComponentActivity() {
                 val onHandPiecePositioned: (Player, PieceType, androidx.compose.ui.layout.LayoutCoordinates) -> Unit =
                     { p, t, c -> handPieceCoords[Pair(p, t)] = c }
                 // 盤・持ち駒を含むエリアのスクロール位置。DropMoveArrowOverlay はこのエリアの
-                // 外側（画面全体オーバーレイ）にあるため、スクロール量が変わるたびに再合成させて
-                // 矢印の位置を再計算させる（onGloballyPositioned だけでは再合成が起きず矢印が
-                // 取り残されるため）。
+                // 外側（画面全体オーバーレイ）にあるため、描画フェーズでスクロール量を読ませて
+                // スクロールのたびに矢印の位置を再計算させる。
                 val boardAreaScrollState = rememberScrollState()
 
                 // 準備完了ポップアップを bottomBar のすぐ上に出すため、bottomBar の高さを測る
@@ -887,7 +886,7 @@ class MainActivity : ComponentActivity() {
                     handCoordinates = { type -> handPieceCoords[Pair(currentPlayer, type)] },
                     boardCoordinates = boardBoxCoords,
                     modifier = Modifier.fillMaxSize(),
-                    scrollValue = boardAreaScrollState.value
+                    scrollValue = { boardAreaScrollState.value }
                 )
 
                 // エンジン準備完了の通知 (約1秒)。クリック系の Modifier を付けないので

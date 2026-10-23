@@ -391,17 +391,15 @@ fun DropMoveArrowOverlay(
     boardCoordinates: LayoutCoordinates?,
     modifier: Modifier = Modifier,
     // 盤・持ち駒側のスクロール位置。このオーバーレイ自体はスクロールしない画面全体の
-    // Box に置かれているため、onGloballyPositioned の再通知だけに頼ると盤や持ち駒が
-    // スクロールで動いても矢印が再合成されず取り残されることがある。呼び出し側で
-    // スクロール量をここに渡すことで、スクロールのたびに再合成させて
-    // handCoordinates/boardCoordinates (常に最新位置を返すライブオブジェクト) から
-    // 現在位置を計算し直させる。
-    scrollValue: Int = 0
+    // Box に置かれているため、描画フェーズでこれを読んでスクロールのたびに再描画させる。
+    // 位置の計算は（合成時ではなく）描画時に行う: 合成時点ではスクロール後のレイアウトが
+    // まだ反映されておらず、古い座標で矢印が描かれてずれたまま残ってしまうため。
+    scrollValue: () -> Int = { 0 }
 ) {
     var ownCoordinates by remember { mutableStateOf<LayoutCoordinates?>(null) }
 
     // 解析停止で arrows が空になっても、局面が同じ間は最後の矢印を薄くして残す。
-    // 位置は毎回 LayoutCoordinates から計算し直すので、スクロールしても追従する
+    // 位置は描画のたびに LayoutCoordinates から計算し直すので、スクロールしても追従する
     // 「解析中かどうか」は駒打ちに限らず矢印全体で判定する。解析中は駒打ちの候補が無くなれば
     // （最善手が駒打ちから盤上の手に変わった等）駒打ちの矢印も消す。そうしないと古い矢印が順位ごと残る
     var lastArrows by remember(boardState) { mutableStateOf<List<MoveArrow>>(emptyList()) }
@@ -409,27 +407,17 @@ fun DropMoveArrowOverlay(
     val resting = arrows.isEmpty()
 
     val own = ownCoordinates
-    val points = if (boardCoordinates != null && boardCoordinates.isAttached && own != null && own.isAttached) {
-        // scrollValue を実際に読むことで、Compose の strong skipping によりこの
-        // Composable が「未使用パラメータ」として再合成をスキップされるのを防ぐ。
-        @Suppress("UNUSED_EXPRESSION")
-        scrollValue
+    // 合成時は「どの矢印をどの持ち駒から引くか」だけを決める（座標はライブオブジェクトのまま保持）
+    val targets = if (boardCoordinates != null && boardCoordinates.isAttached && own != null && own.isAttached) {
         lastArrows.mapNotNull { arrow ->
             val hand = arrow.dropPieceType?.let(handCoordinates) ?: return@mapNotNull null
             if (!hand.isAttached) return@mapNotNull null
-            try {
-                val cell = boardCoordinates.size.width / 9f
-                val toLocalInBoard = Offset((arrow.to.second + 0.5f) * cell, (arrow.to.first + 0.5f) * cell)
-                val handLocalCenter = Offset(hand.size.width / 2f, hand.size.height / 2f)
-                val fromInOwn = own.localPositionOf(hand, handLocalCenter)
-                val toInOwn = own.localPositionOf(boardCoordinates, toLocalInBoard)
-                DropArrowPoints(fromInOwn, toInOwn, cell, arrow)
-            } catch (e: Exception) { null }
+            DropArrowTarget(hand, boardCoordinates, arrow)
         }
     } else emptyList()
 
-    var lastPoints by remember { mutableStateOf<List<DropArrowPoints>>(emptyList()) }
-    if (points.isNotEmpty()) lastPoints = points
+    var lastTargets by remember { mutableStateOf<List<DropArrowTarget>>(emptyList()) }
+    if (targets.isNotEmpty()) lastTargets = targets
 
     // 解析中はしっかり表示、解析停止後（局面はそのまま）は消さずに薄く残す
     val restAlpha by animateFloatAsState(
@@ -439,8 +427,8 @@ fun DropMoveArrowOverlay(
     )
 
     val progress by animateFloatAsState(
-        targetValue = if (points.isNotEmpty()) 1f else 0f,
-        animationSpec = if (points.isNotEmpty())
+        targetValue = if (targets.isNotEmpty()) 1f else 0f,
+        animationSpec = if (targets.isNotEmpty())
             spring(dampingRatio = Spring.DampingRatioMediumBouncy, stiffness = Spring.StiffnessMedium)
         else
             tween(durationMillis = 150),
@@ -452,22 +440,36 @@ fun DropMoveArrowOverlay(
     val measurer = rememberTextMeasurer()
 
     Canvas(modifier = modifier.onGloballyPositioned { ownCoordinates = it }) {
+        // 描画フェーズでスクロール量を読む → スクロールのたびに（レイアウト確定後に）再描画される
+        scrollValue()
         if (progress <= 0f) return@Canvas
+        val ownNow = ownCoordinates ?: return@Canvas
+        if (!ownNow.isAttached) return@Canvas
+        val points = lastTargets.mapNotNull { (hand, board, arrow) ->
+            if (!hand.isAttached || !board.isAttached) return@mapNotNull null
+            try {
+                val cell = board.size.width / 9f
+                val toLocalInBoard = Offset((arrow.to.second + 0.5f) * cell, (arrow.to.first + 0.5f) * cell)
+                val handLocalCenter = Offset(hand.size.width / 2f, hand.size.height / 2f)
+                DropArrowPoints(ownNow.localPositionOf(hand, handLocalCenter), ownNow.localPositionOf(board, toLocalInBoard), cell, arrow)
+            } catch (e: Exception) { null }
+        }
         val grow = progress.coerceIn(0f, 1f)
         val alpha = grow * restAlpha
-        for ((fromCenter, toCenter, cell, arrow) in lastPoints) {
+        for ((fromCenter, toCenter, cell, arrow) in points) {
             // 持ち駒の位置を起点にバネで伸びるアニメーション
             scale(grow, pivot = fromCenter) {
                 drawMoveArrow(fromCenter, toCenter, cell, 0f, arrow.fillColor, arrow.edgeColor, haloColor, alpha)
             }
         }
         // このオーバーレイは回転していない座標系なので、数字はそのまま正立で描ける
-        val cell = lastPoints.firstOrNull()?.cell ?: return@Canvas
-        drawRankLabels(lastPoints.map { it.to to it.arrow }, cell, measurer, labelBackdropColor,
+        val cell = points.firstOrNull()?.cell ?: return@Canvas
+        drawRankLabels(points.map { it.to to it.arrow }, cell, measurer, labelBackdropColor,
             alpha, upsideDown = false)
     }
 }
 
+private data class DropArrowTarget(val hand: LayoutCoordinates, val board: LayoutCoordinates, val arrow: MoveArrow)
 private data class DropArrowPoints(val from: Offset, val to: Offset, val cell: Float, val arrow: MoveArrow)
 
 @Composable
