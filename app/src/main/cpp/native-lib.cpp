@@ -6,6 +6,8 @@
 #include <android/log.h>
 #include <unistd.h>
 #include <mutex>
+#include <condition_variable>
+#include <chrono>
 
 #include "YaneuraOu/usi.h"
 #include "YaneuraOu/misc.h"
@@ -63,8 +65,24 @@ private:
     }
 };
 
+// nativeStart の多重起動を防ぐ。
+// nativeStop は "quit" を投入するだけで前のエンジンの終了を待たないため、
+// 直後の nativeStart は前のエンジンが USI::loop を抜けるまで待つ
+static bool g_running = false;
+static std::mutex& g_running_mutex = *new std::mutex();
+static std::condition_variable& g_running_cv = *new std::condition_variable();
+
 extern "C" JNIEXPORT void JNICALL
 Java_com_tksoft_shogigui_UsiEngine_nativeStart(JNIEnv* env, jobject thiz) {
+    {
+        std::unique_lock<std::mutex> lock(g_running_mutex);
+        if (!g_running_cv.wait_for(lock, std::chrono::seconds(10), []{ return !g_running; })) {
+            __android_log_print(ANDROID_LOG_WARN, "ShogiJNI", "nativeStart: previous engine did not exit in time");
+            return;
+        }
+        g_running = true;
+    }
+
     env->GetJavaVM(&g_vm);
     {
         std::lock_guard<std::mutex> lock(g_mutex);
@@ -118,11 +136,6 @@ Java_com_tksoft_shogigui_UsiEngine_nativeStart(JNIEnv* env, jobject thiz) {
         threads_initialized = true;
     }
 
-    static std::atomic<bool> running(false);
-    if (running.exchange(true)) {
-        return; // 2回目の呼び出しは即リターン
-    }
-
     sendDebug("info string JNI: Thread setting start");
     size_t thread_num = Options.count("Threads") ? (size_t)Options["Threads"] : 1;
     Threads.set(thread_num);
@@ -153,7 +166,11 @@ Java_com_tksoft_shogigui_UsiEngine_nativeStart(JNIEnv* env, jobject thiz) {
         g_obj = nullptr;
     }
 
-    running.store(false);
+    {
+        std::lock_guard<std::mutex> lock(g_running_mutex);
+        g_running = false;
+    }
+    g_running_cv.notify_all();
 }
 
 extern "C" JNIEXPORT void JNICALL
@@ -167,7 +184,9 @@ Java_com_tksoft_shogigui_UsiEngine_nativeSendCommand(JNIEnv* env, jobject thiz, 
 
 extern "C" JNIEXPORT void JNICALL
 Java_com_tksoft_shogigui_UsiEngine_nativeStop(JNIEnv* env, jobject thiz) {
-    std_input.push("quit");
+    // エンジンが動いていないときに "quit" を積むと、次に起動したエンジンがそれを読んで即終了してしまう
+    std::lock_guard<std::mutex> lock(g_running_mutex);
+    if (g_running) std_input.push("quit");
 }
 
 extern "C" JNIEXPORT void JNICALL

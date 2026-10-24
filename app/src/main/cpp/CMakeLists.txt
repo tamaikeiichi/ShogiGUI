@@ -9,16 +9,17 @@ if(${ANDROID_ABI} STREQUAL "x86_64")
     target_compile_definitions(yaneuraou PRIVATE USE_SSE42 COMPILED_ARCH="x86_64")
     message(STATUS "Compiling yaneuraou for x86_64 (SSE4.2 enabled)")
 elseif(${ANDROID_ABI} STREQUAL "arm64-v8a")
-    target_compile_definitions(yaneuraou PRIVATE NO_SSE COMPILED_ARCH="arm64-v8a")
-    message(STATUS "Compiling yaneuraou for arm64-v8a (No SSE)")
+    # IS_64BIT は x86_64 以外では自動で定義されず、無いと 32bit 向けの実装になる
+    target_compile_definitions(yaneuraou PRIVATE IS_64BIT USE_NEON COMPILED_ARCH="arm64-v8a")
+    message(STATUS "Compiling yaneuraou for arm64-v8a (NEON)")
 else()
     target_compile_definitions(yaneuraou PRIVATE COMPILED_ARCH="${ANDROID_ABI}")
 endif()
 
 target_compile_definitions(yaneuraou PRIVATE
+    # "usi" に返す id name は探索部の名前とバージョン (YaneuraOu 8.30git) のままにする。
+    # 評価関数の名前はアプリ側 (Engines.kt) で持つ
     YANEURAOU_ENGINE_NNUE
-    ENGINE_NAME="Suisho5_Android"
-    ENGINE_VERSION="2024.1.0"
     TARGET_CPU="Android"
     NDEBUG
     NO_ASSUME_VLA
@@ -50,8 +51,8 @@ if(${ANDROID_ABI} STREQUAL "x86_64")
     target_compile_definitions(aobannue PRIVATE USE_SSE42 COMPILED_ARCH="x86_64")
     message(STATUS "Compiling aobannue for x86_64 (SSE4.2 enabled)")
 elseif(${ANDROID_ABI} STREQUAL "arm64-v8a")
-    target_compile_definitions(aobannue PRIVATE NO_SSE COMPILED_ARCH="arm64-v8a")
-    message(STATUS "Compiling aobannue for arm64-v8a (No SSE)")
+    target_compile_definitions(aobannue PRIVATE IS_64BIT USE_NEON COMPILED_ARCH="arm64-v8a")
+    message(STATUS "Compiling aobannue for arm64-v8a (NEON)")
 else()
     target_compile_definitions(aobannue PRIVATE COMPILED_ARCH="${ANDROID_ABI}")
 endif()
@@ -59,8 +60,6 @@ endif()
 target_compile_definitions(aobannue PRIVATE
     YANEURAOU_ENGINE_NNUE
     YANEURAOU_ENGINE_NNUE_HALFKP_768X2_16_64
-    ENGINE_NAME_FROM_MAKEFILE=AobaNNUE
-    ENGINE_VERSION="AobaNNUE_Android"
     TARGET_CPU="Android"
     NDEBUG
     NO_ASSUME_VLA
@@ -111,8 +110,7 @@ list(TRANSFORM YO9_SOURCES PREPEND "${YO9_DIR}/")
 # lib_name    : .so の名前 (System.loadLibrary に渡す名前)
 # jni_class   : native メソッドを宣言している Kotlin クラス名
 # nnue_arch   : SFNN architecture 名 (= architectures/<nnue_arch>.h)
-# engine_name : "usi" に対して返すエンジン名
-function(add_yaneuraou9_engine lib_name jni_class nnue_arch engine_name)
+function(add_yaneuraou9_engine lib_name jni_class nnue_arch)
     add_library(${lib_name} SHARED ${YO9_SOURCES} native-lib-yaneuraou9.cpp)
 
     if(${ANDROID_ABI} STREQUAL "x86_64")
@@ -130,7 +128,6 @@ function(add_yaneuraou9_engine lib_name jni_class nnue_arch engine_name)
         YANEURAOU_ENGINE_NNUE
         SFNNwoPSQT
         NNUE_ARCHITECTURE_HEADER="architectures/${nnue_arch}.h"
-        ENGINE_NAME_FROM_MAKEFILE=${engine_name}
         TARGET_CPU="Android"
         NDEBUG
         NO_EXCEPTIONS
@@ -153,5 +150,5 @@ function(add_yaneuraou9_engine lib_name jni_class nnue_arch engine_name)
     target_link_libraries(${lib_name} android log)
 endfunction()
 
-add_yaneuraou9_engine(tsuyou11micro TsuyouMicroEngine SFNN_ka2_2048_8_64_progress8 TsuyouraOu11micro)
-add_yaneuraou9_engine(tsuyou11mini  TsuyouMiniEngine  SFNN_ka2_4096_8_64_progress8 TsuyouraOu11mini)
+add_yaneuraou9_engine(tsuyou11micro TsuyouMicroEngine SFNN_ka2_2048_8_64_progress8)
+add_yaneuraou9_engine(tsuyou11mini  TsuyouMiniEngine  SFNN_ka2_4096_8_64_progress8)

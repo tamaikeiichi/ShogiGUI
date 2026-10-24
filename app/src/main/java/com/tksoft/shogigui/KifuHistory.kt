@@ -20,13 +20,21 @@ data class KifuHistoryEntry(
     val savedAt: Long,
     val moveCount: Int,
     val gameDate: String? = null,
-    val displayDate: String = ""
+    val displayDate: String = "",
+    // 削除した時刻。null でなければゴミ箱に入っていて、TRASH_RETENTION_MS 後に完全に削除される
+    val deletedAt: Long? = null
 )
 
 object KifuHistoryManager {
     private const val MAX_ENTRIES = 1000
     private const val HISTORY_DIR = "kifu_history"
     private const val INDEX_FILE = "index.json"
+    const val TRASH_RETENTION_MS = 24L * 60 * 60 * 1000
+
+    // index.json の読み書きは UI からの操作と自動保存が別スレッドで重なるので、まとめて排他する
+    private val lock = Any()
+    // 指し手のたびの自動保存はメインスレッドを止めないよう、順番を保って裏で書く
+    private val writer = java.util.concurrent.Executors.newSingleThreadExecutor()
 
     private val dateFmt get() = SimpleDateFormat("yyyy/MM/dd HH:mm", Locale.JAPAN)
     private val dateFmtWithSec get() = SimpleDateFormat("yyyy/MM/dd HH:mm:ss", Locale.JAPAN)
@@ -54,7 +62,7 @@ object KifuHistoryManager {
         }
     }
 
-    fun loadIndex(context: Context): List<KifuHistoryEntry> {
+    fun loadIndex(context: Context): List<KifuHistoryEntry> = synchronized(lock) {
         val file = indexFile(context)
         val parsed: List<KifuHistoryEntry> = if (!file.exists()) emptyList() else try {
             val arr = JSONArray(file.readText())
@@ -73,7 +81,8 @@ object KifuHistoryManager {
                         savedAt = savedAt,
                         moveCount = obj.optInt("moveCount", 0),
                         gameDate = gameDate,
-                        displayDate = computeDisplayDate(gameDate, savedAt)
+                        displayDate = computeDisplayDate(gameDate, savedAt),
+                        deletedAt = obj.optLong("deletedAt", 0L).takeIf { it > 0L }
                     )
                 } catch (e: Exception) { null }
             }
@@ -81,8 +90,12 @@ object KifuHistoryManager {
 
         val reconciled = reconcileWithOrphanFiles(context, parsed)
         val deduped = dedupeById(reconciled)
-        if (deduped.size != reconciled.size) saveIndex(context, deduped)
-        return deduped
+        // ゴミ箱に入れてから一定時間たったものは完全に削除する
+        val now = System.currentTimeMillis()
+        val (expired, kept) = deduped.partition { it.deletedAt != null && now - it.deletedAt >= TRASH_RETENTION_MS }
+        expired.forEach { kifuFile(context, it.id).delete() }
+        if (kept.size != reconciled.size) saveIndex(context, kept)
+        return kept
     }
 
     // 過去に存在した保存処理の不具合により、同一idのエントリが
@@ -141,33 +154,57 @@ object KifuHistoryManager {
                 put("savedAt", e.savedAt)
                 put("moveCount", e.moveCount)
                 e.gameDate?.let { put("gameDate", it) }
+                e.deletedAt?.let { put("deletedAt", it) }
             })
         }
         writeTextAtomic(indexFile(context), arr.toString())
     }
 
-    fun saveKifu(
+    /** 新しく履歴に登録する棋譜の id。保存日時を兼ねる */
+    fun newId(): String = System.currentTimeMillis().toString()
+
+    /**
+     * 棋譜を履歴に保存する。同じ id があれば内容と対局者名などを置き換えて一覧の先頭へ移し、無ければ新しく登録する。
+     * 棋譜の木は呼び出し側 (メインスレッド) で書き換わるので、JSON と手数は呼び出し側で作って渡す
+     */
+    fun saveOrUpdateAsync(
         context: Context,
-        rootNode: KifuNode,
+        id: String,
+        treeJson: String,
         senteName: String,
         goteName: String,
         gameResult: String,
-        gameDate: String? = null
+        gameDate: String?,
+        moveCount: Int
     ) {
-        val now = System.currentTimeMillis()
-        val id = now.toString()
+        val appContext = context.applicationContext
+        writer.execute {
+            try {
+                saveOrUpdate(appContext, id, treeJson, senteName, goteName, gameResult, gameDate, moveCount)
+            } catch (_: Exception) {}
+        }
+    }
+
+    private fun saveOrUpdate(
+        context: Context, id: String, treeJson: String, senteName: String, goteName: String,
+        gameResult: String, gameDate: String?, moveCount: Int
+    ) = synchronized(lock) {
         // 先に index を読み込んでおく。書き込み後に loadIndex すると、
         // まだ index に登録されていないこのファイルを reconcileWithOrphanFiles が
         // 孤児ファイルとみなし、名前が「先手」「後手」の重複エントリを作ってしまう。
         val entries = loadIndex(context).toMutableList()
-        writeTextAtomic(kifuFile(context, id), kifuTreeToJson(rootNode).toString())
+        writeTextAtomic(kifuFile(context, id), treeJson)
 
+        val idx = entries.indexOfFirst { it.id == id }
+        val existing = if (idx >= 0) entries.removeAt(idx) else null
+        val savedAt = existing?.savedAt ?: id.toLongOrNull() ?: System.currentTimeMillis()
         entries.add(0, KifuHistoryEntry(
             id = id, senteName = senteName, goteName = goteName,
-            gameResult = gameResult, savedAt = now,
-            moveCount = countMainLineMoves(rootNode),
+            gameResult = gameResult, savedAt = savedAt,
+            moveCount = moveCount,
             gameDate = gameDate,
-            displayDate = computeDisplayDate(gameDate, now)
+            displayDate = computeDisplayDate(gameDate, savedAt),
+            deletedAt = existing?.deletedAt
         ))
 
         if (entries.size > MAX_ENTRIES) {
@@ -177,7 +214,16 @@ object KifuHistoryManager {
         saveIndex(context, entries)
     }
 
-    fun bumpToTop(context: Context, id: String) {
+    /** ゴミ箱に入れる (deleted = true) / ゴミ箱から戻す (false) */
+    fun setDeleted(context: Context, id: String, deleted: Boolean): Unit = synchronized(lock) {
+        val entries = loadIndex(context).toMutableList()
+        val idx = entries.indexOfFirst { it.id == id }
+        if (idx < 0) return
+        entries[idx] = entries[idx].copy(deletedAt = if (deleted) System.currentTimeMillis() else null)
+        saveIndex(context, entries)
+    }
+
+    fun bumpToTop(context: Context, id: String): Unit = synchronized(lock) {
         val entries = loadIndex(context).toMutableList()
         val idx = entries.indexOfFirst { it.id == id }
         if (idx <= 0) return
@@ -192,7 +238,29 @@ object KifuHistoryManager {
         } catch (e: Exception) { null }
     }
 
-    private fun countMainLineMoves(root: KifuNode): Int {
+    /**
+     * 初期局面と本譜の指し手が同じ履歴を探す。表示中の棋譜がどの履歴か (history_id) を記録していなかった版から
+     * 更新したとき、同じ棋譜を二重に登録しないよう引き継ぐのに使う
+     */
+    fun findSameMainLine(context: Context, root: KifuNode): KifuHistoryEntry? {
+        val target = mainLine(root)
+        return loadIndex(context).asSequence()
+            .filter { it.deletedAt == null && it.moveCount == target.size - 1 }
+            .firstOrNull { e ->
+                val other = loadKifu(context, e.id)?.let { mainLine(it) } ?: return@firstOrNull false
+                other.first().board == target.first().board &&
+                    other.map { it.moveLabel } == target.map { it.moveLabel } &&
+                    other.last().board == target.last().board
+            }
+    }
+
+    private fun mainLine(root: KifuNode): List<KifuNode> {
+        val nodes = mutableListOf(root)
+        while (true) nodes.add(nodes.last().children.firstOrNull { !it.isPvBranch } ?: break)
+        return nodes
+    }
+
+    fun countMainLineMoves(root: KifuNode): Int {
         var count = 0; var node = root
         while (true) { node = node.children.firstOrNull { !it.isPvBranch } ?: break; count++ }
         return count
@@ -204,7 +272,7 @@ object KifuHistoryManager {
         var count = 0
         context.contentResolver.openOutputStream(uri)?.let { out ->
             ZipOutputStream(out.buffered()).use { zip ->
-                loadIndex(context).forEach { entry ->
+                loadIndex(context).filter { it.deletedAt == null }.forEach { entry ->
                     val root = loadKifu(context, entry.id) ?: return@forEach
                     val csa = exportMainLineToCsa(root, entry.senteName, entry.goteName, entry.gameResult, entry.gameDate)
                     zip.putNextEntry(ZipEntry("${entry.id}.csa"))
@@ -223,7 +291,7 @@ object KifuHistoryManager {
     // 過去の棋譜として追加する。1ファイルごとに独立して解析するため、
     // 一部が壊れていても他の対局は読み込める。標準CSAファイルなので、
     // 他ソフトで作成されたCSAをまとめたZIPも同様に取り込める。
-    fun importFromUri(context: Context, uri: Uri): KifuImportResult {
+    fun importFromUri(context: Context, uri: Uri): KifuImportResult = synchronized(lock) {
         val entries = loadIndex(context).toMutableList()
         val knownIds = entries.map { it.id }.toMutableSet()
         var imported = 0

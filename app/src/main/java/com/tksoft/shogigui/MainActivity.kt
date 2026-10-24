@@ -11,6 +11,7 @@ import androidx.activity.result.contract.ActivityResultContracts
 import androidx.compose.foundation.background
 import androidx.compose.foundation.basicMarquee
 import androidx.compose.foundation.Image
+import androidx.compose.ui.draw.alpha
 import androidx.compose.ui.draw.clip
 import androidx.compose.ui.graphics.Shadow
 import androidx.compose.ui.layout.ContentScale
@@ -23,6 +24,7 @@ import androidx.compose.foundation.verticalScroll
 import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.filled.ContentPaste
 import androidx.compose.material.icons.filled.Menu
+import android.widget.Toast
 import androidx.compose.material3.*
 import androidx.compose.runtime.*
 import androidx.compose.ui.Alignment
@@ -112,8 +114,9 @@ class MainActivity : ComponentActivity() {
         val prefs = getSharedPreferences("kifu_prefs", MODE_PRIVATE)
         // 既定エンジンを suisho5 から tsuyou11mini に変えたので、エンジンを選ばずに使っていた
         // 既存ユーザー（何かしら保存済み）は今まで通り suisho5 に固定する
-        if (!prefs.contains("selected_engine") && prefs.all.isNotEmpty()) {
-            prefs.edit().putString("selected_engine", "suisho5").apply()
+        // 新規ユーザーには既定エンジンを書いておく（書かないと初回起動で保存した棋譜があるため、次回起動時に既存ユーザー扱いになる）
+        if (!prefs.contains("selected_engine")) {
+            prefs.edit().putString("selected_engine", if (prefs.all.isNotEmpty()) "suisho5" else DEFAULT_ENGINE).apply()
         }
         if (rootNode == null) {
             val saved = prefs.getString("current_tree", null)
@@ -128,6 +131,19 @@ class MainActivity : ComponentActivity() {
             }
         }
 
+        // 表示中の棋譜がどの履歴かを記録していなかった版からの更新時に一度だけ、同じ本譜の履歴を探して引き継ぐ
+        // （引き継がないと、最初の自動保存で同じ棋譜が「過去の棋譜」に二重に登録される）
+        if (!prefs.getBoolean("history_id_migrated", false)) {
+            val edit = prefs.edit().putBoolean("history_id_migrated", true)
+            val root = rootNode
+            if (!prefs.contains("history_id") && root != null && root.children.isNotEmpty()) {
+                KifuHistoryManager.findSameMainLine(this, root)?.let { entry ->
+                    edit.putString("history_id", entry.id).putString("game_date", entry.gameDate)
+                }
+            }
+            edit.apply()
+        }
+
         // 画面再生成時に同じ共有インテントを二重に読み込まないよう、初回作成時のみ処理する
         if (savedInstanceState == null) handleShareIntent(intent)
 
@@ -135,11 +151,6 @@ class MainActivity : ComponentActivity() {
             ShogiGUITheme {
                 val initialNode by remember { mutableStateOf(rootNode!!) }
                 var currentNode by remember { mutableStateOf(initialNode) }
-
-                val saveKifu = { node: KifuNode ->
-                    val root = getRootNode(node)
-                    prefs.edit().putString("current_tree", kifuTreeToJson(root).toString()).apply()
-                }
 
                 // --- 状態管理 ---
                 var resetKey by remember { mutableIntStateOf(0) }
@@ -243,6 +254,26 @@ class MainActivity : ComponentActivity() {
                 var senteName by remember { mutableStateOf(savedSenteName) }
                 var goteName by remember { mutableStateOf(savedGoteName) }
                 var gameResult by remember { mutableStateOf(savedGameResult) }
+                var gameDate by remember { mutableStateOf(prefs.getString("game_date", null)) }
+                // 表示中の棋譜が保存されている「過去の棋譜」の id。まだ1手も指していない新しい棋譜なら null
+                var historyId by remember { mutableStateOf(prefs.getString("history_id", null)) }
+
+                // 棋譜を保存する。指し手・分岐削除・対局者名の変更などのたびに呼ばれ、「過去の棋譜」にも同じ内容を保存する
+                val saveKifu = { node: KifuNode ->
+                    val root = getRootNode(node)
+                    val json = kifuTreeToJson(root).toString()
+                    prefs.edit().putString("current_tree", json).apply()
+                    if (historyId != null || root.children.isNotEmpty()) {
+                        val id = historyId ?: KifuHistoryManager.newId().also {
+                            historyId = it
+                            prefs.edit().putString("history_id", it).apply()
+                        }
+                        KifuHistoryManager.saveOrUpdateAsync(
+                            this@MainActivity, id, json, senteName, goteName, gameResult, gameDate,
+                            KifuHistoryManager.countMainLineMoves(root)
+                        )
+                    }
+                }
                 
                 var selectedEngine by remember { mutableStateOf(prefs.getString("selected_engine", DEFAULT_ENGINE) ?: DEFAULT_ENGINE) }
                 var engine by remember { mutableStateOf<UsiEngineInterface>(
@@ -297,6 +328,10 @@ class MainActivity : ComponentActivity() {
                             if (engine is AobaEngine) {
                                 engine.sendCommand("setoption name EvalDir value aoba_eval")
                             }
+                            if (engine is UsiEngine) {
+                                engine.sendCommand("setoption name USI_Hash value 256")
+                                engine.sendCommand("setoption name BookFile value no_book")
+                            }
                             (engine as? YaneuraOu9Engine)?.let { e ->
                                 // progress.bin も EvalDir から読まれるので絶対パスで指定する
                                 e.sendCommand("setoption name EvalDir value ${java.io.File(filesDir, e.evalDirName).absolutePath}")
@@ -310,7 +345,7 @@ class MainActivity : ComponentActivity() {
                         line == "readyok" -> {
                             if (!isEngineReady) {
                                 engineReadyBanner = engineBannerRes(selectedEngine)
-                                engineReadyToast = engineIdName ?: engineDisplayName(selectedEngine)
+                                engineReadyToast = engineLabel(this@MainActivity, selectedEngine, engineIdName, withCaptions = false)
                             }
                             isEngineReady = true
                         }
@@ -481,13 +516,15 @@ class MainActivity : ComponentActivity() {
                 // クリップボードからの読み込みと、他アプリからの共有 (ACTION_SEND) で共通に使う
                 val loadKifuText: (String) -> Unit = { text ->
                     val freshRoot = KifuNode(createInitialBoard(), emptyMap(), emptyMap(), Player.SENTE)
+                    // 読み込み中の1手ごとには保存しない（今表示している棋譜の履歴を上書きしてしまうため）。読み終えてから保存する
+                    val noSave: (KifuNode) -> Unit = {}
                     val newNode = when {
                         text.lines().any { Regex("^[+-]\\d{4}[A-Z]{2}").containsMatchIn(it.trim()) } ->
-                            parseCsa(text, freshRoot, saveKifu)
+                            parseCsa(text, freshRoot, noSave)
                         text.contains("moves") || containsUsiSfen(text) || text.lines().any { Regex("^[1-9][a-i][1-9][a-i][+]?$").matches(it.trim()) } ->
-                            parseKifu(text, freshRoot, saveKifu)
+                            parseKifu(text, freshRoot, noSave)
                         else ->
-                            parseKif(text, freshRoot, saveKifu)
+                            parseKif(text, freshRoot, noSave)
                     }
                     val names = extractPlayerNames(text)
                     names.sente?.let { senteName = it; prefs.edit().putString("sente_name", it).apply() }
@@ -497,17 +534,11 @@ class MainActivity : ComponentActivity() {
                     pinnedPvList = emptyMap(); pinnedPvUsiList = emptyMap(); pvBranchPath = null
                     humanPlayer = null
                     if (newNode != null) {
+                        // 読み込んだ棋譜は新しい履歴として保存する
+                        historyId = null
+                        gameDate = extractGameDate(text)
+                        prefs.edit().remove("history_id").putString("game_date", gameDate).apply()
                         currentNode = freshRoot; saveKifu(freshRoot)
-                        val capturedSente = names.sente ?: senteName
-                        val capturedGote = names.gote ?: goteName
-                        val capturedResult = gameResult
-                        val gameDate = extractGameDate(text)
-                        coroutineScope.launch(Dispatchers.IO) {
-                            KifuHistoryManager.saveKifu(
-                                this@MainActivity, freshRoot,
-                                capturedSente, capturedGote, capturedResult, gameDate
-                            )
-                        }
                     }
                 }
 
@@ -635,6 +666,12 @@ class MainActivity : ComponentActivity() {
                                                 initialNode.children.clear()
                                                 initialNode.evalScore = null
                                                 senteName = senteColorName; goteName = goteColorName; gameResult = ""
+                                                // 指し手は1手ごとに履歴へ保存済みなので、そのことを知らせる
+                                                if (historyId != null) {
+                                                    Toast.makeText(this@MainActivity, R.string.kifu_saved_toast, Toast.LENGTH_SHORT).show()
+                                                }
+                                                // 次に指した手からは新しい棋譜として履歴に保存する
+                                                historyId = null; gameDate = null
                                                 pvList.clear(); pvUsiList.clear()
                                                 pinnedPvList = emptyMap(); pinnedPvUsiList = emptyMap()
                                                 pvBranchPath = null
@@ -646,6 +683,8 @@ class MainActivity : ComponentActivity() {
                                                     .remove("sente_name")
                                                     .remove("gote_name")
                                                     .remove("game_result")
+                                                    .remove("game_date")
+                                                    .remove("history_id")
                                                     .apply()
                                                 showMenu = false
                                             })
@@ -925,7 +964,7 @@ class MainActivity : ComponentActivity() {
                                 fontWeight = FontWeight.Normal
                             )) {
                                 append("(")
-                                append(engineDisplayName(selectedEngine))
+                                append(engineLabel(this@MainActivity, selectedEngine, engineIdName))
                                 append(")")
                             }
                         },
@@ -1103,8 +1142,11 @@ class MainActivity : ComponentActivity() {
                                         modifier = Modifier.fillMaxWidth().heightIn(max = 360.dp),
                                         verticalArrangement = Arrangement.spacedBy(4.dp)
                                     ) {
-                                        items(filteredEntries) { entry ->
+                                        items(filteredEntries, key = { it.id }) { entry ->
+                                            val isDeleted = entry.deletedAt != null
                                             Surface(
+                                                // ゴミ箱に入れた棋譜は開けない（戻してから開く）
+                                                enabled = !isDeleted,
                                                 onClick = {
                                                     coroutineScope.launch {
                                                         val root = withContext(Dispatchers.IO) {
@@ -1118,6 +1160,9 @@ class MainActivity : ComponentActivity() {
                                                             senteName = entry.senteName
                                                             goteName = entry.goteName
                                                             gameResult = entry.gameResult
+                                                            gameDate = entry.gameDate
+                                                            // この棋譜を直したら、同じ履歴を上書きする
+                                                            historyId = entry.id
                                                             pvList.clear(); pvUsiList.clear()
                                                             pinnedPvList = emptyMap(); pinnedPvUsiList = emptyMap()
                                                             pvBranchPath = null
@@ -1128,6 +1173,8 @@ class MainActivity : ComponentActivity() {
                                                                 .putString("sente_name", entry.senteName)
                                                                 .putString("gote_name", entry.goteName)
                                                                 .putString("game_result", entry.gameResult)
+                                                                .putString("game_date", entry.gameDate)
+                                                                .putString("history_id", entry.id)
                                                                 .apply()
                                                             showHistoryDialog = false
                                                         }
@@ -1137,7 +1184,11 @@ class MainActivity : ComponentActivity() {
                                                 shape = MaterialTheme.shapes.medium,
                                                 color = MaterialTheme.colorScheme.surfaceVariant
                                             ) {
-                                                Column(modifier = Modifier.padding(horizontal = 12.dp, vertical = 8.dp)) {
+                                                Row(verticalAlignment = Alignment.CenterVertically) {
+                                                Column(modifier = Modifier
+                                                    .weight(1f)
+                                                    .alpha(if (isDeleted) 0.38f else 1f)
+                                                    .padding(start = 12.dp, top = 8.dp, bottom = 8.dp)) {
                                                     Row(modifier = Modifier.fillMaxWidth()) {
                                                         Text(
                                                             "▲${entry.senteName}",
@@ -1174,6 +1225,22 @@ class MainActivity : ComponentActivity() {
                                                                 color = MaterialTheme.colorScheme.primary)
                                                         }
                                                     }
+                                                }
+                                                // 削除はゴミ箱に入れるだけで、24時間以内なら戻せる
+                                                IconButton(onClick = {
+                                                    val idx = historyEntries.indexOfFirst { it.id == entry.id }
+                                                    if (idx >= 0) historyEntries[idx] = entry.copy(
+                                                        deletedAt = if (isDeleted) null else System.currentTimeMillis())
+                                                    if (!isDeleted) {
+                                                        Toast.makeText(this@MainActivity, R.string.history_deleted_toast, Toast.LENGTH_SHORT).show()
+                                                    }
+                                                    coroutineScope.launch(Dispatchers.IO) {
+                                                        KifuHistoryManager.setDeleted(this@MainActivity, entry.id, !isDeleted)
+                                                    }
+                                                }) {
+                                                    if (isDeleted) Icon(painterResource(R.drawable.undo_24px), stringResource(R.string.history_restore))
+                                                    else Icon(painterResource(R.drawable.delete_24px), stringResource(R.string.history_delete))
+                                                }
                                                 }
                                             }
                                         }
@@ -1223,6 +1290,7 @@ class MainActivity : ComponentActivity() {
                                     goteName = editText
                                     prefs.edit().putString("gote_name", editText).apply()
                                 }
+                                saveKifu(currentNode)
                                 editingPlayerMark = null
                             }) { Text("OK") }
                         },
@@ -1501,7 +1569,7 @@ fun MainScreenPreview() {
                     .align(Alignment.BottomCenter)
                     .padding(bottom = innerPadding.calculateBottomPadding() + 8.dp)
             ) {
-                EngineReadyToast("TsuyouraOu11micro NNUE 9.80git 64Android", R.drawable.banner_tsuyou11micro)
+                EngineReadyToast("TsuyouraOu11micro・YaneuraOu 9.80git", R.drawable.banner_tsuyou11micro)
             }
             }
         }

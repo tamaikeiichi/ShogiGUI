@@ -39,11 +39,7 @@ class UsiEngine(private val dummyPath: String = "") : UsiEngineInterface {
             try {
                 android.util.Log.d("EngineDebug", "UsiEngine executor begin for $this thread=${Thread.currentThread().name}")
                 if (workDir.isNotEmpty()) nativeSetWorkDir(workDir)
-                nativeSendCommand("usi")
-                nativeSendCommand("setoption name Threads value 4")
-                nativeSendCommand("setoption name USI_Hash value 256")
-                nativeSendCommand("setoption name BookFile value no_book")
-                nativeSendCommand("isready")
+                // "usi" は native-lib.cpp 内で事前投入済み。オプションと "isready" は "usiok" を受けたときに送る
                 nativeStart()
                 android.util.Log.d("EngineDebug", "UsiEngine nativeStart() returned for $this")
             } catch (e: Exception) {

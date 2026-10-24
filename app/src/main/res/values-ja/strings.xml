@@ -90,4 +90,13 @@
     <string name="result_suspended">中断</string>
     <string name="result_draw">引き分け</string>
     <string name="engine_ready_toast">%1$s 準備完了</string>
+    <string name="engine_label">評価関数 %1$s・探索部 %2$s</string>
+    <string name="engine_label_eval_only">評価関数 %1$s</string>
+    <string name="engine_label_plain">%1$s・%2$s</string>
+
+    <!-- 過去の棋譜の削除 -->
+    <string name="history_delete">削除</string>
+    <string name="history_restore">元に戻す</string>
+    <string name="history_deleted_toast">24時間後に完全に削除されます</string>
+    <string name="kifu_saved_toast">棋譜が保存されました</string>
 </resources>

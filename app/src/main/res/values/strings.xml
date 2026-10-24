@@ -90,4 +90,13 @@
     <string name="result_suspended">Suspended</string>
     <string name="result_draw">Draw</string>
     <string name="engine_ready_toast">%1$s is ready</string>
+    <string name="engine_label">Eval %1$s · Search %2$s</string>
+    <string name="engine_label_eval_only">Eval %1$s</string>
+    <string name="engine_label_plain">%1$s · %2$s</string>
+
+    <!-- Deleting saved games -->
+    <string name="history_delete">Delete</string>
+    <string name="history_restore">Restore</string>
+    <string name="history_deleted_toast">It will be permanently deleted in 24 hours</string>
+    <string name="kifu_saved_toast">Game record saved</string>
 </resources>
