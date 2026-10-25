@@ -480,7 +480,8 @@ fun PlayerInfoContent(name: String, mark: String, isFlipped: Boolean = false, ga
     val isRight = ((mark == "▲") && !isFlipped) || ((mark == "△") && isFlipped)
     Column(
         modifier = Modifier.fillMaxWidth(),
-        horizontalAlignment = if (isRight) Alignment.End else Alignment.Start
+        // 上側の対局者も右寄せにする（左上にメニューボタンを置くため）
+        horizontalAlignment = Alignment.End
     ) {
         Row(
             modifier = Modifier.padding(horizontal = 8.dp, vertical = 4.dp).clickable { onNameClick() },

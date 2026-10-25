@@ -9,7 +9,7 @@
     <string name="menu_delete_branches">Delete branches</string>
     <string name="menu_play_as_sente">Play as Sente</string>
     <string name="menu_play_as_gote">Play as Gote</string>
-    <string name="menu_settings">Settings</string>
+    <string name="menu_settings">Engine settings</string>
     <string name="menu_history">Game History</string>
     <string name="menu_export_all_history">Export all game history</string>
     <string name="menu_import_history_zip">Import history from a ZIP of CSA files</string>
@@ -99,4 +99,5 @@
     <string name="history_restore">Restore</string>
     <string name="history_deleted_toast">It will be permanently deleted in 24 hours</string>
     <string name="kifu_saved_toast">Game record saved</string>
+    <string name="exported_to_clipboard_toast">Exported to clipboard</string>
 </resources>

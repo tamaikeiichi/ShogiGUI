@@ -490,7 +490,8 @@ fun HandView(
             .fillMaxWidth()
             .padding(4.dp)
             .rotate(rotation),
-        horizontalArrangement = Arrangement.End
+        // 180度回すと左右が入れ替わるので、回した側は Start にして画面上で右寄せにする（左上はメニューボタン）
+        horizontalArrangement = if (rotation == 0f) Arrangement.End else Arrangement.Start
     ) {
         // 持ち駒を種類ごとに表示
         PieceType.entries.reversed().forEach { type ->

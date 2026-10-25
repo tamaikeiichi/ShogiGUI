@@ -21,9 +21,12 @@ import androidx.compose.foundation.lazy.items
 import androidx.compose.foundation.rememberScrollState
 import androidx.compose.foundation.selection.selectable
 import androidx.compose.foundation.verticalScroll
+import androidx.compose.foundation.gestures.draggable
+import androidx.compose.material.icons.outlined.*
 import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.filled.ContentPaste
 import androidx.compose.material.icons.filled.Menu
+import androidx.compose.material.icons.filled.*
 import android.widget.Toast
 import androidx.compose.material3.*
 import androidx.compose.runtime.*
@@ -651,115 +654,6 @@ class MainActivity : ComponentActivity() {
                                 Spacer(modifier = Modifier.height(8.dp))
                                 Row(modifier = Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.spacedBy(8.dp), verticalAlignment = Alignment.CenterVertically) {
                                     val clipboard = LocalClipboardManager.current
-                                    IconButton(onClick = { showMenu = true }) { Icon(Icons.Default.Menu, stringResource(R.string.menu_content_description)) }
-                                    DropdownMenu(
-                                        expanded = showMenu,
-                                        onDismissRequest = { showMenu = false },
-                                        offset = DpOffset(x = 0.dp, y = 0.dp),
-                                    ) {
-                                        DropdownMenuItem(
-                                            text = { Text(stringResource(R.string.menu_reset)) },
-                                            onClick = {
-                                                engine.sendCommand("stop")
-                                                isAnalysisMode = false; isAutoAnalysis = false; humanPlayer = null
-                                                currentNode = initialNode
-                                                initialNode.children.clear()
-                                                initialNode.evalScore = null
-                                                senteName = senteColorName; goteName = goteColorName; gameResult = ""
-                                                // 指し手は1手ごとに履歴へ保存済みなので、そのことを知らせる
-                                                if (historyId != null) {
-                                                    Toast.makeText(this@MainActivity, R.string.kifu_saved_toast, Toast.LENGTH_SHORT).show()
-                                                }
-                                                // 次に指した手からは新しい棋譜として履歴に保存する
-                                                historyId = null; gameDate = null
-                                                pvList.clear(); pvUsiList.clear()
-                                                pinnedPvList = emptyMap(); pinnedPvUsiList = emptyMap()
-                                                pvBranchPath = null
-                                                analysisHistory.clear(); analysisUsiHistory.clear()
-                                                selectedSquare = null; selectedHandPiece = null
-                                                resetKey++
-                                                prefs.edit()
-                                                    .remove("current_tree")
-                                                    .remove("sente_name")
-                                                    .remove("gote_name")
-                                                    .remove("game_result")
-                                                    .remove("game_date")
-                                                    .remove("history_id")
-                                                    .apply()
-                                                showMenu = false
-                                            })
-                                        DropdownMenuItem(
-                                            text = { Text(stringResource(R.string.menu_delete_branches)) },
-                                            onClick = {
-                                                // 本譜（最初の非PV子の列）だけを残し、それ以外の子（分岐・読み筋）を削除する。
-                                                // 本譜の各手の評価値はノードに残るので形勢グラフもそのまま
-                                                val root = getRootNode(currentNode)
-                                                val mainLine = HashSet<KifuNode>()
-                                                var n: KifuNode? = root
-                                                while (n != null) {
-                                                    mainLine.add(n)
-                                                    val next = n.children.firstOrNull { !it.isPvBranch }
-                                                    n.children.removeAll { it !== next }
-                                                    n = next
-                                                }
-                                                // 削除した分岐上にいたら、本譜上の分岐点へ戻る
-                                                var p: KifuNode? = currentNode
-                                                while (p != null && p !in mainLine) p = p.parent
-                                                currentNode = p ?: root
-                                                pinnedPvList = emptyMap(); pinnedPvUsiList = emptyMap(); pvBranchPath = null
-                                                analysisHistory.keys.retainAll(mainLine); analysisUsiHistory.keys.retainAll(mainLine)
-                                                selectedSquare = null; selectedHandPiece = null
-                                                saveKifu(root)
-                                                showMenu = false
-                                            })
-                                        DropdownMenuItem(
-                                            text = { Text(stringResource(R.string.menu_analyze_to_end)) },
-                                            onClick = { isAutoAnalysis = true; pinnedPvList = emptyMap(); pinnedPvUsiList = emptyMap(); showMenu = false })
-                                        DropdownMenuItem(
-                                            text = { Text(stringResource(R.string.menu_export_main_line_csa)) },
-                                            onClick = {
-                                                var root = currentNode
-                                                while (root.parent != null) root = root.parent!!
-                                                val csa = exportMainLineToCsa(root, senteName, goteName)
-                                                clipboard.setText(androidx.compose.ui.text.AnnotatedString(csa))
-                                                showMenu = false
-                                            })
-                                        DropdownMenuItem(
-                                            text = { Text(stringResource(R.string.menu_play_as_sente)) },
-                                            onClick = {
-                                                isAnalysisMode = false; isAutoAnalysis = false
-                                                engine.sendCommand("stop")
-                                                humanPlayer = Player.SENTE
-                                                showMenu = false
-                                            })
-                                        DropdownMenuItem(
-                                            text = { Text(stringResource(R.string.menu_play_as_gote)) },
-                                            onClick = {
-                                                isAnalysisMode = false; isAutoAnalysis = false
-                                                engine.sendCommand("stop")
-                                                humanPlayer = Player.GOTE
-                                                showMenu = false
-                                            })
-                                        DropdownMenuItem(
-                                            text = { Text(stringResource(R.string.menu_settings)) },
-                                            onClick = { showSettingsDialog = true; showMenu = false })
-                                        DropdownMenuItem(
-                                            text = { Text(stringResource(R.string.menu_history)) },
-                                            onClick = { showHistoryDialog = true; showMenu = false })
-                                        DropdownMenuItem(
-                                            text = { Text(stringResource(R.string.menu_export_all_history)) },
-                                            onClick = {
-                                                val ts = SimpleDateFormat("yyyyMMdd_HHmmss", Locale.JAPAN).format(Date())
-                                                exportKifuLauncher.launch("shogi_kifu_$ts.zip")
-                                                showMenu = false
-                                            })
-                                        DropdownMenuItem(
-                                            text = { Text(stringResource(R.string.menu_import_history_zip)) },
-                                            onClick = {
-                                                importKifuLauncher.launch(arrayOf("application/zip", "application/x-zip-compressed", "*/*"))
-                                                showMenu = false
-                                            })
-                                    }
                                     OutlinedButton(onClick = {
                                         clipboard.getText()?.text?.let(loadKifuText)
                                     }, modifier = Modifier.weight(0.3f).height(72.dp),
@@ -840,7 +734,10 @@ class MainActivity : ComponentActivity() {
 
                             Column(modifier = Modifier.weight(0.5f).verticalScroll(boardAreaScrollState), horizontalAlignment = Alignment.CenterHorizontally, verticalArrangement = Arrangement.spacedBy(8.dp)) {
                                 val isHumanTurn = humanPlayer == null || currentPlayer == humanPlayer
-                                PlayerStatusSection(if(topP==Player.SENTE) senteName else goteName, if(topP==Player.SENTE) "▲" else "△", currentPlayer==topP, if(topP==Player.SENTE) senteHand else goteHand, selectedHandPiece, currentPlayer, isBoardFlipped, handOnTop = false, gameResult = gameResult, remainingMs = if(topP==Player.SENTE) currentNode.senteRemainingMs else currentNode.goteRemainingMs, onNameClick = { editingPlayerMark = if(topP==Player.SENTE) "▲" else "△" }, onPiecePositioned = onHandPiecePositioned) { if (isHumanTurn) { selectedHandPiece = it; selectedSquare = null } }
+                                Box(modifier = Modifier.fillMaxWidth()) {
+                                    PlayerStatusSection(if(topP==Player.SENTE) senteName else goteName, if(topP==Player.SENTE) "▲" else "△", currentPlayer==topP, if(topP==Player.SENTE) senteHand else goteHand, selectedHandPiece, currentPlayer, isBoardFlipped, handOnTop = false, gameResult = gameResult, remainingMs = if(topP==Player.SENTE) currentNode.senteRemainingMs else currentNode.goteRemainingMs, onNameClick = { editingPlayerMark = if(topP==Player.SENTE) "▲" else "△" }, onPiecePositioned = onHandPiecePositioned) { if (isHumanTurn) { selectedHandPiece = it; selectedSquare = null } }
+                                    MenuButton(Modifier.align(Alignment.TopStart).padding(start = 8.dp, top = 4.dp)) { showMenu = true }
+                                }
                                 ShogiBoard(boardState, selectedSquare, { r, c ->
                                     if (isHumanTurn) handleSquareClick(r, c, boardState, currentPlayer, selectedSquare, selectedHandPiece, currentNode, saveKifu) { s, h, n, p ->
                                         selectedSquare = s; selectedHandPiece = h
@@ -888,7 +785,10 @@ class MainActivity : ComponentActivity() {
 
                             val topP = if (isBoardFlipped) Player.SENTE else Player.GOTE; val botP = if (isBoardFlipped) Player.GOTE else Player.SENTE
                             val isHumanTurn = humanPlayer == null || currentPlayer == humanPlayer
-                            PlayerStatusSection(if(topP==Player.SENTE) senteName else goteName, if(topP==Player.SENTE) "▲" else "△", currentPlayer==topP, if(topP==Player.SENTE) senteHand else goteHand, selectedHandPiece, currentPlayer, isBoardFlipped, handOnTop = false, gameResult = gameResult, remainingMs = if(topP==Player.SENTE) currentNode.senteRemainingMs else currentNode.goteRemainingMs, onNameClick = { editingPlayerMark = if(topP==Player.SENTE) "▲" else "△" }, onPiecePositioned = onHandPiecePositioned) { if (isHumanTurn) { selectedHandPiece = it; selectedSquare = null } }
+                            Box(modifier = Modifier.fillMaxWidth()) {
+                                PlayerStatusSection(if(topP==Player.SENTE) senteName else goteName, if(topP==Player.SENTE) "▲" else "△", currentPlayer==topP, if(topP==Player.SENTE) senteHand else goteHand, selectedHandPiece, currentPlayer, isBoardFlipped, handOnTop = false, gameResult = gameResult, remainingMs = if(topP==Player.SENTE) currentNode.senteRemainingMs else currentNode.goteRemainingMs, onNameClick = { editingPlayerMark = if(topP==Player.SENTE) "▲" else "△" }, onPiecePositioned = onHandPiecePositioned) { if (isHumanTurn) { selectedHandPiece = it; selectedSquare = null } }
+                                MenuButton(Modifier.align(Alignment.TopStart).padding(start = 8.dp, top = 4.dp)) { showMenu = true }
+                            }
                             ShogiBoard(boardState, selectedSquare, { r, c ->
                                 if (isHumanTurn) handleSquareClick(r, c, boardState, currentPlayer, selectedSquare, selectedHandPiece, currentNode, saveKifu) { s, h, n, p ->
                                     selectedSquare = s; selectedHandPiece = h
@@ -947,6 +847,127 @@ class MainActivity : ComponentActivity() {
                     var shownName by remember { mutableStateOf("") }
                     engineReadyToast?.let { shownName = it }
                     EngineReadyToast(shownName, engineReadyBanner)
+                }
+                // Gemini アプリのように、左から画面全体にせり出すメニュー。右上の × か左へのスワイプで閉じる
+                androidx.compose.animation.AnimatedVisibility(
+                    visible = showMenu,
+                    enter = androidx.compose.animation.slideInHorizontally(
+                        androidx.compose.animation.core.spring(dampingRatio = 0.9f, stiffness = androidx.compose.animation.core.Spring.StiffnessMediumLow)
+                    ) { -it },
+                    exit = androidx.compose.animation.slideOutHorizontally(
+                        androidx.compose.animation.core.spring(stiffness = androidx.compose.animation.core.Spring.StiffnessMedium)
+                    ) { -it },
+                    modifier = Modifier.fillMaxSize()
+                ) {
+                    androidx.activity.compose.BackHandler { showMenu = false }
+                    FullScreenMenu(onClose = { showMenu = false }) {
+                    val clipboard = LocalClipboardManager.current
+                    run {
+                            MenuItem(Icons.Outlined.RestartAlt,
+                                text = { Text(stringResource(R.string.menu_reset)) },
+                                onClick = {
+                                    engine.sendCommand("stop")
+                                    isAnalysisMode = false; isAutoAnalysis = false; humanPlayer = null
+                                    currentNode = initialNode
+                                    initialNode.children.clear()
+                                    initialNode.evalScore = null
+                                    senteName = senteColorName; goteName = goteColorName; gameResult = ""
+                                    // 指し手は1手ごとに履歴へ保存済みなので、そのことを知らせる
+                                    if (historyId != null) {
+                                        Toast.makeText(this@MainActivity, R.string.kifu_saved_toast, Toast.LENGTH_SHORT).show()
+                                    }
+                                    // 次に指した手からは新しい棋譜として履歴に保存する
+                                    historyId = null; gameDate = null
+                                    pvList.clear(); pvUsiList.clear()
+                                    pinnedPvList = emptyMap(); pinnedPvUsiList = emptyMap()
+                                    pvBranchPath = null
+                                    analysisHistory.clear(); analysisUsiHistory.clear()
+                                    selectedSquare = null; selectedHandPiece = null
+                                    resetKey++
+                                    prefs.edit()
+                                        .remove("current_tree")
+                                        .remove("sente_name")
+                                        .remove("gote_name")
+                                        .remove("game_result")
+                                        .remove("game_date")
+                                        .remove("history_id")
+                                        .apply()
+                                    showMenu = false
+                                })
+                            MenuItem(Icons.Outlined.ContentCut,
+                                text = { Text(stringResource(R.string.menu_delete_branches)) },
+                                onClick = {
+                                    // 本譜（最初の非PV子の列）だけを残し、それ以外の子（分岐・読み筋）を削除する。
+                                    // 本譜の各手の評価値はノードに残るので形勢グラフもそのまま
+                                    val root = getRootNode(currentNode)
+                                    val mainLine = HashSet<KifuNode>()
+                                    var n: KifuNode? = root
+                                    while (n != null) {
+                                        mainLine.add(n)
+                                        val next = n.children.firstOrNull { !it.isPvBranch }
+                                        n.children.removeAll { it !== next }
+                                        n = next
+                                    }
+                                    // 削除した分岐上にいたら、本譜上の分岐点へ戻る
+                                    var p: KifuNode? = currentNode
+                                    while (p != null && p !in mainLine) p = p.parent
+                                    currentNode = p ?: root
+                                    pinnedPvList = emptyMap(); pinnedPvUsiList = emptyMap(); pvBranchPath = null
+                                    analysisHistory.keys.retainAll(mainLine); analysisUsiHistory.keys.retainAll(mainLine)
+                                    selectedSquare = null; selectedHandPiece = null
+                                    saveKifu(root)
+                                    showMenu = false
+                                })
+                            MenuItem(Icons.Outlined.FastForward,
+                                text = { Text(stringResource(R.string.menu_analyze_to_end)) },
+                                onClick = { isAutoAnalysis = true; pinnedPvList = emptyMap(); pinnedPvUsiList = emptyMap(); showMenu = false })
+                            MenuItem(Icons.Outlined.ContentCopy,
+                                text = { Text(stringResource(R.string.menu_export_main_line_csa)) },
+                                onClick = {
+                                    var root = currentNode
+                                    while (root.parent != null) root = root.parent!!
+                                    val csa = exportMainLineToCsa(root, senteName, goteName)
+                                    clipboard.setText(androidx.compose.ui.text.AnnotatedString(csa))
+                                    Toast.makeText(this@MainActivity, R.string.exported_to_clipboard_toast, Toast.LENGTH_SHORT).show()
+                                    showMenu = false
+                                })
+                            MenuItem({ MarkIcon("▲") },
+                                text = { Text(stringResource(R.string.menu_play_as_sente)) },
+                                onClick = {
+                                    isAnalysisMode = false; isAutoAnalysis = false
+                                    engine.sendCommand("stop")
+                                    humanPlayer = Player.SENTE
+                                    showMenu = false
+                                })
+                            MenuItem({ MarkIcon("△") },
+                                text = { Text(stringResource(R.string.menu_play_as_gote)) },
+                                onClick = {
+                                    isAnalysisMode = false; isAutoAnalysis = false
+                                    engine.sendCommand("stop")
+                                    humanPlayer = Player.GOTE
+                                    showMenu = false
+                                })
+                            MenuItem(Icons.Outlined.Settings,
+                                text = { Text(stringResource(R.string.menu_settings)) },
+                                onClick = { showSettingsDialog = true; showMenu = false })
+                            MenuItem(Icons.Outlined.History,
+                                text = { Text(stringResource(R.string.menu_history)) },
+                                onClick = { showHistoryDialog = true; showMenu = false })
+                            MenuItem(Icons.Outlined.Upload,
+                                text = { Text(stringResource(R.string.menu_export_all_history)) },
+                                onClick = {
+                                    val ts = SimpleDateFormat("yyyyMMdd_HHmmss", Locale.JAPAN).format(Date())
+                                    exportKifuLauncher.launch("shogi_kifu_$ts.zip")
+                                    showMenu = false
+                                })
+                            MenuItem(Icons.Outlined.Download,
+                                text = { Text(stringResource(R.string.menu_import_history_zip)) },
+                                onClick = {
+                                    importKifuLauncher.launch(arrayOf("application/zip", "application/x-zip-compressed", "*/*"))
+                                    showMenu = false
+                                })
+                    }
+                    }
                 }
                 }
 
@@ -1587,4 +1608,95 @@ private fun sliderToThinkTime(pos: Float): Long {
     val t = minThinkTimeMs * Math.pow(maxThinkTimeMs.toDouble() / minThinkTimeMs, pos.coerceIn(0f, 1f).toDouble())
     // 0.01秒単位に丸める
     return (Math.round(t / 10.0) * 10).coerceIn(minThinkTimeMs, maxThinkTimeMs)
+}
+
+// Gemini アプリ風のメニューアイコン（短い2本線）
+private val TwoLineMenuIcon: androidx.compose.ui.graphics.vector.ImageVector by lazy {
+    androidx.compose.ui.graphics.vector.ImageVector.Builder("TwoLineMenu", 24.dp, 24.dp, 24f, 24f).apply {
+        addPath(
+            pathData = androidx.compose.ui.graphics.vector.PathParser().parsePathString("M4,8.8 L20,8.8 M4,15.2 L20,15.2").toNodes(),
+            stroke = androidx.compose.ui.graphics.SolidColor(Color.Black),
+            strokeLineWidth = 1.6f,
+            strokeLineCap = androidx.compose.ui.graphics.StrokeCap.Round
+        )
+    }.build()
+}
+
+// 左上のハンバーガーメニューボタン (Gemini アプリ風: 白い丸に細い縁取りと淡い影)
+@Composable
+private fun MenuButton(modifier: Modifier = Modifier, onClick: () -> Unit) {
+    Surface(
+        onClick = onClick,
+        shape = androidx.compose.foundation.shape.CircleShape,
+        color = MaterialTheme.colorScheme.surfaceContainerLowest,
+        border = androidx.compose.foundation.BorderStroke(1.dp, MaterialTheme.colorScheme.outlineVariant),
+        shadowElevation = 1.dp,
+        modifier = modifier.size(48.dp)
+    ) {
+        Box(contentAlignment = Alignment.Center) {
+            Icon(TwoLineMenuIcon, stringResource(R.string.menu_content_description))
+        }
+    }
+}
+
+// 画面全体を覆うメニュー (Gemini アプリ風)。左上にアプリ名、右上に ×。
+// 左へスワイプすると指に付いて動き、十分に動かすか素早く払うと閉じる
+@Composable
+private fun FullScreenMenu(onClose: () -> Unit, content: @Composable ColumnScope.() -> Unit) {
+    var dragX by remember { mutableFloatStateOf(0f) }
+    var widthPx by remember { mutableIntStateOf(0) }
+    Surface(
+        color = MaterialTheme.colorScheme.surface,
+        modifier = Modifier
+            .fillMaxSize()
+            .onSizeChanged { widthPx = it.width }
+            .offset { androidx.compose.ui.unit.IntOffset(dragX.roundToInt(), 0) }
+            .draggable(
+                orientation = androidx.compose.foundation.gestures.Orientation.Horizontal,
+                state = androidx.compose.foundation.gestures.rememberDraggableState { d -> dragX = (dragX + d).coerceAtMost(0f) },
+                onDragStopped = { velocity ->
+                    if (dragX < -widthPx * 0.25f || velocity < -1500f) onClose()
+                    else androidx.compose.animation.core.animate(dragX, 0f) { v, _ -> dragX = v }
+                }
+            )
+    ) {
+        Column(modifier = Modifier.fillMaxSize().statusBarsPadding().navigationBarsPadding()) {
+            Row(
+                modifier = Modifier.fillMaxWidth().padding(start = 24.dp, end = 8.dp, top = 12.dp, bottom = 12.dp),
+                verticalAlignment = Alignment.CenterVertically
+            ) {
+                Text(stringResource(R.string.app_name), style = MaterialTheme.typography.headlineSmall, modifier = Modifier.weight(1f))
+                IconButton(onClick = onClose) { Icon(Icons.Default.Close, stringResource(R.string.history_close)) }
+            }
+            Column(modifier = Modifier.weight(1f).verticalScroll(rememberScrollState()).padding(horizontal = 8.dp), content = content)
+        }
+    }
+}
+
+// メニューの1項目
+@Composable
+private fun MenuItem(icon: androidx.compose.ui.graphics.vector.ImageVector, text: @Composable () -> Unit, onClick: () -> Unit) =
+    MenuItem({ Icon(icon, contentDescription = null) }, text, onClick)
+
+@Composable
+private fun MenuItem(icon: @Composable () -> Unit, text: @Composable () -> Unit, onClick: () -> Unit) {
+    Surface(onClick = onClick, shape = androidx.compose.foundation.shape.CircleShape, color = Color.Transparent, modifier = Modifier.fillMaxWidth()) {
+        Row(
+            modifier = Modifier.heightIn(min = 56.dp).padding(horizontal = 16.dp, vertical = 12.dp),
+            verticalAlignment = Alignment.CenterVertically,
+            horizontalArrangement = Arrangement.spacedBy(20.dp)
+        ) {
+            icon()
+            ProvideTextStyle(MaterialTheme.typography.titleLarge.copy(fontSize = 19.sp)) { text() }
+        }
+    }
+}
+
+// 先手・後手の印 (▲ △) をアイコンの代わりに表示する。色はほかの項目のアイコンと同じ
+@Composable
+private fun MarkIcon(mark: String) {
+    // ほかの項目のアイコンと同じ 24dp の枠に収めて、項目名の位置をそろえる
+    Box(modifier = Modifier.size(24.dp), contentAlignment = Alignment.Center) {
+        Text(mark, fontSize = 16.sp, fontWeight = FontWeight.Bold, maxLines = 1, softWrap = false)
+    }
 }
