@@ -1646,7 +1646,8 @@ private fun FullScreenMenu(onClose: () -> Unit, content: @Composable ColumnScope
     var dragX by remember { mutableFloatStateOf(0f) }
     var widthPx by remember { mutableIntStateOf(0) }
     Surface(
-        color = MaterialTheme.colorScheme.surface,
+        // うっすら半透明にして、後ろの盤面が透けて見えるようにする
+        color = MaterialTheme.colorScheme.surface.copy(alpha = 0.9f),
         modifier = Modifier
             .fillMaxSize()
             .onSizeChanged { widthPx = it.width }
