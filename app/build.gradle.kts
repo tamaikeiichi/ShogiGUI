@@ -1,4 +1,4 @@
-plugins {
+﻿plugins {
     alias(libs.plugins.android.application)
     alias(libs.plugins.kotlin.compose)
 }
@@ -15,8 +15,8 @@ android {
         applicationId = "com.tksoft.shogigui"
         minSdk = 24
         targetSdk = 36
-        versionCode = 42
-        versionName = "1.9.0"
+        versionCode = 43
+        versionName = "1.9.1"
 
         testInstrumentationRunner = "androidx.test.runner.AndroidJUnitRunner"
     }
@@ -59,7 +59,7 @@ android {
             }
         }
         ndk {
-            // ストア公開に必要な 64bit 版とエミュレータ用
+            // 繧ｹ繝医い蜈ｬ髢九↓蠢・ｦ√↑ 64bit 迚医→繧ｨ繝溘Η繝ｬ繝ｼ繧ｿ逕ｨ
             abiFilters.addAll(listOf("arm64-v8a", "x86_64"))
         }
     }
