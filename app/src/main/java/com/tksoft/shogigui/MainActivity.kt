@@ -75,6 +75,15 @@ class MainActivity : ComponentActivity() {
 
     // 画面が裏に回るときに棋譜を保存する処理（解析で付いた評価値は指し手のたびの保存に含まれないため）
     private var saveOnStop: (() -> Unit)? = null
+    // 画面が裏に回るときに探索を止める処理（裏で全コアを使い続けて他のアプリを重くしないため）
+    private var stopSearchOnStop: (() -> Unit)? = null
+    // 画面が裏に回っている間 true。表に戻ったら止めた探索をやり直す
+    private val isInBackground = mutableStateOf(false)
+
+    override fun onStart() {
+        super.onStart()
+        isInBackground.value = false
+    }
 
     override fun onResume() {
         super.onResume()
@@ -83,6 +92,8 @@ class MainActivity : ComponentActivity() {
 
     override fun onStop() {
         saveOnStop?.invoke()
+        isInBackground.value = true
+        stopSearchOnStop?.invoke()
         super.onStop()
     }
 
@@ -395,6 +406,25 @@ class MainActivity : ComponentActivity() {
                 // 解析で付いた評価値（形勢グラフ）を保存する。解析中は局面ごとに保存すると重いので、
                 // 解析を止めたときと画面が裏に回るときにまとめて保存する
                 SideEffect { saveOnStop = { saveKifu(currentNode) } }
+
+                // 裏に回るときに探索を止め、その bestmove は読み捨てる（対局中に指してしまわないように）。
+                // 表に戻ったら今の局面で探索をやり直す
+                var searchStoppedInBackground by remember { mutableStateOf(false) }
+                SideEffect {
+                    stopSearchOnStop = {
+                        if (searchCounter.pending > 0) {
+                            searchCounter.ignore = searchCounter.pending
+                            engine.sendCommand("stop")
+                            searchStoppedInBackground = true
+                        }
+                    }
+                }
+                LaunchedEffect(isInBackground.value) {
+                    if (!isInBackground.value && searchStoppedInBackground) {
+                        searchStoppedInBackground = false
+                        searchRestartKey++
+                    }
+                }
                 val isAnalyzing = isAnalysisMode || isAutoAnalysis
                 LaunchedEffect(isAnalyzing) {
                     if (!isAnalyzing) saveKifu(currentNode)
@@ -481,7 +511,9 @@ class MainActivity : ComponentActivity() {
                     if (isAutoAnalysis) {
                         val timeout = analysisTimeMs + 2000L
                         var elapsed = 0L
-                        while (!bestmoveReceived && elapsed < timeout) { delay(50); elapsed += 50 }
+                        while (!bestmoveReceived && elapsed < timeout && !isInBackground.value) { delay(50); elapsed += 50 }
+                        // 裏に回って探索を止めたときは進めず、表に戻ってからこの局面をやり直す
+                        if (isInBackground.value) return@LaunchedEffect
                         val next = node.children.firstOrNull()
                         if (next == null) isAutoAnalysis = false
                         else currentNode = next
