@@ -218,7 +218,13 @@ class MainActivity : ComponentActivity() {
 
                 var analysisTimeMs by remember { mutableLongStateOf(prefs.getLong("analysis_time", 1000L)) }
                 var multiPvCount by remember { mutableIntStateOf(prefs.getInt("multi_pv", 3)) }
-                var threadCount by remember { mutableIntStateOf(prefs.getInt("thread_count", 4)) }
+                // 端末のコア数に合わせる（デフォルトは最大コア数 - 1）
+                val maxThreads = remember { Runtime.getRuntime().availableProcessors().coerceAtLeast(1) }
+                var threadCount by remember {
+                    mutableIntStateOf(
+                        prefs.getInt("thread_count", (maxThreads - 1).coerceAtLeast(1)).coerceIn(1, maxThreads)
+                    )
+                }
                 var showSettingsDialog by remember { mutableStateOf(false) }
                 var showHistoryDialog by remember { mutableStateOf(false) }
                 var selectedPvRank by remember { mutableStateOf<Int?>(null) }
@@ -1063,12 +1069,14 @@ class MainActivity : ComponentActivity() {
                                         Spacer(modifier = Modifier.width(8.dp))
                                         Text(text = pendingThreads.toString(), style = MaterialTheme.typography.titleLarge, color = MaterialTheme.colorScheme.primary)
                                     }
-                                    Slider(
-                                        value = pendingThreads.toFloat(),
-                                        onValueChange = { pendingThreads = it.roundToInt() },
-                                        valueRange = 1f..8f,
-                                        steps = 6
-                                    )
+                                    if (maxThreads > 1) {
+                                        Slider(
+                                            value = pendingThreads.toFloat(),
+                                            onValueChange = { pendingThreads = it.roundToInt() },
+                                            valueRange = 1f..maxThreads.toFloat(),
+                                            steps = maxThreads - 2
+                                        )
+                                    }
                                 }
                             }
                         },
