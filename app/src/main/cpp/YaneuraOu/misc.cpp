@@ -2425,13 +2425,20 @@ StandardInput std_input;
 // StandardInputのprivateメンバーに追加
 // （misc.hのクラス定義も合わせて変更が必要）
 
+// エンジンはアプリとは別プロセスで動かすので、先行入力が無ければ標準入力から読む (元の実装と同じ)
 std::string StandardInput::input() {
-	std::unique_lock<std::mutex> lock(mtx);
-	cv.wait(lock, [this]{ return !cmds.empty(); });
-	auto s = cmds.front();
-	cmds.pop();
-	__android_log_print(ANDROID_LOG_DEBUG, "ShogiEngine_cpp", "Processing command: %s", s.c_str());
-	return s;
+	{
+		std::lock_guard<std::mutex> lock(mtx);
+		if (!cmds.empty()) {
+			auto s = cmds.front();
+			cmds.pop();
+			return s;
+		}
+	}
+	std::string cmd;
+	if (!std::getline(std::cin, cmd)) // 入力が来るかEOFがくるまでここで待機する。
+		cmd = "quit";
+	return cmd;
 }
 
 void StandardInput::push(const std::string& s) {

@@ -1,9 +1,17 @@
 cmake_minimum_required(VERSION 3.22.1)
 project("shogigui")
 
+# エンジンはアプリとは別のプロセスで動かす実行ファイルとしてビルドする（USI を標準入出力でやり取りする）。
+# エンジンを切り替えるときはプロセスごと終わらせるので、評価関数などのメモリが確実に解放される。
+# APK に同梱して nativeLibraryDir に展開させるため、ファイル名は lib<名前>.so にする
+function(set_engine_output_name target)
+    set_target_properties(${target} PROPERTIES OUTPUT_NAME "lib${target}.so")
+endfunction()
+
 # ===== 既存エンジン: やねうら王 + 水匠5 =====
 file(GLOB_RECURSE ENGINE_SOURCES "YaneuraOu/*.cpp")
-add_library(yaneuraou SHARED ${ENGINE_SOURCES} native-lib.cpp)
+add_executable(yaneuraou ${ENGINE_SOURCES})
+set_engine_output_name(yaneuraou)
 
 if(${ANDROID_ABI} STREQUAL "x86_64")
     target_compile_definitions(yaneuraou PRIVATE USE_SSE42 COMPILED_ARCH="x86_64")
@@ -42,10 +50,8 @@ target_link_libraries(yaneuraou android log)
 
 # ===== 2つ目のエンジン: AobaNNUE =====
 file(GLOB_RECURSE AOBA_SOURCES "AobaNNUE/source/*.cpp")
-# main.cpp は不要（shared libraryなのでmain()は呼ばれない。ただし除外してもよい）
-list(REMOVE_ITEM AOBA_SOURCES "${CMAKE_CURRENT_SOURCE_DIR}/AobaNNUE/source/main.cpp")
-
-add_library(aobannue SHARED ${AOBA_SOURCES} native-lib-aoba.cpp)
+add_executable(aobannue ${AOBA_SOURCES})
+set_engine_output_name(aobannue)
 
 if(${ANDROID_ABI} STREQUAL "x86_64")
     target_compile_definitions(aobannue PRIVATE USE_SSE42 COMPILED_ARCH="x86_64")
@@ -81,7 +87,7 @@ target_link_options(aobannue PRIVATE "-Wl,-z,max-page-size=16384")
 target_link_libraries(aobannue android log)
 
 # ===== 3つ目以降のエンジン: やねうら王 V9系 + つようら王11 (SFNN) =====
-# 評価関数の architecture はコンパイル時に固定されるため、評価関数ごとに別の .so を作る。
+# 評価関数の architecture はコンパイル時に固定されるため、評価関数ごとに別の実行ファイルを作る。
 # ソース一覧は YaneuraOu9/source/Makefile の NNUE エディション (SFNN_*) に合わせている。
 # architecture header は Makefile 同様 nnue_arch_gen.py で事前生成して
 # YaneuraOu9/source/eval/nnue/architectures/ に置いておくこと。
@@ -104,14 +110,15 @@ set(YO9_SOURCES
     eval/nnue/features/half_relative_kp.cpp eval/nnue/features/half_kpe9.cpp
     eval/nnue/features/pe9.cpp
     engine/yaneuraou-engine/yaneuraou-search.cpp
+    main.cpp
 )
 list(TRANSFORM YO9_SOURCES PREPEND "${YO9_DIR}/")
 
-# lib_name    : .so の名前 (System.loadLibrary に渡す名前)
-# jni_class   : native メソッドを宣言している Kotlin クラス名
+# lib_name    : 実行ファイルの名前 (lib<lib_name>.so として同梱される)
 # nnue_arch   : SFNN architecture 名 (= architectures/<nnue_arch>.h)
-function(add_yaneuraou9_engine lib_name jni_class nnue_arch)
-    add_library(${lib_name} SHARED ${YO9_SOURCES} native-lib-yaneuraou9.cpp)
+function(add_yaneuraou9_engine lib_name nnue_arch)
+    add_executable(${lib_name} ${YO9_SOURCES})
+    set_engine_output_name(${lib_name})
 
     if(${ANDROID_ABI} STREQUAL "x86_64")
         target_compile_definitions(${lib_name} PRIVATE IS_64BIT USE_SSE42 COMPILED_ARCH="x86_64")
@@ -124,7 +131,6 @@ function(add_yaneuraou9_engine lib_name jni_class nnue_arch)
     endif()
 
     target_compile_definitions(${lib_name} PRIVATE
-        JNI_CLASS=${jni_class}
         YANEURAOU_ENGINE_NNUE
         SFNNwoPSQT
         NNUE_ARCHITECTURE_HEADER="architectures/${nnue_arch}.h"
@@ -150,5 +156,5 @@ function(add_yaneuraou9_engine lib_name jni_class nnue_arch)
     target_link_libraries(${lib_name} android log)
 endfunction()
 
-add_yaneuraou9_engine(tsuyou11micro TsuyouMicroEngine SFNN_ka2_2048_8_64_progress8)
-add_yaneuraou9_engine(tsuyou11mini  TsuyouMiniEngine  SFNN_ka2_4096_8_64_progress8)
+add_yaneuraou9_engine(tsuyou11micro SFNN_ka2_2048_8_64_progress8)
+add_yaneuraou9_engine(tsuyou11mini  SFNN_ka2_4096_8_64_progress8)

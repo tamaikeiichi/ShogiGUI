@@ -51,6 +51,7 @@
 
     <!-- その他 -->
     <string name="engine_waiting">エンジン待機中…</string>
+    <string name="engine_crashed">エンジンが予期せず終了しました。アプリを開き直すと再起動します。</string>
     <string name="kifu_export_success">%1$d件の棋譜をエクスポートしました</string>
     <string name="kifu_import_success">%1$d件の棋譜をインポートしました</string>
     <string name="kifu_import_skipped_suffix">（%1$d件は読み込めませんでした）</string>

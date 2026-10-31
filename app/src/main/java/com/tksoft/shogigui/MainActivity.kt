@@ -297,8 +297,10 @@ class MainActivity : ComponentActivity() {
                 
                 var selectedEngine by remember { mutableStateOf(prefs.getString("selected_engine", DEFAULT_ENGINE) ?: DEFAULT_ENGINE) }
                 var engine by remember { mutableStateOf<UsiEngineInterface>(
-                    createEngine(selectedEngine)
+                    createEngine(this@MainActivity, selectedEngine)
                 ) }
+                // エンジンのプロセスが落ちて起動し直した回数（準備完了で 0 に戻す）
+                var engineCrashRestarts by remember { mutableIntStateOf(0) }
                 var engineOutput by remember { mutableStateOf(getString(R.string.engine_waiting)) }
                 // USI の "id name" で通知されたエンジン名と、準備完了時に一時表示する名前
                 var engineIdName by remember { mutableStateOf<String?>(null) }
@@ -345,24 +347,24 @@ class MainActivity : ComponentActivity() {
                         line == "usiok" -> {
                             engine.sendCommand("setoption name Threads value $threadCount")
                             engine.sendCommand("setoption name MultiPV value $multiPvCount")
-                            if (engine is AobaEngine) {
-                                engine.sendCommand("setoption name EvalDir value aoba_eval")
-                            }
-                            if (engine is UsiEngine) {
-                                engine.sendCommand("setoption name USI_Hash value 256")
-                                engine.sendCommand("setoption name BookFile value no_book")
-                            }
-                            (engine as? YaneuraOu9Engine)?.let { e ->
-                                // progress.bin も EvalDir から読まれるので絶対パスで指定する
-                                e.sendCommand("setoption name EvalDir value ${java.io.File(filesDir, e.evalDirName).absolutePath}")
-                                // eval_options.txt (FV_SCALE 24) も isready 時に読まれるが、念のため明示する
-                                e.sendCommand("setoption name FV_SCALE value 24")
-                                e.sendCommand("setoption name USI_Hash value 256")
-                                e.sendCommand("setoption name BookFile value no_book")
-                            }
+                            engineSetupCommands(selectedEngine, filesDir).forEach { engine.sendCommand(it) }
                             engine.sendCommand("isready")
                         }
+                        line == ProcessUsiEngine.PROCESS_EXITED -> {
+                            // エンジンのプロセスが落ちた（または OS に終了させられた）ので起動し直す。
+                            // 起動してすぐ落ち続けるときに繰り返さないよう、準備完了までの再起動は回数を限る
+                            isEngineReady = false
+                            if (engineCrashRestarts < 3) {
+                                engineCrashRestarts++
+                                Log.w("EngineDebug", "engine process exited, restarting ($engineCrashRestarts)")
+                                engine = createEngine(this@MainActivity, selectedEngine)
+                            } else {
+                                Log.e("EngineDebug", "engine process keeps exiting, giving up")
+                                engineOutput = getString(R.string.engine_crashed)
+                            }
+                        }
                         line == "readyok" -> {
+                            engineCrashRestarts = 0
                             if (!isEngineReady) {
                                 engineReadyBanner = engineBannerRes(selectedEngine)
                                 engineReadyToast = engineLabel(this@MainActivity, selectedEngine, engineIdName, withCaptions = false)
@@ -462,11 +464,7 @@ class MainActivity : ComponentActivity() {
                     }
 
                     kotlinx.coroutines.withContext(kotlinx.coroutines.Dispatchers.IO) {
-                        copyAssetsToFileDir("nn.bin", "eval", filesDir, assets)
-                        if (engine is AobaEngine) {
-                            copyAssetsToFileDir("aoba_nn.bin", "aoba_eval", filesDir, assets, targetName = "nn.bin")
-                        }
-                        (engine as? YaneuraOu9Engine)?.copyEvalFiles(filesDir, assets)
+                        copyEngineEvalFiles(selectedEngine, filesDir, assets)
                     }
                     Log.d("EngineDebug", "[$effectId] LaunchedEffect(engine) calling engine.start() engine=$engine")
                     engine.start(filesDir.absolutePath)
@@ -604,7 +602,7 @@ class MainActivity : ComponentActivity() {
                         Log.d("EngineDebug", "restarting engine (attempt $attempt/$maxAttempts): old=$engine")
                         val old = engine
                         withContext(Dispatchers.IO) { old.stop() }
-                        engine = createEngine(selectedEngine)
+                        engine = createEngine(this@MainActivity, selectedEngine)
                         Log.d("EngineDebug", "restarted engine: new=$engine")
 
                         var waited = 0L
@@ -1129,8 +1127,8 @@ class MainActivity : ComponentActivity() {
                                     val old = engine
                                     old.onOutputReceived = null
                                     selectedEngine = pendingEngine
-                                    engine = createEngine(pendingEngine)
-                                    // nativeStop()がブロックする可能性があるためメインスレッドを避ける
+                                    engine = createEngine(this@MainActivity, pendingEngine)
+                                    // stop() はプロセスの終了を待つのでメインスレッドを避ける
                                     coroutineScope.launch(Dispatchers.IO) { old.stop() }
                                 } else {
                                     if (isEngineReady) {

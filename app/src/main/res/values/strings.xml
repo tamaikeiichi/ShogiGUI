@@ -51,6 +51,7 @@
 
     <!-- Misc -->
     <string name="engine_waiting">Engine waiting…</string>
+    <string name="engine_crashed">The engine stopped unexpectedly. It will restart when you reopen the app.</string>
     <string name="kifu_export_success">Exported %1$d game(s)</string>
     <string name="kifu_import_success">Imported %1$d game(s)</string>
     <string name="kifu_import_skipped_suffix"> (%1$d could not be loaded)</string>

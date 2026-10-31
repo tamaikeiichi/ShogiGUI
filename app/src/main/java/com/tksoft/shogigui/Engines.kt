@@ -13,11 +13,54 @@ val ENGINE_CHOICES = listOf(
 /** 新規インストール時のエンジン */
 const val DEFAULT_ENGINE = "tsuyou11mini"
 
-fun createEngine(id: String): UsiEngineInterface = when (id) {
-    "aoba" -> AobaEngine()
-    "tsuyou11micro" -> TsuyouMicroEngine()
-    "tsuyou11mini" -> TsuyouMiniEngine()
-    else -> UsiEngine()
+/** エンジンの実行ファイル名 (CMakeLists.txt のターゲット名。lib<名前>.so として nativeLibraryDir に置かれる) */
+private fun engineExecutableName(id: String): String = when (id) {
+    "aoba" -> "aobannue"
+    "tsuyou11micro" -> "tsuyou11micro"
+    "tsuyou11mini" -> "tsuyou11mini"
+    else -> "yaneuraou"
+}
+
+fun createEngine(context: Context, id: String): UsiEngineInterface =
+    ProcessUsiEngine(id, java.io.File(context.applicationInfo.nativeLibraryDir, "lib${engineExecutableName(id)}.so"))
+
+/** filesDir 以下で評価関数を置くディレクトリ名 */
+private fun engineEvalDirName(id: String): String = when (id) {
+    "aoba" -> "aoba_eval"
+    "tsuyou11micro" -> "tsuyou11micro_eval"
+    "tsuyou11mini" -> "tsuyou11mini_eval"
+    else -> "eval"
+}
+
+/** 評価関数ファイルを assets から filesDir 以下にコピーする (IO スレッドで呼ぶこと) */
+fun copyEngineEvalFiles(id: String, filesDir: java.io.File, assets: android.content.res.AssetManager) {
+    val dir = engineEvalDirName(id)
+    when (id) {
+        "aoba" -> copyAssetsToFileDir("aoba_nn.bin", dir, filesDir, assets, targetName = "nn.bin")
+        // やねうら王 V9系: assets では評価関数名を接頭辞に付けて格納している (例: "tsuyou11mini_nn.bin")
+        "tsuyou11micro", "tsuyou11mini" ->
+            for (name in listOf("nn.bin", "progress.bin", "eval_options.txt")) {
+                copyAssetsToFileDir("${id}_$name", dir, filesDir, assets, targetName = name)
+            }
+        else -> copyAssetsToFileDir("nn.bin", dir, filesDir, assets)
+    }
+}
+
+/** "usiok" を受けたあと、"isready" の前に送るエンジンごとのオプション */
+fun engineSetupCommands(id: String, filesDir: java.io.File): List<String> = when (id) {
+    "aoba" -> listOf("setoption name EvalDir value ${engineEvalDirName(id)}")
+    // progress.bin も EvalDir から読まれるので絶対パスで指定する。
+    // eval_options.txt (FV_SCALE 24) も isready 時に読まれるが、念のため明示する
+    "tsuyou11micro", "tsuyou11mini" -> listOf(
+        "setoption name EvalDir value ${java.io.File(filesDir, engineEvalDirName(id)).absolutePath}",
+        "setoption name FV_SCALE value 24",
+        "setoption name USI_Hash value 256",
+        "setoption name BookFile value no_book",
+    )
+    else -> listOf(
+        "setoption name USI_Hash value 256",
+        "setoption name BookFile value no_book",
+    )
 }
 
 /** 設定画面のタイトルに出す、評価関数と探索部の名前 */
