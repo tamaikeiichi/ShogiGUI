@@ -1,4 +1,4 @@
-﻿plugins {
+plugins {
     alias(libs.plugins.android.application)
     alias(libs.plugins.kotlin.compose)
 }
@@ -59,7 +59,7 @@ android {
             }
         }
         ndk {
-            // 繧ｹ繝医い蜈ｬ髢九↓蠢・ｦ√↑ 64bit 迚医→繧ｨ繝溘Η繝ｬ繝ｼ繧ｿ逕ｨ
+            // ストア公開に必要な 64bit 版とエミュレータ用
             abiFilters.addAll(listOf("arm64-v8a", "x86_64"))
         }
     }
