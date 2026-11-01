@@ -218,19 +218,35 @@ fun moveArrowFromUsi(usiMove: String, fillColor: Color?, edgeColor: Color, rankL
 }
 
 // 候補手の順位の数字を移動先のマスの中央に描く。駒の上でも読めるよう、数字の背後に
-// 半透明でふちをぼかした円（放射グラデーション）を敷く。同じマスへの候補が複数あれば横に並べる。
+// 半透明でふちをぼかした円（放射グラデーション）を敷く。同じマスへの候補が複数あれば
+// 横に並べる。盤上の手の数字と駒打ちの数字は別レイヤーで描くので、同じマスの全候補数
+// (total) と各数字の枠番号 (slot) で位置を決め、重ならないようにする。
+// 並びは画面上で左から「盤上の手（順位順）」→「駒打ち（持ち駒の並び順）」。
 // upsideDown: 盤ごと 180° 回転して表示しているとき、数字だけ正立させる
+private class RankLabel(val center: Offset, val arrow: MoveArrow, val slot: Int, val total: Int)
+
+private fun MoveArrow.hasRankLabel() = rankLabel != null && fillColor != null
+
+// 各マスの数字のうち盤上の手（from != null）の個数
+private fun boardLabelCounts(arrows: List<MoveArrow>): Map<Pair<Int, Int>, Int> =
+    arrows.filter { it.hasRankLabel() && it.from != null }.groupingBy { it.to }.eachCount()
+
+// 各マスの数字の総数（盤上の手＋駒打ち）
+private fun totalLabelCounts(arrows: List<MoveArrow>): Map<Pair<Int, Int>, Int> =
+    arrows.filter { it.hasRankLabel() }.groupingBy { it.to }.eachCount()
+
 private fun DrawScope.drawRankLabels(
-    labels: List<Pair<Offset, MoveArrow>>, cell: Float, measurer: TextMeasurer,
+    labels: List<RankLabel>, cell: Float, measurer: TextMeasurer,
     backdropColor: Color, alpha: Float, upsideDown: Boolean
 ) {
-    labels.filter { it.second.rankLabel != null && it.second.fillColor != null }
-        .groupBy { it.first }
-        .forEach { (center, list) ->
+    labels.filter { it.arrow.hasRankLabel() }
+        .forEach { label ->
+            val center = label.center
+            val arrow = label.arrow
             val step = cell * 0.42f
-            list.forEachIndexed { i, (_, arrow) ->
-                // 回転表示時は並び順も左右反転して、画面上で左から順位順になるようにする
-                val shift = (i - (list.size - 1) / 2f) * step * (if (upsideDown) -1 else 1)
+            run {
+                // 回転表示時は並び順も左右反転して、画面上で左から順に並ぶようにする
+                val shift = (label.slot - (label.total - 1) / 2f) * step * (if (upsideDown) -1 else 1)
                 val c = Offset(center.x + shift, center.y)
                 val r = cell * 0.36f
                 drawCircle(
@@ -353,7 +369,9 @@ fun BoardMoveArrows(
 
     Canvas(modifier = modifier) {
         val cell = size.width / 9f
-        val labels = ArrayList<Pair<Offset, MoveArrow>>()
+        val totals = totalLabelCounts(shown)
+        val nextSlot = HashMap<Pair<Int, Int>, Int>()
+        val labels = ArrayList<RankLabel>()
         for (arrow in shown) {
             val from = arrow.from ?: continue
             val fromCenter = Offset((from.second + 0.5f) * cell, (from.first + 0.5f) * cell)
@@ -362,7 +380,12 @@ fun BoardMoveArrows(
             scale(growProgress.coerceIn(0f, 1f), pivot = fromCenter) {
                 drawMoveArrow(fromCenter, toCenter, cell, cell * 0.10f, arrow.fillColor, arrow.edgeColor, haloColor, alpha)
             }
-            labels.add(toCenter to arrow)
+            if (arrow.hasRankLabel()) {
+                // 盤上の手はマスの左側の枠から順位順（shown の順）に詰める
+                val slot = nextSlot.getOrDefault(arrow.to, 0)
+                nextSlot[arrow.to] = slot + 1
+                labels.add(RankLabel(toCenter, arrow, slot, totals[arrow.to] ?: 1))
+            }
         }
         // 順位の数字は全ての矢印より上に描く
         drawRankLabels(labels, cell, measurer, labelBackdropColor, alpha * growProgress.coerceIn(0f, 1f), isFlipped)
@@ -403,7 +426,12 @@ fun DropMoveArrowOverlay(
     // 「解析中かどうか」は駒打ちに限らず矢印全体で判定する。解析中は駒打ちの候補が無くなれば
     // （最善手が駒打ちから盤上の手に変わった等）駒打ちの矢印も消す。そうしないと古い矢印が順位ごと残る
     var lastArrows by remember(boardState) { mutableStateOf<List<MoveArrow>>(emptyList()) }
-    if (arrows.isNotEmpty()) lastArrows = arrows.filter { it.from == null }
+    // 盤上の手も含めた全候補（同じマスの数字の位置を盤上の手のレイヤーとそろえるのに使う）
+    var lastAllArrows by remember(boardState) { mutableStateOf<List<MoveArrow>>(emptyList()) }
+    if (arrows.isNotEmpty()) {
+        lastArrows = arrows.filter { it.from == null }
+        lastAllArrows = arrows
+    }
     val resting = arrows.isEmpty()
 
     val own = ownCoordinates
@@ -462,10 +490,23 @@ fun DropMoveArrowOverlay(
                 drawMoveArrow(fromCenter, toCenter, cell, 0f, arrow.fillColor, arrow.edgeColor, haloColor, alpha)
             }
         }
-        // このオーバーレイは回転していない座標系なので、数字はそのまま正立で描ける
+        // このオーバーレイは回転していない座標系なので、数字はそのまま正立で描ける。
+        // 複数の持ち駒から同じマスへ打つ候補があるとき、数字を順位順ではなく画面上の
+        // 持ち駒の並び順（左→右、縦並びなら上→下）に並べ、どの駒の候補か対応がつくようにする
         val cell = points.firstOrNull()?.cell ?: return@Canvas
-        drawRankLabels(points.map { it.to to it.arrow }, cell, measurer, labelBackdropColor,
-            alpha, upsideDown = false)
+        // 盤上の手の数字がある場合はその右側の枠に置く
+        val boardCounts = boardLabelCounts(lastAllArrows)
+        val totals = totalLabelCounts(lastAllArrows)
+        val nextSlot = HashMap<Pair<Int, Int>, Int>()
+        val labels = points.sortedWith(compareBy<DropArrowPoints>({ it.from.x }, { it.from.y }))
+            .filter { it.arrow.hasRankLabel() }
+            .map { p ->
+                val sq = p.arrow.to
+                val slot = nextSlot.getOrDefault(sq, boardCounts[sq] ?: 0)
+                nextSlot[sq] = slot + 1
+                RankLabel(p.to, p.arrow, slot, maxOf(totals[sq] ?: 1, slot + 1))
+            }
+        drawRankLabels(labels, cell, measurer, labelBackdropColor, alpha, upsideDown = false)
     }
 }
 
