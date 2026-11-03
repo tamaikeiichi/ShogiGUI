@@ -110,11 +110,14 @@ fun mateWinnerIsSente(context: Context, pvText: String): Boolean? {
 fun extractScore(context: Context, pvText: String, turn: Player): Int {
     val isSenteWin = mateWinnerIsSente(context, pvText)
     if (isSenteWin != null) {
-        return if (turn == Player.SENTE) {
-            if (isSenteWin) Int.MAX_VALUE else Int.MIN_VALUE
-        } else {
-            if (!isSenteWin) Int.MAX_VALUE else Int.MIN_VALUE
-        }
+        // 詰みの手数も評価に反映する（勝ちなら短い詰みほど、負けなら長く粘るほど良い）。
+        // 手数を無視すると全部同点になり、7手詰より9手詰が上位に並ぶことがある
+        val format = context.getString(R.string.mate_in_moves).split("%1\$d")
+        val mateInRegex = Regex(Regex.escape(format[0]) + "(\\d+)" + Regex.escape(format.getOrElse(1) { "" }))
+        val moves = pvText.lines().firstNotNullOfOrNull { mateInRegex.matchEntire(it)?.groupValues?.get(1)?.toIntOrNull() }
+            ?.coerceIn(0, 10000) ?: 0
+        val sideToMoveWins = if (turn == Player.SENTE) isSenteWin else !isSenteWin
+        return if (sideToMoveWins) Int.MAX_VALUE - moves else Int.MIN_VALUE + moves
     }
     val scoreLine = pvText.lines().find { scoreLineRegex.matches(it) } ?: return 0
     val vStr = scoreLine.substringBefore(" ")

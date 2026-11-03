@@ -627,11 +627,14 @@ class MainActivity : ComponentActivity() {
                     MaterialTheme.colorScheme.tertiary, MaterialTheme.colorScheme.outline)
                 val nextMoveEdgeColor = MaterialTheme.colorScheme.onSurface
                 val moveArrows: List<MoveArrow> = if (!(isAnalysisMode || isAutoAnalysis)) emptyList() else buildList {
-                    val candidates = pvList.entries.sortedBy { (_, pvText) -> extractScore(this@MainActivity, pvText, currentPlayer) }
-                    candidates.forEachIndexed { idx, (rank, _) ->
-                        val usi = pvUsiList[rank]?.firstOrNull() ?: return@forEachIndexed
+                    // カードと同じ並べ方 (sortedByDescending) で順位を決め、描画だけ逆順にする。
+                    // sortedBy で昇順に並べてから順位を逆算すると、同点の候補同士で順位が入れ替わってしまう
+                    val cardOrder = pvList.entries.sortedByDescending { (_, pvText) -> extractScore(this@MainActivity, pvText, currentPlayer) }
+                    cardOrder.withIndex().reversed().forEach { (idx, entry) ->
+                        val rank = entry.key
+                        val usi = pvUsiList[rank]?.firstOrNull() ?: return@forEach
                         val i = (rank - 1).coerceIn(0, 3)
-                        val order = candidates.size - idx // カードの並び（評価値の高い順）での順位
+                        val order = idx + 1 // カードの並び（評価値の高い順）での順位
                         moveArrowFromUsi(usi, pvFillColors[i], pvEdgeColors[i], order.toString())?.let { add(it) }
                     }
                     // isOnMainLine は PV 手順の表示中 (pvBranchPath != null) は常に false になり、
