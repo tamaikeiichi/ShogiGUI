@@ -22,7 +22,6 @@
     <string name="action_preparing">準備中</string>
     <string name="action_stop">停止</string>
     <string name="action_flip">反転</string>
-    <string name="action_analyze_all">この局面から全て解析</string>
     <string name="maximize_board">盤を最大化</string>
     <string name="restore_board">元に戻す</string>
     <string name="action_main_line">本譜</string>

@@ -323,13 +323,17 @@ private fun DrawScope.drawMoveArrow(
         close()
     }
     // 始点（移動元の駒の上）は透かし、先端に向かって不透明にする。
-    // 1つの駒から複数の矢印が出ても駒が隠れないように。矢じりは不透明のまま
+    // 1つの駒から複数の矢印が出ても駒が隠れないように。
+    // 矢じりの先も、移動先のマスの順位の数字と重なって読みにくくならないよう、数字の円の中で透かす
     val total = hypot(tip.x - start.x, tip.y - start.y)
     val neckFraction = if (total > 0f) (1f - headLength / total).coerceIn(0f, 1f) else 0f
+    val badgeEdge = cell * rankBadgeDiameter / 2f - endInset
+    val tipFadeFraction = if (total > 0f) (1f - badgeEdge / total).coerceIn(neckFraction, 1f) else 1f
     fun fade(color: Color, a: Float) = Brush.linearGradient(
         0f to color.copy(alpha = color.alpha * a * arrowStartAlpha),
         neckFraction to color.copy(alpha = color.alpha * a),
-        1f to color.copy(alpha = color.alpha * a),
+        tipFadeFraction to color.copy(alpha = color.alpha * a),
+        1f to color.copy(alpha = color.alpha * a * arrowTipAlpha),
         start = start, end = tip
     )
     val round = androidx.compose.ui.graphics.StrokeJoin.Round
@@ -415,6 +419,8 @@ private const val arrowEdgeAlpha = 0.9f
 private const val arrowOutlineAlpha = 0.38f
 // 矢印の始点の不透明度（先端を 1 としたときの比率）
 private const val arrowStartAlpha = 0.25f
+// 矢じりの先端の不透明度（矢印の本体に対する割合）
+private const val arrowTipAlpha = 0.2f
 // 解析停止後（局面は同じ）に矢印を消さず残しておくときの薄さ
 private const val restingArrowAlpha = 0.35f
 

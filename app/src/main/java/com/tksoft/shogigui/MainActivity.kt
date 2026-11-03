@@ -746,21 +746,20 @@ class MainActivity : ComponentActivity() {
                                         onClick = { clipboard.getText()?.text?.let(loadKifuText) }
                                     )
 
-                                    val inGame = humanPlayer != null
-                                    val analyzeActive = inGame || (isAnalysisMode && !isAutoAnalysis)
+                                    val analyzeActive = humanPlayer != null || isAnalysisMode || isAutoAnalysis
                                     BarButton(
                                         icon = { Icon(painterResource(if (analyzeActive) R.drawable.stop_circle_24px else R.drawable.network_intelligence_24px), stringResource(R.string.action_analyze)) },
                                         label = when {
-                                            inGame -> stringResource(R.string.action_stop_game)
+                                            humanPlayer != null -> stringResource(R.string.action_stop_game)
                                             isAnalysisMode || isAutoAnalysis -> stringResource(R.string.action_stop)
                                             !isEngineReady -> stringResource(R.string.action_preparing)
                                             else -> stringResource(R.string.action_analyze)
                                         },
                                         // 停止はエンジンの準備中でもできるようにする（対局中にエンジンを切り替えた場合など）
-                                        enabled = isEngineReady || inGame || isAnalysisMode || isAutoAnalysis,
+                                        enabled = isEngineReady || analyzeActive,
                                         highlighted = analyzeActive,
                                         onClick = {
-                                            if (inGame) {
+                                            if (humanPlayer != null) {
                                                 humanPlayer = null; engine.sendCommand("stop")
                                             } else if (isAnalysisMode || isAutoAnalysis) {
                                                 isAnalysisMode = false; isAutoAnalysis = false; engine.sendCommand("stop")
@@ -770,45 +769,31 @@ class MainActivity : ComponentActivity() {
                                         }
                                     )
 
-                                    // 対局中は解析・本譜を使わないので、対局の中止だけを置く
-                                    if (!inGame) {
-                                        BarButton(
-                                            icon = {
-                                                if (isAutoAnalysis) Icon(painterResource(R.drawable.stop_circle_24px), stringResource(R.string.action_stop))
-                                                else Icon(Icons.Outlined.FastForward, stringResource(R.string.action_analyze_all))
-                                            },
-                                            label = stringResource(if (isAutoAnalysis) R.string.action_stop else R.string.action_analyze_all),
-                                            enabled = isAutoAnalysis || isEngineReady,
-                                            highlighted = isAutoAnalysis,
-                                            onClick = {
-                                                if (isAutoAnalysis) {
-                                                    isAnalysisMode = false; isAutoAnalysis = false; engine.sendCommand("stop")
-                                                } else {
-                                                    pinnedPvList = emptyMap(); pinnedPvUsiList = emptyMap(); isAutoAnalysis = true
-                                                }
-                                            }
-                                        )
+                                    BarButton(
+                                        icon = { Icon(painterResource(R.drawable.rotate_right_24px), stringResource(R.string.action_flip)) },
+                                        label = stringResource(R.string.action_flip),
+                                        onClick = { isBoardFlipped = !isBoardFlipped }
+                                    )
 
-                                        BarButton(
-                                            icon = { Icon(painterResource(R.drawable.undo_24px), stringResource(R.string.action_main_line)) },
-                                            label = stringResource(R.string.action_main_line),
-                                            enabled = !isOnMainLine,
-                                            onClick = {
-                                                // 枝分かれの元を辿って本譜（最初の非PV子の列）上の分岐点へ戻る。
-                                                // 枝分かれの手順や形勢は削除せず残す
-                                                val ancestors = mutableListOf<KifuNode>()
-                                                var p: KifuNode? = currentNode
-                                                while (p != null) { ancestors.add(0, p); p = p.parent }
-                                                var mainNode = ancestors[0]
-                                                for (next in ancestors.drop(1)) {
-                                                    if (mainNode.children.firstOrNull { !it.isPvBranch } !== next) break
-                                                    mainNode = next
-                                                }
-                                                currentNode = mainNode
-                                                pinnedPvList = emptyMap(); pinnedPvUsiList = emptyMap(); pvBranchPath = null
+                                    BarButton(
+                                        icon = { Icon(painterResource(R.drawable.undo_24px), stringResource(R.string.action_main_line)) },
+                                        label = stringResource(R.string.action_main_line),
+                                        enabled = !isOnMainLine,
+                                        onClick = {
+                                            // 枝分かれの元を辿って本譜（最初の非PV子の列）上の分岐点へ戻る。
+                                            // 枝分かれの手順や形勢は削除せず残す
+                                            val ancestors = mutableListOf<KifuNode>()
+                                            var p: KifuNode? = currentNode
+                                            while (p != null) { ancestors.add(0, p); p = p.parent }
+                                            var mainNode = ancestors[0]
+                                            for (next in ancestors.drop(1)) {
+                                                if (mainNode.children.firstOrNull { !it.isPvBranch } !== next) break
+                                                mainNode = next
                                             }
-                                        )
-                                    }
+                                            currentNode = mainNode
+                                            pinnedPvList = emptyMap(); pinnedPvUsiList = emptyMap(); pvBranchPath = null
+                                        }
+                                    )
                                 }
                             }
                         }
@@ -993,9 +978,6 @@ class MainActivity : ComponentActivity() {
                             MenuItem(Icons.Outlined.FastForward,
                                 text = { Text(stringResource(R.string.menu_analyze_to_end)) },
                                 onClick = { isAutoAnalysis = true; pinnedPvList = emptyMap(); pinnedPvUsiList = emptyMap(); showMenu = false })
-                            MenuItem({ Icon(painterResource(R.drawable.rotate_right_24px), contentDescription = null) },
-                                text = { Text(stringResource(R.string.action_flip)) },
-                                onClick = { isBoardFlipped = !isBoardFlipped; showMenu = false })
                             MenuItem(Icons.Outlined.ContentCopy,
                                 text = { Text(stringResource(R.string.menu_export_main_line_csa)) },
                                 onClick = {
