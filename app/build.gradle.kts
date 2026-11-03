@@ -15,14 +15,30 @@ android {
         applicationId = "com.tksoft.shogigui"
         minSdk = 24
         targetSdk = 36
-        versionCode = 44
-        versionName = "1.10.0"
+        versionCode = 45
+        versionName = "1.11.0"
 
         testInstrumentationRunner = "androidx.test.runner.AndroidJUnitRunner"
     }
 
+    // 署名鍵の場所とパスワードはリポジトリに入れず、~/.gradle/gradle.properties から読む。
+    // 設定が無ければ署名なしでリリース版を作る。
+    val releaseStoreFile = providers.gradleProperty("SHOGIGUI_STORE_FILE").orNull
+    signingConfigs {
+        if (releaseStoreFile != null) {
+            create("release") {
+                storeFile = file(releaseStoreFile)
+                storePassword = providers.gradleProperty("SHOGIGUI_STORE_PASSWORD").get()
+                keyAlias = providers.gradleProperty("SHOGIGUI_KEY_ALIAS").get()
+                keyPassword = providers.gradleProperty("SHOGIGUI_KEY_PASSWORD").get()
+            }
+        }
+    }
     buildTypes {
         release {
+            if (releaseStoreFile != null) {
+                signingConfig = signingConfigs.getByName("release")
+            }
             isMinifyEnabled = true
             isShrinkResources = true
             proguardFiles(
