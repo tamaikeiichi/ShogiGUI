@@ -293,7 +293,7 @@ internal fun DrawScope.drawRankBadge(
 // 塗りつぶしあり・なし（輪郭のみ）のどちらも同じ形で描ける
 private fun DrawScope.drawMoveArrow(
     fromCenter: Offset, toCenter: Offset, cell: Float, startInset: Float,
-    fillColor: Color?, edgeColor: Color, haloColor: Color, alpha: Float
+    fillColor: Color?, edgeColor: Color, haloColor: Color, alpha: Float, fadeTip: Boolean
 ) {
     val dx = toCenter.x - fromCenter.x
     val dy = toCenter.y - fromCenter.y
@@ -324,7 +324,7 @@ private fun DrawScope.drawMoveArrow(
     }
     // 始点（移動元の駒の上）は透かし、先端に向かって不透明にする。
     // 1つの駒から複数の矢印が出ても駒が隠れないように。
-    // 矢じりの先も、移動先のマスの順位の数字と重なって読みにくくならないよう、数字の円の中で透かす
+    // 移動先のマスに順位の数字があるとき (fadeTip) は、矢じりの先も数字が読みにくくならないよう数字の円の中で透かす
     val total = hypot(tip.x - start.x, tip.y - start.y)
     val neckFraction = if (total > 0f) (1f - headLength / total).coerceIn(0f, 1f) else 0f
     val badgeEdge = cell * rankBadgeDiameter / 2f - endInset
@@ -333,7 +333,7 @@ private fun DrawScope.drawMoveArrow(
         0f to color.copy(alpha = color.alpha * a * arrowStartAlpha),
         neckFraction to color.copy(alpha = color.alpha * a),
         tipFadeFraction to color.copy(alpha = color.alpha * a),
-        1f to color.copy(alpha = color.alpha * a * arrowTipAlpha),
+        1f to color.copy(alpha = color.alpha * a * (if (fadeTip) arrowTipAlpha else 1f)),
         start = start, end = tip
     )
     val round = androidx.compose.ui.graphics.StrokeJoin.Round
@@ -399,7 +399,7 @@ fun BoardMoveArrows(
             val toCenter = Offset((arrow.to.second + 0.5f) * cell, (arrow.to.first + 0.5f) * cell)
             // 移動元マスを起点にバネで伸びるアニメーション
             scale(growProgress.coerceIn(0f, 1f), pivot = fromCenter) {
-                drawMoveArrow(fromCenter, toCenter, cell, cell * 0.10f, arrow.fillColor, arrow.edgeColor, haloColor, alpha)
+                drawMoveArrow(fromCenter, toCenter, cell, cell * 0.10f, arrow.fillColor, arrow.edgeColor, haloColor, alpha, fadeTip = arrow.to in totals)
             }
             if (arrow.hasRankLabel()) {
                 // 盤上の手はマスの左側の枠から順位順（shown の順）に詰める
@@ -420,7 +420,7 @@ private const val arrowOutlineAlpha = 0.38f
 // 矢印の始点の不透明度（先端を 1 としたときの比率）
 private const val arrowStartAlpha = 0.25f
 // 矢じりの先端の不透明度（矢印の本体に対する割合）
-private const val arrowTipAlpha = 0.2f
+private const val arrowTipAlpha = 0.05f
 // 解析停止後（局面は同じ）に矢印を消さず残しておくときの薄さ
 private const val restingArrowAlpha = 0.35f
 
@@ -507,10 +507,11 @@ fun DropMoveArrowOverlay(
         }
         val grow = progress.coerceIn(0f, 1f)
         val alpha = grow * restAlpha
+        val totals = totalLabelCounts(lastAllArrows)
         for ((fromCenter, toCenter, cell, arrow) in points) {
             // 持ち駒の位置を起点にバネで伸びるアニメーション
             scale(grow, pivot = fromCenter) {
-                drawMoveArrow(fromCenter, toCenter, cell, 0f, arrow.fillColor, arrow.edgeColor, haloColor, alpha)
+                drawMoveArrow(fromCenter, toCenter, cell, 0f, arrow.fillColor, arrow.edgeColor, haloColor, alpha, fadeTip = arrow.to in totals)
             }
         }
         // このオーバーレイは回転していない座標系なので、数字はそのまま正立で描ける。
@@ -519,7 +520,6 @@ fun DropMoveArrowOverlay(
         val cell = points.firstOrNull()?.cell ?: return@Canvas
         // 盤上の手の数字がある場合はその右側の枠に置く
         val boardCounts = boardLabelCounts(lastAllArrows)
-        val totals = totalLabelCounts(lastAllArrows)
         val nextSlot = HashMap<Pair<Int, Int>, Int>()
         val labels = points.sortedWith(compareBy<DropArrowPoints>({ it.from.x }, { it.from.y }))
             .filter { it.arrow.hasRankLabel() }

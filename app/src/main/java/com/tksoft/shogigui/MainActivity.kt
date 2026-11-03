@@ -746,20 +746,21 @@ class MainActivity : ComponentActivity() {
                                         onClick = { clipboard.getText()?.text?.let(loadKifuText) }
                                     )
 
-                                    val analyzeActive = humanPlayer != null || isAnalysisMode || isAutoAnalysis
+                                    val inGame = humanPlayer != null
+                                    val analyzeActive = inGame || (isAnalysisMode && !isAutoAnalysis)
                                     BarButton(
                                         icon = { Icon(painterResource(if (analyzeActive) R.drawable.stop_circle_24px else R.drawable.network_intelligence_24px), stringResource(R.string.action_analyze)) },
                                         label = when {
-                                            humanPlayer != null -> stringResource(R.string.action_stop_game)
+                                            inGame -> stringResource(R.string.action_stop_game)
                                             isAnalysisMode || isAutoAnalysis -> stringResource(R.string.action_stop)
                                             !isEngineReady -> stringResource(R.string.action_preparing)
                                             else -> stringResource(R.string.action_analyze)
                                         },
                                         // 停止はエンジンの準備中でもできるようにする（対局中にエンジンを切り替えた場合など）
-                                        enabled = isEngineReady || analyzeActive,
+                                        enabled = isEngineReady || inGame || isAnalysisMode || isAutoAnalysis,
                                         highlighted = analyzeActive,
                                         onClick = {
-                                            if (humanPlayer != null) {
+                                            if (inGame) {
                                                 humanPlayer = null; engine.sendCommand("stop")
                                             } else if (isAnalysisMode || isAutoAnalysis) {
                                                 isAnalysisMode = false; isAutoAnalysis = false; engine.sendCommand("stop")
@@ -769,31 +770,45 @@ class MainActivity : ComponentActivity() {
                                         }
                                     )
 
-                                    BarButton(
-                                        icon = { Icon(painterResource(R.drawable.rotate_right_24px), stringResource(R.string.action_flip)) },
-                                        label = stringResource(R.string.action_flip),
-                                        onClick = { isBoardFlipped = !isBoardFlipped }
-                                    )
-
-                                    BarButton(
-                                        icon = { Icon(painterResource(R.drawable.undo_24px), stringResource(R.string.action_main_line)) },
-                                        label = stringResource(R.string.action_main_line),
-                                        enabled = !isOnMainLine,
-                                        onClick = {
-                                            // 枝分かれの元を辿って本譜（最初の非PV子の列）上の分岐点へ戻る。
-                                            // 枝分かれの手順や形勢は削除せず残す
-                                            val ancestors = mutableListOf<KifuNode>()
-                                            var p: KifuNode? = currentNode
-                                            while (p != null) { ancestors.add(0, p); p = p.parent }
-                                            var mainNode = ancestors[0]
-                                            for (next in ancestors.drop(1)) {
-                                                if (mainNode.children.firstOrNull { !it.isPvBranch } !== next) break
-                                                mainNode = next
+                                    // 対局中は解析・本譜を使わないので、対局の中止だけを置く
+                                    if (!inGame) {
+                                        BarButton(
+                                            icon = {
+                                                if (isAutoAnalysis) Icon(painterResource(R.drawable.stop_circle_24px), stringResource(R.string.action_stop))
+                                                else Icon(Icons.Outlined.FastForward, stringResource(R.string.action_analyze_all))
+                                            },
+                                            label = stringResource(if (isAutoAnalysis) R.string.action_stop else R.string.action_analyze_all),
+                                            enabled = isAutoAnalysis || isEngineReady,
+                                            highlighted = isAutoAnalysis,
+                                            onClick = {
+                                                if (isAutoAnalysis) {
+                                                    isAnalysisMode = false; isAutoAnalysis = false; engine.sendCommand("stop")
+                                                } else {
+                                                    pinnedPvList = emptyMap(); pinnedPvUsiList = emptyMap(); isAutoAnalysis = true
+                                                }
                                             }
-                                            currentNode = mainNode
-                                            pinnedPvList = emptyMap(); pinnedPvUsiList = emptyMap(); pvBranchPath = null
-                                        }
-                                    )
+                                        )
+
+                                        BarButton(
+                                            icon = { Icon(painterResource(R.drawable.undo_24px), stringResource(R.string.action_main_line)) },
+                                            label = stringResource(R.string.action_main_line),
+                                            enabled = !isOnMainLine,
+                                            onClick = {
+                                                // 枝分かれの元を辿って本譜（最初の非PV子の列）上の分岐点へ戻る。
+                                                // 枝分かれの手順や形勢は削除せず残す
+                                                val ancestors = mutableListOf<KifuNode>()
+                                                var p: KifuNode? = currentNode
+                                                while (p != null) { ancestors.add(0, p); p = p.parent }
+                                                var mainNode = ancestors[0]
+                                                for (next in ancestors.drop(1)) {
+                                                    if (mainNode.children.firstOrNull { !it.isPvBranch } !== next) break
+                                                    mainNode = next
+                                                }
+                                                currentNode = mainNode
+                                                pinnedPvList = emptyMap(); pinnedPvUsiList = emptyMap(); pvBranchPath = null
+                                            }
+                                        )
+                                    }
                                 }
                             }
                         }
@@ -832,6 +847,7 @@ class MainActivity : ComponentActivity() {
                                 }
                                 board(Modifier.width(boardWidth))
                             }
+                            FlipButton(Modifier.align(Alignment.BottomStart)) { isBoardFlipped = !isBoardFlipped }
                         }
                     } else if (isWide) {
                         // 盤をなるべく大きくするため、左からメニューボタン・盤・(対局者・読み筋カード・対局者) の3列にする
@@ -842,7 +858,10 @@ class MainActivity : ComponentActivity() {
                             val minSideWidth = 260.dp
                             val boardWidth = minOf(maxWidth - menuWidth - minSideWidth - gap * 2, maxHeight).coerceAtLeast(0.dp)
                             Row(horizontalArrangement = Arrangement.spacedBy(gap)) {
-                                MenuButton(Modifier.padding(top = 4.dp)) { showMenu = true }
+                                Column(modifier = Modifier.height(boardWidth), verticalArrangement = Arrangement.SpaceBetween) {
+                                    MenuButton(Modifier.padding(top = 4.dp)) { showMenu = true }
+                                    FlipButton { isBoardFlipped = !isBoardFlipped }
+                                }
                                 board(Modifier.width(boardWidth))
                                 Column(modifier = Modifier.weight(1f).fillMaxHeight()) {
                                     Row(verticalAlignment = Alignment.Top) {
@@ -868,7 +887,10 @@ class MainActivity : ComponentActivity() {
                             }
                             // 盤を少しでも大きくするため、画面の端との余白は狭くする
                             board(Modifier.padding(horizontal = 6.dp, vertical = 8.dp))
-                            playerSection(botP, true)
+                            Box(modifier = Modifier.fillMaxWidth()) {
+                                playerSection(botP, true)
+                                FlipButton(Modifier.align(Alignment.TopStart).padding(start = 8.dp, top = 4.dp)) { isBoardFlipped = !isBoardFlipped }
+                            }
                             Column(modifier = Modifier.padding(8.dp)) { pvCards() }
                             // bottomBar に隠れる分をスクロールで見られるようにする
                             Spacer(modifier = Modifier.height(innerPadding.calculateBottomPadding()))
@@ -1719,6 +1741,23 @@ private fun NavButton(icon: androidx.compose.ui.graphics.vector.ImageVector, des
         contentAlignment = Alignment.Center
     ) {
         Icon(icon, contentDescription = description, tint = MaterialTheme.colorScheme.onSecondaryContainer, modifier = Modifier.size(20.dp))
+    }
+}
+
+// 盤の左下に置く反転ボタン。メニューボタンと同じ形
+@Composable
+private fun FlipButton(modifier: Modifier = Modifier, onClick: () -> Unit) {
+    Surface(
+        onClick = onClick,
+        shape = CircleShape,
+        color = MaterialTheme.colorScheme.surfaceContainerLowest,
+        border = androidx.compose.foundation.BorderStroke(1.dp, MaterialTheme.colorScheme.outlineVariant),
+        shadowElevation = 1.dp,
+        modifier = modifier.size(48.dp)
+    ) {
+        Box(contentAlignment = Alignment.Center) {
+            Icon(painterResource(R.drawable.rotate_right_24px), stringResource(R.string.action_flip))
+        }
     }
 }
 
