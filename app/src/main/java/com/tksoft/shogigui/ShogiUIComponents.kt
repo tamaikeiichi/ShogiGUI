@@ -28,9 +28,11 @@ import androidx.compose.ui.unit.IntSize
 import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.input.pointer.pointerInput
 import androidx.compose.ui.res.stringResource
+import androidx.compose.ui.text.AnnotatedString
 import androidx.compose.ui.text.SpanStyle
 import androidx.compose.ui.text.buildAnnotatedString
 import androidx.compose.ui.text.font.FontWeight
+import androidx.compose.ui.text.rememberTextMeasurer
 import androidx.compose.ui.text.withStyle
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
@@ -50,38 +52,65 @@ fun getPvColor(rank: Int): Color {
     }
 }
 
+// order はカードの並び順で、盤上の候補手の数字と対応する。
+// ringColor は候補手が実際の手と一致するときに番号を囲う色
 @Composable
-fun PvInfoCard(rank: Int, pvText: String, currentMoveLabel: String, onTap: () -> Unit) {
+fun PvInfoCard(rank: Int, order: Int, pvText: String, currentMoveLabel: String, ringColor: Color? = null, onTap: () -> Unit) {
+    val cardColor = getPvColor(rank)
     Card(
         modifier = Modifier
             .fillMaxWidth()
             .padding(vertical = 4.dp)
             .clickable { onTap() },
         colors = CardDefaults.cardColors(
-            containerColor = getPvColor(rank)
+            containerColor = cardColor
         )
     ) {
         Column(modifier = Modifier.padding(8.dp)) {
-            val annotated = buildAnnotatedString {
-                if (currentMoveLabel.isNotEmpty() && currentMoveLabel != "開始局面" && pvText.contains(currentMoveLabel)) {
-                    var start = 0
-                    while (true) {
-                        val idx = pvText.indexOf(currentMoveLabel, start)
-                        if (idx < 0) { append(pvText.substring(start)); break }
-                        append(pvText.substring(start, idx))
-                        withStyle(SpanStyle(fontWeight = FontWeight.Bold)) { append(currentMoveLabel) }
-                        start = idx + currentMoveLabel.length
-                    }
-                } else {
-                    append(pvText)
-                }
+            // 1行目が評価値。番号はその左に置き、読み筋はカードの幅いっぱいに使う
+            val firstLine = pvText.lines().first()
+            val rest = pvText.substring(firstLine.length).trimStart()
+            Row(verticalAlignment = Alignment.CenterVertically) {
+                PvOrderBadge(order, cardColor, ringColor)
+                Spacer(modifier = Modifier.width(4.dp))
+                Text(
+                    text = boldMoveLabel(firstLine, currentMoveLabel),
+                    style = MaterialTheme.typography.bodySmall
+                )
             }
-            Text(
-                text = annotated,
-                style = MaterialTheme.typography.bodySmall,
-                modifier = Modifier.padding(top = 2.dp)
-            )
+            if (rest.isNotEmpty()) {
+                Text(
+                    text = boldMoveLabel(rest, currentMoveLabel),
+                    style = MaterialTheme.typography.bodySmall,
+                    modifier = Modifier.padding(top = 2.dp)
+                )
+            }
         }
+    }
+}
+
+// 盤上の候補番号と同じグラフィック。盤上と違い、解析が終わっても薄くしない
+@Composable
+private fun PvOrderBadge(order: Int, color: Color, ringColor: Color?) {
+    val backdropColor = MaterialTheme.colorScheme.inverseSurface
+    val measurer = rememberTextMeasurer()
+    Canvas(modifier = Modifier.size(28.dp)) {
+        drawRankBadge(center, size.width / rankBadgeDiameter, order.toString(), color, backdropColor, measurer, ringColor = ringColor)
+    }
+}
+
+private fun boldMoveLabel(text: String, moveLabel: String): AnnotatedString = buildAnnotatedString {
+    if (moveLabel.isNotEmpty() && moveLabel != "開始局面" && text.contains(moveLabel)) {
+        var start = 0
+        while (true) {
+            val idx = text.indexOf(moveLabel, start)
+            if (idx < 0) { append(text.substring(start)); break }
+            append(text.substring(start, idx))
+            withStyle(SpanStyle(fontWeight = FontWeight.Bold)) { append(moveLabel) }
+            start = idx + moveLabel.length
+        }
+    } else {
+        append(text)
     }
 }
 

@@ -23,7 +23,11 @@ import androidx.compose.foundation.selection.selectable
 import androidx.compose.foundation.verticalScroll
 import androidx.compose.foundation.gestures.draggable
 import androidx.compose.material.icons.outlined.*
+import androidx.compose.foundation.shape.CircleShape
 import androidx.compose.material.icons.Icons
+import androidx.compose.material.icons.automirrored.filled.ArrowBack
+import androidx.compose.material.icons.automirrored.filled.ArrowForward
+import androidx.compose.runtime.saveable.rememberSaveable
 import androidx.compose.material.icons.filled.ContentPaste
 import androidx.compose.material.icons.filled.Menu
 import androidx.compose.material.icons.filled.*
@@ -225,7 +229,6 @@ class MainActivity : ComponentActivity() {
                 var showMenu by remember { mutableStateOf(false) }
                 var isAnalysisMode by remember { mutableStateOf(false) }
                 var isEngineReady by remember { mutableStateOf(false) }
-                var isPvStale by remember { mutableStateOf(false) }
 
                 var analysisTimeMs by remember { mutableLongStateOf(prefs.getLong("analysis_time", 1000L)) }
                 var multiPvCount by remember { mutableIntStateOf(prefs.getInt("multi_pv", 3)) }
@@ -371,8 +374,8 @@ class MainActivity : ComponentActivity() {
                             }
                             isEngineReady = true
                         }
-                        line.startsWith("info") -> {
-                            if (isPvStale) { pvList.clear(); isPvStale = false }
+                        // 止めた後に遅れて届く info は捨てる。カードだけ更新されると、番号が盤上の矢印とずれてしまう
+                        line.startsWith("info") && (isAnalysisMode || isAutoAnalysis || humanPlayer != null) -> {
                             val rank = Regex("multipv (\\d+)").find(line)?.groupValues?.get(1)?.toInt() ?: 1
                             val infoParts = line.split(Regex("\\s+"))
                             val pvIdx = infoParts.indexOf("pv")
@@ -627,6 +630,7 @@ class MainActivity : ComponentActivity() {
                     MaterialTheme.colorScheme.tertiary, MaterialTheme.colorScheme.outline)
                 val nextMoveEdgeColor = MaterialTheme.colorScheme.onSurface
                 val moveArrows: List<MoveArrow> = if (!(isAnalysisMode || isAutoAnalysis)) emptyList() else buildList {
+                    val actualNext = actualNextNode(currentNode)
                     // カードと同じ並べ方 (sortedByDescending) で順位を決め、描画だけ逆順にする。
                     // sortedBy で昇順に並べてから順位を逆算すると、同点の候補同士で順位が入れ替わってしまう
                     val cardOrder = pvList.entries.sortedByDescending { (_, pvText) -> extractScore(this@MainActivity, pvText, currentPlayer) }
@@ -635,18 +639,13 @@ class MainActivity : ComponentActivity() {
                         val usi = pvUsiList[rank]?.firstOrNull() ?: return@forEach
                         val i = (rank - 1).coerceIn(0, 3)
                         val order = idx + 1 // カードの並び（評価値の高い順）での順位
-                        moveArrowFromUsi(usi, pvFillColors[i], pvEdgeColors[i], order.toString())?.let { add(it) }
+                        val ringColor = if (actualNext != null && isSameMove(usi, currentNode, actualNext)) actualMoveRingColor(currentPlayer) else null
+                        moveArrowFromUsi(usi, pvFillColors[i], pvEdgeColors[i], order.toString(), ringColor)?.let { add(it) }
                     }
-                    // isOnMainLine は PV 手順の表示中 (pvBranchPath != null) は常に false になり、
-                    // 分岐から樹形図・矢印ボタンで本譜へ戻っても false のままのことがあるので、木構造だけで判定する
-                    val currentOnMainLine = generateSequence(currentNode) { it.parent }
-                        .all { n -> n.parent?.let { it.children.firstOrNull { c -> !c.isPvBranch } === n } ?: true }
-                    if (currentOnMainLine) {
-                        currentNode.children.firstOrNull { !it.isPvBranch }?.let { next ->
-                            val to = next.lastTo ?: return@let
-                            val dropType = if (next.lastFrom == null) next.board[to]?.type else null
-                            add(MoveArrow(next.lastFrom, to, dropType, fillColor = null, edgeColor = nextMoveEdgeColor))
-                        }
+                    actualNext?.let { next ->
+                        val to = next.lastTo ?: return@let
+                        val dropType = if (next.lastFrom == null) next.board[to]?.type else null
+                        add(MoveArrow(next.lastFrom, to, dropType, fillColor = null, edgeColor = nextMoveEdgeColor))
                     }
                 }
 
@@ -666,12 +665,60 @@ class MainActivity : ComponentActivity() {
                 var bottomBarHeightPx by remember { mutableIntStateOf(0) }
                 val density = LocalDensity.current
 
+                // 読み筋カードが示す局面。カードをタップして読み筋を進めると手番が変わるが、
+                // カードの並びと番号は解析した局面（分岐の起点）の手番で決めたまま変えない
+                val cardNode = if (pinnedPvList.isNotEmpty()) pvBranchPath?.firstOrNull()?.parent ?: currentNode else currentNode
+                val cardUsiList: Map<Int, List<String>> = pinnedPvUsiList.ifEmpty { pvUsiList }
+                val pvCards: @Composable () -> Unit = {
+                    val actualNext = actualNextNode(cardNode)
+                    pinnedPvList.ifEmpty { pvList.toMap() }.entries
+                        .sortedByDescending { (_, pvText) -> extractScore(this@MainActivity, pvText, cardNode.currentPlayer) }
+                        .forEachIndexed { index, (rank, pvText) ->
+                            val isActual = actualNext != null &&
+                                cardUsiList[rank]?.firstOrNull()?.let { isSameMove(it, cardNode, actualNext) } == true
+                            PvInfoCard(
+                                rank, index + 1, pvText, if (rank == selectedPvRank) currentNode.moveLabel else "",
+                                ringColor = if (isActual) actualMoveRingColor(cardNode.currentPlayer) else null
+                            ) {
+                                selectedPvRank = rank
+                                playPvBranch(rank, pvList.toMap(), pvUsiList.toMap(), pinnedPvList, pinnedPvUsiList, pvBranchPath, currentNode, engine) { pinned, pinnedUsi, lastNode, branchNodes, analysisMode ->
+                                    pinnedPvList = pinned; pinnedPvUsiList = pinnedUsi
+                                    pvBranchPath = branchNodes
+                                    currentNode = lastNode; isAnalysisMode = analysisMode
+                                }
+                            }
+                        }
+                }
+
+                val topP = if (isBoardFlipped) Player.SENTE else Player.GOTE
+                val botP = if (isBoardFlipped) Player.GOTE else Player.SENTE
+                val isHumanTurn = humanPlayer == null || currentPlayer == humanPlayer
+                val playerSection: @Composable (Player, Boolean) -> Unit = { p, handOnTop ->
+                    val isSente = p == Player.SENTE
+                    PlayerStatusSection(if (isSente) senteName else goteName, if (isSente) "▲" else "△", currentPlayer == p, if (isSente) senteHand else goteHand, selectedHandPiece, currentPlayer, isBoardFlipped, handOnTop = handOnTop, gameResult = gameResult, remainingMs = if (isSente) currentNode.senteRemainingMs else currentNode.goteRemainingMs, onNameClick = { editingPlayerMark = if (isSente) "▲" else "△" }, onPiecePositioned = onHandPiecePositioned) { if (isHumanTurn) { selectedHandPiece = it; selectedSquare = null } }
+                }
+                val board: @Composable (Modifier) -> Unit = { boardModifier ->
+                    ShogiBoard(boardState, selectedSquare, { r, c ->
+                        if (isHumanTurn) handleSquareClick(r, c, boardState, currentPlayer, selectedSquare, selectedHandPiece, currentNode, saveKifu) { s, h, n, p ->
+                            selectedSquare = s; selectedHandPiece = h
+                            if (n != null) currentNode = n
+                            if (p != null) promotionPendingBy = p
+                        }
+                    }, isBoardFlipped, boardModifier, currentNode.lastFrom, currentNode.lastTo, currentNode.pvColorIndex, moveArrows, onBoardBoxPositioned)
+                }
+
+                // 横長レイアウトで盤を最大化しているか (bottomBar と読み筋カードを隠し、盤の上に1行だけ置く)
+                var maximized by rememberSaveable { mutableStateOf(false) }
+                val isWide = androidx.compose.ui.platform.LocalConfiguration.current.screenWidthDp >= 840
+                val showMaximized = maximized && isWide
+                androidx.activity.compose.BackHandler(enabled = showMaximized) { maximized = false }
+
                 Box(modifier = Modifier.fillMaxSize()) {
                 Scaffold(
                     modifier = Modifier.fillMaxSize(),
                     containerColor = MaterialTheme.colorScheme.surfaceContainerLowest,
                     bottomBar = {
-                        Surface(
+                        if (!showMaximized) Surface(
                             color = MaterialTheme.colorScheme.surfaceContainer.copy(alpha = 0.85f),
                             modifier = Modifier
                                 .fillMaxWidth()
@@ -693,166 +740,152 @@ class MainActivity : ComponentActivity() {
                                 Spacer(modifier = Modifier.height(8.dp))
                                 Row(modifier = Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.spacedBy(8.dp), verticalAlignment = Alignment.CenterVertically) {
                                     val clipboard = LocalClipboardManager.current
-                                    OutlinedButton(onClick = {
-                                        clipboard.getText()?.text?.let(loadKifuText)
-                                    }, modifier = Modifier.weight(0.3f).height(72.dp),
-                                        shape = MaterialTheme.shapes.extraLarge) {
-                                        Column(horizontalAlignment = Alignment.CenterHorizontally) { Icon(Icons.Default.ContentPaste, stringResource(R.string.action_load_from_clipboard_desc));
-                                            Text(stringResource(R.string.action_load_from_clipboard_label),
-                                                style = MaterialTheme.typography.labelSmall,
-                                                modifier = Modifier.basicMarquee()) }
-                                    }
+                                    BarButton(
+                                        icon = { Icon(Icons.Default.ContentPaste, stringResource(R.string.action_load_from_clipboard_desc)) },
+                                        label = stringResource(R.string.action_load_from_clipboard_label),
+                                        onClick = { clipboard.getText()?.text?.let(loadKifuText) }
+                                    )
 
-                                    OutlinedButton(onClick = {
-                                        if (humanPlayer != null) {
-                                            humanPlayer = null; engine.sendCommand("stop")
-                                        } else if (isAnalysisMode || isAutoAnalysis) {
-                                            isAnalysisMode = false; isAutoAnalysis = false; engine.sendCommand("stop")
-                                        } else {
-                                            pinnedPvList = emptyMap(); pinnedPvUsiList = emptyMap(); isAnalysisMode = true
-                                        }
-                                    }, modifier = Modifier.weight(0.3f).height(72.dp),
+                                    val inGame = humanPlayer != null
+                                    val analyzeActive = inGame || (isAnalysisMode && !isAutoAnalysis)
+                                    BarButton(
+                                        icon = { Icon(painterResource(if (analyzeActive) R.drawable.stop_circle_24px else R.drawable.network_intelligence_24px), stringResource(R.string.action_analyze)) },
+                                        label = when {
+                                            inGame -> stringResource(R.string.action_stop_game)
+                                            isAnalysisMode || isAutoAnalysis -> stringResource(R.string.action_stop)
+                                            !isEngineReady -> stringResource(R.string.action_preparing)
+                                            else -> stringResource(R.string.action_analyze)
+                                        },
                                         // 停止はエンジンの準備中でもできるようにする（対局中にエンジンを切り替えた場合など）
-                                        enabled = isEngineReady || humanPlayer != null || isAnalysisMode || isAutoAnalysis,
-                                        shape = MaterialTheme.shapes.extraLarge,
-                                        colors = ButtonDefaults.outlinedButtonColors(containerColor = if (humanPlayer != null || isAnalysisMode || isAutoAnalysis) MaterialTheme.colorScheme.tertiaryContainer else Color.Transparent)) {
-                                        Column(horizontalAlignment = Alignment.CenterHorizontally) {
-                                            Icon(painterResource(if (humanPlayer != null || isAnalysisMode || isAutoAnalysis) R.drawable.stop_circle_24px else R.drawable.network_intelligence_24px), stringResource(R.string.action_analyze))
-                                            Text(
-                                                when {
-                                                    humanPlayer != null -> stringResource(R.string.action_stop_game)
-                                                    isAnalysisMode || isAutoAnalysis -> stringResource(R.string.action_stop)
-                                                    !isEngineReady -> stringResource(R.string.action_preparing)
-                                                    else -> stringResource(R.string.action_analyze)
-                                                },
-                                                style = MaterialTheme.typography.labelSmall,
-                                                maxLines = 1,
-                                                modifier = Modifier.basicMarquee()
-                                            )
+                                        enabled = isEngineReady || inGame || isAnalysisMode || isAutoAnalysis,
+                                        highlighted = analyzeActive,
+                                        onClick = {
+                                            if (inGame) {
+                                                humanPlayer = null; engine.sendCommand("stop")
+                                            } else if (isAnalysisMode || isAutoAnalysis) {
+                                                isAnalysisMode = false; isAutoAnalysis = false; engine.sendCommand("stop")
+                                            } else {
+                                                pinnedPvList = emptyMap(); pinnedPvUsiList = emptyMap(); isAnalysisMode = true
+                                            }
                                         }
+                                    )
+
+                                    // 対局中は解析・本譜を使わないので、対局の中止だけを置く
+                                    if (!inGame) {
+                                        BarButton(
+                                            icon = {
+                                                if (isAutoAnalysis) Icon(painterResource(R.drawable.stop_circle_24px), stringResource(R.string.action_stop))
+                                                else Icon(Icons.Outlined.FastForward, stringResource(R.string.action_analyze_all))
+                                            },
+                                            label = stringResource(if (isAutoAnalysis) R.string.action_stop else R.string.action_analyze_all),
+                                            enabled = isAutoAnalysis || isEngineReady,
+                                            highlighted = isAutoAnalysis,
+                                            onClick = {
+                                                if (isAutoAnalysis) {
+                                                    isAnalysisMode = false; isAutoAnalysis = false; engine.sendCommand("stop")
+                                                } else {
+                                                    pinnedPvList = emptyMap(); pinnedPvUsiList = emptyMap(); isAutoAnalysis = true
+                                                }
+                                            }
+                                        )
+
+                                        BarButton(
+                                            icon = { Icon(painterResource(R.drawable.undo_24px), stringResource(R.string.action_main_line)) },
+                                            label = stringResource(R.string.action_main_line),
+                                            enabled = !isOnMainLine,
+                                            onClick = {
+                                                // 枝分かれの元を辿って本譜（最初の非PV子の列）上の分岐点へ戻る。
+                                                // 枝分かれの手順や形勢は削除せず残す
+                                                val ancestors = mutableListOf<KifuNode>()
+                                                var p: KifuNode? = currentNode
+                                                while (p != null) { ancestors.add(0, p); p = p.parent }
+                                                var mainNode = ancestors[0]
+                                                for (next in ancestors.drop(1)) {
+                                                    if (mainNode.children.firstOrNull { !it.isPvBranch } !== next) break
+                                                    mainNode = next
+                                                }
+                                                currentNode = mainNode
+                                                pinnedPvList = emptyMap(); pinnedPvUsiList = emptyMap(); pvBranchPath = null
+                                            }
+                                        )
                                     }
-
-                                    OutlinedButton(onClick = { isBoardFlipped = !isBoardFlipped },
-                                        modifier = Modifier.weight(0.3f).height(72.dp),
-                                        shape = MaterialTheme.shapes.extraLarge
-                                    ) {
-                                        Column(horizontalAlignment = Alignment.CenterHorizontally) { Icon(painterResource(R.drawable.rotate_right_24px), stringResource(R.string.action_flip)); Text(stringResource(R.string.action_flip), style = MaterialTheme.typography.labelSmall) }
-                                    }
-
-                                    OutlinedButton(onClick = {
-                                        // 枝分かれの元を辿って本譜（最初の非PV子の列）上の分岐点へ戻る。
-                                        // 枝分かれの手順や形勢は削除せず残す
-                                        val ancestors = mutableListOf<KifuNode>()
-                                        var p: KifuNode? = currentNode
-                                        while (p != null) { ancestors.add(0, p); p = p.parent }
-                                        var mainNode = ancestors[0]
-                                        for (next in ancestors.drop(1)) {
-                                            if (mainNode.children.firstOrNull { !it.isPvBranch } !== next) break
-                                            mainNode = next
-                                        }
-                                        currentNode = mainNode
-                                        pinnedPvList = emptyMap(); pinnedPvUsiList = emptyMap(); pvBranchPath = null
-                                    },
-                                        enabled = !isOnMainLine,
-                                        modifier = Modifier.weight(0.3f).height(72.dp),
-                                        shape = MaterialTheme.shapes.extraLarge
-                                    ) {
-                                        Column(horizontalAlignment = Alignment.CenterHorizontally) { Icon(painterResource(R.drawable.undo_24px), stringResource(R.string.action_main_line)); Text(stringResource(R.string.action_main_line), style = MaterialTheme.typography.labelSmall) }
-                                    }
-
-
                                 }
                             }
                         }
                     }
                 ) { innerPadding ->
-                    val isWide = androidx.compose.ui.platform.LocalConfiguration.current.screenWidthDp >= 840
-                    if (isWide) {
-                        Row(modifier = Modifier.fillMaxSize().padding(top = innerPadding.calculateTopPadding() + 16.dp, start = 16.dp, end = 16.dp), horizontalArrangement = Arrangement.spacedBy(24.dp)) {
-                            val topP = if (isBoardFlipped) Player.SENTE else Player.GOTE; val botP = if (isBoardFlipped) Player.GOTE else Player.SENTE
-
-                            Column(modifier = Modifier.weight(0.5f).verticalScroll(boardAreaScrollState), horizontalAlignment = Alignment.CenterHorizontally, verticalArrangement = Arrangement.spacedBy(8.dp)) {
-                                val isHumanTurn = humanPlayer == null || currentPlayer == humanPlayer
-                                Box(modifier = Modifier.fillMaxWidth()) {
-                                    PlayerStatusSection(if(topP==Player.SENTE) senteName else goteName, if(topP==Player.SENTE) "▲" else "△", currentPlayer==topP, if(topP==Player.SENTE) senteHand else goteHand, selectedHandPiece, currentPlayer, isBoardFlipped, handOnTop = false, gameResult = gameResult, remainingMs = if(topP==Player.SENTE) currentNode.senteRemainingMs else currentNode.goteRemainingMs, onNameClick = { editingPlayerMark = if(topP==Player.SENTE) "▲" else "△" }, onPiecePositioned = onHandPiecePositioned) { if (isHumanTurn) { selectedHandPiece = it; selectedSquare = null } }
-                                    MenuButton(Modifier.align(Alignment.TopStart).padding(start = 8.dp, top = 4.dp)) { showMenu = true }
-                                }
-                                ShogiBoard(boardState, selectedSquare, { r, c ->
-                                    if (isHumanTurn) handleSquareClick(r, c, boardState, currentPlayer, selectedSquare, selectedHandPiece, currentNode, saveKifu) { s, h, n, p ->
-                                        selectedSquare = s; selectedHandPiece = h
-                                        if(n != null) currentNode = n
-                                        if(p != null) promotionPendingBy = p
-                                    }
-                                }, isBoardFlipped, Modifier.sizeIn(maxWidth = 500.dp, maxHeight = 500.dp), currentNode.lastFrom, currentNode.lastTo, currentNode.pvColorIndex, moveArrows, onBoardBoxPositioned)
-                                PlayerStatusSection(if(botP==Player.SENTE) senteName else goteName, if(botP==Player.SENTE) "▲" else "△", currentPlayer==botP, if(botP==Player.SENTE) senteHand else goteHand, selectedHandPiece, currentPlayer, isBoardFlipped, handOnTop = true, gameResult = gameResult, remainingMs = if(botP==Player.SENTE) currentNode.senteRemainingMs else currentNode.goteRemainingMs, onNameClick = { editingPlayerMark = if(botP==Player.SENTE) "▲" else "△" }, onPiecePositioned = onHandPiecePositioned) { if (isHumanTurn) { selectedHandPiece = it; selectedSquare = null } }
-                                // bottomBar に隠れる分をスクロールで見られるようにする
-                                Spacer(modifier = Modifier.height(innerPadding.calculateBottomPadding()))
-                            }
+                    if (showMaximized) {
+                        // 最大化: 1行目にメニュー・両対局者 (名前と持ち駒)・元に戻すボタン、その下に盤を残りの高さいっぱいに置く
+                        BoxWithConstraints(modifier = Modifier.fillMaxSize().padding(innerPadding).padding(8.dp)) {
+                            val headerHeight = 120.dp
+                            val gap = 8.dp
+                            val boardWidth = minOf(maxWidth, maxHeight - headerHeight - gap).coerceAtLeast(0.dp)
                             Column(
-                                modifier = Modifier
-                                    .weight(0.5f).fillMaxHeight()
-                                    .verticalScroll(rememberScrollState())
+                                modifier = Modifier.fillMaxSize(),
+                                horizontalAlignment = Alignment.CenterHorizontally,
+                                verticalArrangement = Arrangement.spacedBy(gap)
                             ) {
-                                (pinnedPvList
-                                    .ifEmpty {
-                                        pvList.toMap()
-                                    })
-                                    .entries
-                                    .sortedByDescending { (_, pvText) -> extractScore(this@MainActivity, pvText, currentPlayer) }
-                                    .forEach { (rank, pvText) ->
-                                        val alpha = if (isPvStale && pinnedPvList.isEmpty()) 0.5f else 1f
-                                        Box(modifier = Modifier.graphicsLayer { this.alpha = alpha }) {
-                                            PvInfoCard(rank, pvText, if (rank == selectedPvRank) currentNode.moveLabel else "") {
-                                                selectedPvRank = rank
-                                                playPvBranch(
-                                                    rank, pvList.toMap(), pvUsiList.toMap(), pinnedPvList,
-                                                    pinnedPvUsiList, pvBranchPath, currentNode, engine) {
-                                                        pinned, pinnedUsi, lastNode, branchNodes, analysisMode ->
-                                                    pinnedPvList = pinned; pinnedPvUsiList = pinnedUsi
-                                                    pvBranchPath = branchNodes
-                                                    currentNode = lastNode; isAnalysisMode = analysisMode
-                                                }
-                                            }
+                                Row(
+                                    modifier = Modifier.fillMaxWidth().height(headerHeight),
+                                    verticalAlignment = Alignment.CenterVertically,
+                                    horizontalArrangement = Arrangement.spacedBy(16.dp)
+                                ) {
+                                    MenuButton { showMenu = true }
+                                    Box(modifier = Modifier.weight(1f)) { playerSection(topP, false) }
+                                    Box(modifier = Modifier.weight(1f)) { playerSection(botP, true) }
+                                    // bottomBar の形勢グラフの左右にある矢印と同じ、前の手・次の手 (長押しで連続)
+                                    val index = currentPath.indexOf(currentNode).coerceAtLeast(0)
+                                    NavButton(Icons.AutoMirrored.Filled.ArrowBack, stringResource(R.string.nav_previous), enabled = index > 0) {
+                                        currentPath.indexOf(currentNode).takeIf { it > 0 }?.let { currentNode = currentPath[it - 1] }
+                                    }
+                                    NavButton(Icons.AutoMirrored.Filled.ArrowForward, stringResource(R.string.nav_next), enabled = index < currentPath.size - 1) {
+                                        currentPath.indexOf(currentNode).takeIf { it in 0 until currentPath.size - 1 }?.let { currentNode = currentPath[it + 1] }
+                                    }
+                                    IconButton(onClick = { maximized = false }) {
+                                        Icon(Icons.Filled.FullscreenExit, stringResource(R.string.restore_board))
+                                    }
+                                }
+                                board(Modifier.width(boardWidth))
+                            }
+                        }
+                    } else if (isWide) {
+                        // 盤をなるべく大きくするため、左からメニューボタン・盤・(対局者・読み筋カード・対局者) の3列にする
+                        BoxWithConstraints(modifier = Modifier.fillMaxSize().padding(innerPadding).padding(8.dp)) {
+                            val gap = 8.dp
+                            val menuWidth = 48.dp
+                            // 右の列の幅は持ち駒が全種類並ぶだけ取り、残りを盤にする
+                            val minSideWidth = 260.dp
+                            val boardWidth = minOf(maxWidth - menuWidth - minSideWidth - gap * 2, maxHeight).coerceAtLeast(0.dp)
+                            Row(horizontalArrangement = Arrangement.spacedBy(gap)) {
+                                MenuButton(Modifier.padding(top = 4.dp)) { showMenu = true }
+                                board(Modifier.width(boardWidth))
+                                Column(modifier = Modifier.weight(1f).fillMaxHeight()) {
+                                    Row(verticalAlignment = Alignment.Top) {
+                                        Box(modifier = Modifier.weight(1f)) { playerSection(topP, false) }
+                                        // 右上の最大化ボタン
+                                        IconButton(onClick = { maximized = true }) {
+                                            Icon(Icons.Filled.Fullscreen, stringResource(R.string.maximize_board))
                                         }
                                     }
-                                Spacer(modifier = Modifier.height(innerPadding.calculateBottomPadding()))
+                                    Column(modifier = Modifier.weight(1f).fillMaxWidth().verticalScroll(rememberScrollState())) {
+                                        pvCards()
+                                    }
+                                    playerSection(botP, true)
+                                }
                             }
                         }
                     }
                     else {
                         Column(modifier = Modifier.fillMaxSize().padding(top = innerPadding.calculateTopPadding()).verticalScroll(boardAreaScrollState), horizontalAlignment = Alignment.CenterHorizontally) {
-
-                            val topP = if (isBoardFlipped) Player.SENTE else Player.GOTE; val botP = if (isBoardFlipped) Player.GOTE else Player.SENTE
-                            val isHumanTurn = humanPlayer == null || currentPlayer == humanPlayer
                             Box(modifier = Modifier.fillMaxWidth()) {
-                                PlayerStatusSection(if(topP==Player.SENTE) senteName else goteName, if(topP==Player.SENTE) "▲" else "△", currentPlayer==topP, if(topP==Player.SENTE) senteHand else goteHand, selectedHandPiece, currentPlayer, isBoardFlipped, handOnTop = false, gameResult = gameResult, remainingMs = if(topP==Player.SENTE) currentNode.senteRemainingMs else currentNode.goteRemainingMs, onNameClick = { editingPlayerMark = if(topP==Player.SENTE) "▲" else "△" }, onPiecePositioned = onHandPiecePositioned) { if (isHumanTurn) { selectedHandPiece = it; selectedSquare = null } }
+                                playerSection(topP, false)
                                 MenuButton(Modifier.align(Alignment.TopStart).padding(start = 8.dp, top = 4.dp)) { showMenu = true }
                             }
-                            ShogiBoard(boardState, selectedSquare, { r, c ->
-                                if (isHumanTurn) handleSquareClick(r, c, boardState, currentPlayer, selectedSquare, selectedHandPiece, currentNode, saveKifu) { s, h, n, p ->
-                                    selectedSquare = s; selectedHandPiece = h
-                                    if(n != null) currentNode = n
-                                    if(p != null) promotionPendingBy = p
-                                }
-                            }, isBoardFlipped, Modifier.padding(16.dp), currentNode.lastFrom, currentNode.lastTo, currentNode.pvColorIndex, moveArrows, onBoardBoxPositioned)
-                            PlayerStatusSection(if(botP==Player.SENTE) senteName else goteName, if(botP==Player.SENTE) "▲" else "△", currentPlayer==botP, if(botP==Player.SENTE) senteHand else goteHand, selectedHandPiece, currentPlayer, isBoardFlipped, handOnTop = true, gameResult = gameResult, remainingMs = if(botP==Player.SENTE) currentNode.senteRemainingMs else currentNode.goteRemainingMs, onNameClick = { editingPlayerMark = if(botP==Player.SENTE) "▲" else "△" }, onPiecePositioned = onHandPiecePositioned) { if (isHumanTurn) { selectedHandPiece = it; selectedSquare = null } }
-                            Column(modifier = Modifier.padding(8.dp)) {
-                                (if (pinnedPvList.isNotEmpty()) pinnedPvList else pvList.toMap()).entries
-                                    .sortedByDescending { (_, pvText) -> extractScore(this@MainActivity, pvText, currentPlayer) }
-                                    .forEach { (rank, pvText) ->
-                                        val alpha = if (isPvStale && pinnedPvList.isEmpty()) 0.5f else 1f
-                                        Box(modifier = Modifier.graphicsLayer { this.alpha = alpha }) {
-                                            PvInfoCard(rank, pvText, if (rank == selectedPvRank) currentNode.moveLabel else "") {
-                                                selectedPvRank = rank
-                                                playPvBranch(rank, pvList.toMap(), pvUsiList.toMap(), pinnedPvList, pinnedPvUsiList, pvBranchPath, currentNode, engine) { pinned, pinnedUsi, lastNode, branchNodes, analysisMode ->
-                                                    pinnedPvList = pinned; pinnedPvUsiList = pinnedUsi
-                                                    pvBranchPath = branchNodes
-                                                    currentNode = lastNode; isAnalysisMode = analysisMode
-                                                }
-                                            }
-                                        }
-                                    }
-                            }
+                            // 盤を少しでも大きくするため、画面の端との余白は狭くする
+                            board(Modifier.padding(horizontal = 6.dp, vertical = 8.dp))
+                            playerSection(botP, true)
+                            Column(modifier = Modifier.padding(8.dp)) { pvCards() }
+                            // bottomBar に隠れる分をスクロールで見られるようにする
                             Spacer(modifier = Modifier.height(innerPadding.calculateBottomPadding()))
                         }
                     }
@@ -960,6 +993,9 @@ class MainActivity : ComponentActivity() {
                             MenuItem(Icons.Outlined.FastForward,
                                 text = { Text(stringResource(R.string.menu_analyze_to_end)) },
                                 onClick = { isAutoAnalysis = true; pinnedPvList = emptyMap(); pinnedPvUsiList = emptyMap(); showMenu = false })
+                            MenuItem({ Icon(painterResource(R.drawable.rotate_right_24px), contentDescription = null) },
+                                text = { Text(stringResource(R.string.action_flip)) },
+                                onClick = { isBoardFlipped = !isBoardFlipped; showMenu = false })
                             MenuItem(Icons.Outlined.ContentCopy,
                                 text = { Text(stringResource(R.string.menu_export_main_line_csa)) },
                                 onClick = {
@@ -1622,8 +1658,8 @@ fun MainScreenPreview() {
                 ShogiBoard(board, Pair(6, 4), { _, _ -> }, modifier = Modifier.padding(16.dp), lastFrom = Pair(6, 4), lastTo = Pair(4, 4))
                 PlayerStatusSection("先手花子", "▲", true, senteHand, null, Player.SENTE, false, handOnTop = true, gameResult = "") {}
                 Column(modifier = Modifier.padding(8.dp)) {
-                    PvInfoCard(1, pvText, "") {}
-                    PvInfoCard(2, "評価: +80 (互角)\n読み筋: ▲7八金 △8四歩", "") {}
+                    PvInfoCard(1, 1, pvText, "", ringColor = actualMoveRingColor(Player.SENTE)) {}
+                    PvInfoCard(2, 2, "評価: +80 (互角)\n読み筋: ▲7八金 △8四歩", "") {}
                 }
             }
             Box(
@@ -1664,6 +1700,46 @@ private val TwoLineMenuIcon: androidx.compose.ui.graphics.vector.ImageVector by 
 }
 
 // 左上のハンバーガーメニューボタン (Gemini アプリ風: 白い丸に細い縁取りと淡い影)
+// 画面下の大きなボタン（アイコンと短い名前）
+@Composable
+private fun RowScope.BarButton(
+    icon: @Composable () -> Unit,
+    label: String,
+    enabled: Boolean = true,
+    highlighted: Boolean = false,
+    onClick: () -> Unit
+) {
+    OutlinedButton(
+        onClick = onClick,
+        modifier = Modifier.weight(0.3f).height(72.dp),
+        enabled = enabled,
+        shape = MaterialTheme.shapes.extraLarge,
+        colors = ButtonDefaults.outlinedButtonColors(
+            containerColor = if (highlighted) MaterialTheme.colorScheme.tertiaryContainer else Color.Transparent
+        )
+    ) {
+        Column(horizontalAlignment = Alignment.CenterHorizontally) {
+            icon()
+            Text(label, style = MaterialTheme.typography.labelSmall, maxLines = 1, modifier = Modifier.basicMarquee())
+        }
+    }
+}
+
+// 最大化したときの前の手・次の手のボタン（長押しで連続）
+@Composable
+private fun NavButton(icon: androidx.compose.ui.graphics.vector.ImageVector, description: String, enabled: Boolean, onClick: () -> Unit) {
+    Box(
+        modifier = Modifier
+            .size(40.dp)
+            .clip(CircleShape)
+            .background(MaterialTheme.colorScheme.secondaryContainer)
+            .repeatingClickable(enabled = enabled, onClick = onClick),
+        contentAlignment = Alignment.Center
+    ) {
+        Icon(icon, contentDescription = description, tint = MaterialTheme.colorScheme.onSecondaryContainer, modifier = Modifier.size(20.dp))
+    }
+}
+
 @Composable
 private fun MenuButton(modifier: Modifier = Modifier, onClick: () -> Unit) {
     Surface(

@@ -209,13 +209,18 @@ data class MoveArrow(
     val dropPieceType: PieceType?,
     val fillColor: Color?,
     val edgeColor: Color,
-    val rankLabel: String? = null
+    val rankLabel: String? = null,
+    // 候補手が実際の手と一致するとき、順位の数字を囲う色
+    val rankRingColor: Color? = null
 )
 
-fun moveArrowFromUsi(usiMove: String, fillColor: Color?, edgeColor: Color, rankLabel: String? = null): MoveArrow? {
+fun moveArrowFromUsi(usiMove: String, fillColor: Color?, edgeColor: Color, rankLabel: String? = null, rankRingColor: Color? = null): MoveArrow? {
     val (from, to) = usiMoveSquares(usiMove) ?: return null
-    return MoveArrow(from, to, usiDropPieceType(usiMove), fillColor, edgeColor, rankLabel)
+    return MoveArrow(from, to, usiDropPieceType(usiMove), fillColor, edgeColor, rankLabel, rankRingColor)
 }
+
+// 実際の手と一致した候補手の番号を囲う色。先手は黒、後手は白
+fun actualMoveRingColor(mover: Player): Color = if (mover == Player.SENTE) Color.Black else Color.White
 
 // 候補手の順位の数字を移動先のマスの中央に描く。駒の上でも読めるよう、数字の背後に
 // 半透明でふちをぼかした円（放射グラデーション）を敷く。同じマスへの候補が複数あれば
@@ -248,28 +253,40 @@ private fun DrawScope.drawRankLabels(
                 // 回転表示時は並び順も左右反転して、画面上で左から順に並ぶようにする
                 val shift = (label.slot - (label.total - 1) / 2f) * step * (if (upsideDown) -1 else 1)
                 val c = Offset(center.x + shift, center.y)
-                val r = cell * 0.36f
-                drawCircle(
-                    Brush.radialGradient(
-                        0f to backdropColor.copy(alpha = 0.7f * alpha),
-                        0.5f to backdropColor.copy(alpha = 0.5f * alpha),
-                        1f to Color.Transparent,
-                        center = c, radius = r
-                    ),
-                    radius = r, center = c
-                )
-                val layout = measurer.measure(
-                    arrow.rankLabel!!,
-                    TextStyle(
-                        color = arrow.fillColor!!, fontSize = (cell * 0.42f).toSp(), fontWeight = FontWeight.Bold
-                    )
-                )
-                val topLeft = Offset(c.x - layout.size.width / 2f, c.y - layout.size.height / 2f)
-                rotate(if (upsideDown) 180f else 0f, pivot = c) {
-                    drawText(layout, topLeft = topLeft, alpha = alpha)
-                }
+                drawRankBadge(c, cell, arrow.rankLabel!!, arrow.fillColor!!, backdropColor, measurer, alpha, upsideDown, arrow.rankRingColor)
             }
         }
+}
+
+// 順位の数字1つ分のグラフィック（ぼかした円＋数字）。候補手カードの番号も同じものを使う。
+// cell は1マスの大きさで、円の直径は cell * rankBadgeDiameter になる
+internal const val rankBadgeDiameter = 0.72f
+
+internal fun DrawScope.drawRankBadge(
+    c: Offset, cell: Float, label: String, color: Color, backdropColor: Color,
+    measurer: TextMeasurer, alpha: Float = 1f, upsideDown: Boolean = false, ringColor: Color? = null
+) {
+    val r = cell * rankBadgeDiameter / 2f
+    drawCircle(
+        Brush.radialGradient(
+            0f to backdropColor.copy(alpha = 0.7f * alpha),
+            0.5f to backdropColor.copy(alpha = 0.5f * alpha),
+            1f to Color.Transparent,
+            center = c, radius = r
+        ),
+        radius = r, center = c
+    )
+    if (ringColor != null) {
+        drawCircle(ringColor.copy(alpha = alpha), radius = r * 0.8f, center = c, style = Stroke(width = cell * 0.06f))
+    }
+    val layout = measurer.measure(
+        label,
+        TextStyle(color = color, fontSize = (cell * 0.42f).toSp(), fontWeight = FontWeight.Bold)
+    )
+    val topLeft = Offset(c.x - layout.size.width / 2f, c.y - layout.size.height / 2f)
+    rotate(if (upsideDown) 180f else 0f, pivot = c) {
+        drawText(layout, topLeft = topLeft, alpha = alpha)
+    }
 }
 
 // 矢印を1つの多角形（軸＋矢じり）として描く。塗りと輪郭が重なって濃くならないので、

@@ -22,6 +22,9 @@
     <string name="action_preparing">Preparing</string>
     <string name="action_stop">Stop</string>
     <string name="action_flip">Flip</string>
+    <string name="action_analyze_all">Analyze all from here</string>
+    <string name="maximize_board">Maximize the board</string>
+    <string name="restore_board">Restore the layout</string>
     <string name="action_main_line">Main line</string>
 
     <!-- Settings dialog -->

@@ -127,6 +127,25 @@ fun extractScore(context: Context, pvText: String, turn: Player): Int {
     return if (turn == Player.SENTE) v else -v
 }
 
+// 本譜上の局面なら、実際に指された次の手の局面を返す。分岐の上や最終手なら null。
+// isOnMainLine は PV 手順の表示中 (pvBranchPath != null) は常に false になり、
+// 分岐から樹形図・矢印ボタンで本譜へ戻っても false のままのことがあるので、木構造だけで判定する
+fun actualNextNode(node: KifuNode): KifuNode? {
+    val onMainLine = generateSequence(node) { it.parent }
+        .all { n -> n.parent?.let { it.children.firstOrNull { c -> !c.isPvBranch } === n } ?: true }
+    return if (onMainLine) node.children.firstOrNull { !it.isPvBranch } else null
+}
+
+// usiMove が node の局面から next の局面へ進む手と同じか。成・不成も区別する
+fun isSameMove(usiMove: String, node: KifuNode, next: KifuNode): Boolean {
+    val (from, to) = usiMoveSquares(usiMove) ?: return false
+    if (from != next.lastFrom || to != next.lastTo) return false
+    val moved = next.board[to] ?: return false
+    if (from == null) return usiDropPieceType(usiMove) == moved.type
+    val promoted = moved.isPromoted && node.board[from]?.isPromoted != true
+    return usiMove.endsWith("+") == promoted
+}
+
 fun formatUsiMove(usiMove: String, board: Map<Pair<Int, Int>, Piece>? = null, lastTo: Pair<Int, Int>? = null): String {
     if (usiMove.length < 4) return usiMove
     fun colToNum(c: Char) = c.toString()
