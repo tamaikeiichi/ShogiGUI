@@ -225,8 +225,8 @@ fun moveArrowFromUsi(usiMove: String, fillColor: Color?, edgeColor: Color, rankL
     return MoveArrow(from, to, usiDropPieceType(usiMove), fillColor, edgeColor, rankLabel, rankRingColor)
 }
 
-// 実際の手と一致した候補手の番号を囲う色。先手は黒、後手は白
-fun actualMoveRingColor(mover: Player): Color = if (mover == Player.SENTE) Color.Black else Color.White
+// 実際の手と一致した候補手の番号を囲う色。対局者名の色に合わせ、先手は赤、後手は青
+fun actualMoveRingColor(mover: Player): Color = if (mover == Player.SENTE) senteNameColor else goteNameColor
 
 // 候補手の順位の数字を移動先のマスの中央に描く。駒の上でも読めるよう、数字の背後に
 // 半透明でふちをぼかした円（放射グラデーション）を敷く。同じマスへの候補が複数あれば
