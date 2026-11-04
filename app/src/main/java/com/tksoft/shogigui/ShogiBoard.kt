@@ -40,6 +40,8 @@ import androidx.compose.ui.text.font.Font
 import androidx.compose.ui.text.font.FontFamily
 import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.tooling.preview.Preview
+import androidx.compose.ui.platform.LocalDensity
+import androidx.compose.ui.unit.TextUnit
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
 import com.tksoft.shogigui.ui.theme.ShogiGUITheme
@@ -117,12 +119,15 @@ fun ShogiBoard(
                 .height(IntrinsicSize.Min)
         ) {
             // 盤面本体
-            Box(
+            BoxWithConstraints(
                 modifier = Modifier
                     .weight(1f)
-                    .aspectRatio(1.0f)
+                    // 実物の将棋盤と同じく1マスを縦長にする（横:縦 = 11:12）
+                    .aspectRatio(boardCellAspect)
                     .onGloballyPositioned { onBoardBoxPositioned(it) }
             ) {
+            // 駒の字はマスの幅に比例させ、盤の大きさが変わってもマスと字の比率を保つ
+            val pieceFontSize = with(LocalDensity.current) { (maxWidth / 9 * pieceFontToCellRatio).toSp() }
             Column(
                 modifier = Modifier
                     .fillMaxSize()
@@ -164,7 +169,8 @@ fun ShogiBoard(
                                         indication = null
                                     ) { onSquareClick(actualRow, actualCol) },
                                 piece = piece,
-                                isFlipped = isFlipped
+                                isFlipped = isFlipped,
+                                fontSize = pieceFontSize
                             )
                         }
                     }
@@ -381,6 +387,16 @@ fun BoardMoveArrows(
         animationSpec = tween(durationMillis = 300),
         label = "moveArrowAlpha"
     )
+    // 順位の数字は解析停止時にゆっくり（restingLabelFadeMillis かけて）薄くする
+    val labelAlpha by animateFloatAsState(
+        targetValue = when {
+            arrows.isNotEmpty() -> 1f
+            hasArrow -> restingArrowAlpha
+            else -> 0f
+        },
+        animationSpec = tween(durationMillis = if (arrows.isEmpty() && hasArrow) restingLabelFadeMillis else 300),
+        label = "moveArrowLabelAlpha"
+    )
 
     val shown = lastArrows
     if (shown.isEmpty() || growProgress <= 0f) return
@@ -390,13 +406,14 @@ fun BoardMoveArrows(
 
     Canvas(modifier = modifier) {
         val cell = size.width / 9f
+        val cellH = size.height / 9f
         val totals = totalLabelCounts(shown)
         val nextSlot = HashMap<Pair<Int, Int>, Int>()
         val labels = ArrayList<RankLabel>()
         for (arrow in shown) {
             val from = arrow.from ?: continue
-            val fromCenter = Offset((from.second + 0.5f) * cell, (from.first + 0.5f) * cell)
-            val toCenter = Offset((arrow.to.second + 0.5f) * cell, (arrow.to.first + 0.5f) * cell)
+            val fromCenter = Offset((from.second + 0.5f) * cell, (from.first + 0.5f) * cellH)
+            val toCenter = Offset((arrow.to.second + 0.5f) * cell, (arrow.to.first + 0.5f) * cellH)
             // 移動元マスを起点にバネで伸びるアニメーション
             scale(growProgress.coerceIn(0f, 1f), pivot = fromCenter) {
                 drawMoveArrow(fromCenter, toCenter, cell, cell * 0.10f, arrow.fillColor, arrow.edgeColor, haloColor, alpha, fadeTip = arrow.to in totals)
@@ -409,7 +426,7 @@ fun BoardMoveArrows(
             }
         }
         // 順位の数字は全ての矢印より上に描く
-        drawRankLabels(labels, cell, measurer, labelBackdropColor, alpha * growProgress.coerceIn(0f, 1f), isFlipped)
+        drawRankLabels(labels, cell, measurer, labelBackdropColor, labelAlpha * growProgress.coerceIn(0f, 1f), isFlipped)
     }
 }
 
@@ -423,6 +440,10 @@ private const val arrowStartAlpha = 0.25f
 private const val arrowTipAlpha = 0.05f
 // 解析停止後（局面は同じ）に矢印を消さず残しておくときの薄さ
 private const val restingArrowAlpha = 0.35f
+// 解析停止後に順位の数字を薄くするのにかける時間
+private const val restingLabelFadeMillis = 2000
+// 盤の1マスの縦横比（横 / 縦）。実物の将棋盤は縦が少し長い
+internal const val boardCellAspect = 11f / 12f
 
 // 駒打ちの矢印: 持ち駒 (別コンポーネント) から盤面のマスへ引く。ShogiBoard の外側、画面全体を覆う
 // オーバーレイとして使い、LayoutCoordinates.localPositionOf で座標系をまたいで位置を合わせる
@@ -476,6 +497,11 @@ fun DropMoveArrowOverlay(
         animationSpec = tween(durationMillis = 300),
         label = "dropArrowAlpha"
     )
+    val restLabelAlpha by animateFloatAsState(
+        targetValue = if (resting) restingArrowAlpha else 1f,
+        animationSpec = tween(durationMillis = if (resting) restingLabelFadeMillis else 300),
+        label = "dropArrowLabelAlpha"
+    )
 
     val progress by animateFloatAsState(
         targetValue = if (targets.isNotEmpty()) 1f else 0f,
@@ -500,7 +526,8 @@ fun DropMoveArrowOverlay(
             if (!hand.isAttached || !board.isAttached) return@mapNotNull null
             try {
                 val cell = board.size.width / 9f
-                val toLocalInBoard = Offset((arrow.to.second + 0.5f) * cell, (arrow.to.first + 0.5f) * cell)
+                val cellH = board.size.height / 9f
+                val toLocalInBoard = Offset((arrow.to.second + 0.5f) * cell, (arrow.to.first + 0.5f) * cellH)
                 val handLocalCenter = Offset(hand.size.width / 2f, hand.size.height / 2f)
                 DropArrowPoints(ownNow.localPositionOf(hand, handLocalCenter), ownNow.localPositionOf(board, toLocalInBoard), cell, arrow)
             } catch (e: Exception) { null }
@@ -529,7 +556,7 @@ fun DropMoveArrowOverlay(
                 nextSlot[sq] = slot + 1
                 RankLabel(p.to, p.arrow, slot, maxOf(totals[sq] ?: 1, slot + 1))
             }
-        drawRankLabels(labels, cell, measurer, labelBackdropColor, alpha, upsideDown = false)
+        drawRankLabels(labels, cell, measurer, labelBackdropColor, grow * restLabelAlpha, upsideDown = false)
     }
 }
 
@@ -630,7 +657,7 @@ fun ShogiBoardPreviewHighlight() {
 }
 
 @Composable
-fun PieceView(piece: Piece, isFlipped: Boolean = false) {
+fun PieceView(piece: Piece, isFlipped: Boolean = false, fontSize: TextUnit = 20.sp) {
     val label = if (piece.isPromoted) piece.type.promotedLabel ?: piece.type.label else piece.type.label
     val color = if (piece.isPromoted) MaterialTheme.colorScheme.error else MaterialTheme.colorScheme.onSurface
 
@@ -644,20 +671,24 @@ fun PieceView(piece: Piece, isFlipped: Boolean = false) {
     Text(
         text = label,
         color = color,
-        fontSize = 20.sp,
+        fontSize = fontSize,
         fontWeight = FontWeight.Bold,
         modifier = Modifier.rotate(rotation),
         fontFamily = shogiFont
     )
 }
 
+// 駒の字の大きさとマスの幅の比率。縦型レイアウト（幅411dpの端末で1マス約42dp）で 20sp だったのを基準にする
+private const val pieceFontToCellRatio = 0.48f
+
 @Composable
 fun ShogiSquare(piece: Piece?,
                 modifier: Modifier = Modifier,
-                isFlipped: Boolean = false) {
+                isFlipped: Boolean = false,
+                fontSize: TextUnit = 20.sp) {
     Box(modifier = modifier, contentAlignment = Alignment.Center) {
         if (piece != null) {
-            PieceView(piece, isFlipped)
+            PieceView(piece, isFlipped, fontSize)
         }
     }
 }

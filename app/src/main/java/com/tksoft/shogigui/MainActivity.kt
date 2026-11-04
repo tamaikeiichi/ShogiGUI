@@ -819,7 +819,8 @@ class MainActivity : ComponentActivity() {
                         BoxWithConstraints(modifier = Modifier.fillMaxSize().padding(innerPadding).padding(8.dp)) {
                             val headerHeight = 120.dp
                             val gap = 8.dp
-                            val boardWidth = minOf(maxWidth, maxHeight - headerHeight - gap).coerceAtLeast(0.dp)
+                            // 盤は縦長 (boardCellAspect) なので、高さから決めるときは幅を縮める
+                            val boardWidth = minOf(maxWidth, (maxHeight - headerHeight - gap) * boardCellAspect).coerceAtLeast(0.dp)
                             Column(
                                 modifier = Modifier.fillMaxSize(),
                                 horizontalAlignment = Alignment.CenterHorizontally,
@@ -856,9 +857,9 @@ class MainActivity : ComponentActivity() {
                             val menuWidth = 48.dp
                             // 右の列の幅は持ち駒が全種類並ぶだけ取り、残りを盤にする
                             val minSideWidth = 260.dp
-                            val boardWidth = minOf(maxWidth - menuWidth - minSideWidth - gap * 2, maxHeight).coerceAtLeast(0.dp)
+                            val boardWidth = minOf(maxWidth - menuWidth - minSideWidth - gap * 2, maxHeight * boardCellAspect).coerceAtLeast(0.dp)
                             Row(horizontalArrangement = Arrangement.spacedBy(gap)) {
-                                Column(modifier = Modifier.height(boardWidth), verticalArrangement = Arrangement.SpaceBetween) {
+                                Column(modifier = Modifier.height(boardWidth / boardCellAspect), verticalArrangement = Arrangement.SpaceBetween) {
                                     MenuButton(Modifier.padding(top = 4.dp)) { showMenu = true }
                                     FlipButton { isBoardFlipped = !isBoardFlipped }
                                 }
