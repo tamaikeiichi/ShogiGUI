@@ -1528,6 +1528,10 @@ class MainActivity : ComponentActivity() {
                 val (player, type) = selectedHandPiece
                 val moveLabel = "${9 - col}${rowToKanji('a' + row)}${type.label}打"
                 executeMove(null, clickedPos, Piece(type, player), null, false, currentNode, moveLabel, false, onSaveRequested) { onUpdate(null, null, it, null) }
+            } else {
+                // 打てないマスなら選択を解除する。自分の駒をタップしたときはその駒を選び直す
+                val piece = boardState[clickedPos]
+                onUpdate(if (piece != null && piece.owner == currentPlayer) clickedPos else null, null, null, null)
             }
         } else {
             val currentSelected = selectedSquare
