@@ -225,8 +225,9 @@ fun moveArrowFromUsi(usiMove: String, fillColor: Color?, edgeColor: Color, rankL
     return MoveArrow(from, to, usiDropPieceType(usiMove), fillColor, edgeColor, rankLabel, rankRingColor)
 }
 
-// 実際の手と一致した候補手の番号を囲う色。対局者名の色に合わせ、先手は赤、後手は青
-fun actualMoveRingColor(mover: Player): Color = if (mover == Player.SENTE) senteNameColor else goteNameColor
+// 実際の手と一致した候補手の番号を囲う色。対局者名の色に合わせる
+@Composable
+fun actualMoveRingColor(mover: Player): Color = playerNameColor(mover == Player.SENTE)
 
 // 候補手の順位の数字を移動先のマスの中央に描く。駒の上でも読めるよう、数字の背後に
 // 半透明でふちをぼかした円（放射グラデーション）を敷く。同じマスへの候補が複数あれば
@@ -584,6 +585,8 @@ fun HandView(
         // 180度回すと左右が入れ替わるので、回した側は Start にして画面上で右寄せにする（左上はメニューボタン）
         horizontalArrangement = if (rotation == 0f) Arrangement.End else Arrangement.Start
     ) {
+        // 持ち駒が無いときも行の高さを変えない（高さが変わると盤の位置がずれる）
+        Text(text = " ", fontSize = 20.sp, fontWeight = FontWeight.Bold, fontFamily = shogiFont, modifier = Modifier.width(0.dp))
         // 持ち駒を種類ごとに表示
         PieceType.entries.reversed().forEach { type ->
             val count = hand[type] ?: 0

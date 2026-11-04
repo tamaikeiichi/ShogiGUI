@@ -7,15 +7,12 @@ import androidx.compose.ui.graphics.luminance
 const val senteColorName = "先手"
 const val goteColorName = "後手"
 
-// Player name text colors
-val senteNameColor = Color(0xFFAA0000)
-val goteNameColor = Color(0xFF0000AA)
-
-// Evaluation graph bar colors
-val senteMateColor = Color(0xFFAA0000)
-val goteMateColor = Color(0xFF0000AA)
-val senteBarColor = Color.Red.copy(alpha = 0.5f)
-val goteBarColor = Color.Blue.copy(alpha = 0.5f)
+// 対局者名・実際の手の囲み・形勢グラフの色。ダークモードでも読めるよう、どちらのモードでも同じテーマの色を使う。
+// テーマに青は無いので、後手は寒色の tertiary にする
+@androidx.compose.runtime.Composable
+fun playerNameColor(isSente: Boolean): Color =
+    if (isSente) androidx.compose.material3.MaterialTheme.colorScheme.error
+    else androidx.compose.material3.MaterialTheme.colorScheme.tertiary
 
 // 駒を選択したマス・持ち駒の背景色。盤面（黄・ベージュ・緑系のテーマ色）や
 // 候補手カードの色と区別できるよう、テーマに無い青系を使う

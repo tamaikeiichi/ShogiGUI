@@ -141,7 +141,7 @@ fun PlayerStatusSection(
             onPiecePositioned = { type, coords -> onPiecePositioned(player, type, coords) }
         )
     }
-    val nameColor = if (mark == "▲") senteNameColor else goteNameColor
+    val nameColor = playerNameColor(mark == "▲")
     val nameView: @Composable () -> Unit = {
         PlayerInfoContent(name = playerName, mark = mark, isFlipped = isFlipped, gameResult = gameResult, nameColor = nameColor, remainingMs = remainingMs, onNameClick = onNameClick)
     }
@@ -368,6 +368,8 @@ private fun KifuTreeView(
     val inactiveTickColor = MaterialTheme.colorScheme.onSecondaryContainer
     val thumbColor = MaterialTheme.colorScheme.primary
     val containerColor = MaterialTheme.colorScheme.surfaceContainerHighest
+    val senteBarColor = playerNameColor(true)
+    val goteBarColor = playerNameColor(false)
     // 現在の手順上で、現在の手までの手 (= Slider のアクティブ側)
     val pathIndex = remember(currentPath) { HashMap<KifuNode, Int>().also { m -> currentPath.forEachIndexed { i, n -> m[n] = i } } }
     val currentPathIdx = pathIndex[currentNode] ?: -1
@@ -481,10 +483,10 @@ private fun KifuTreeView(
             val isMate = score > 10000 || score < -10000
             val normalized = (score.toFloat() / 2000f).coerceIn(-1f, 1f)
             val barColor = when {
-                isMate && score > 0 -> senteMateColor
-                isMate && score < 0 -> goteMateColor
-                score >= 0 -> senteBarColor
-                else -> goteBarColor
+                isMate && score > 0 -> senteBarColor
+                isMate && score < 0 -> goteBarColor
+                score >= 0 -> senteBarColor.copy(alpha = 0.5f)
+                else -> goteBarColor.copy(alpha = 0.5f)
             }
             drawLine(barColor, c, Offset(c.x, c.y - normalized * barHalfPx()), strokeWidth = barWidth)
         }

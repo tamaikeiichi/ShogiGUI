@@ -18,6 +18,7 @@ import androidx.compose.ui.layout.ContentScale
 import androidx.compose.foundation.layout.*
 import androidx.compose.foundation.lazy.LazyColumn
 import androidx.compose.foundation.lazy.items
+import androidx.compose.foundation.isSystemInDarkTheme
 import androidx.compose.foundation.rememberScrollState
 import androidx.compose.foundation.selection.selectable
 import androidx.compose.foundation.verticalScroll
@@ -41,6 +42,12 @@ import androidx.compose.ui.graphics.graphicsLayer
 import androidx.compose.ui.platform.LocalClipboardManager
 import androidx.compose.ui.platform.LocalDensity
 import androidx.compose.ui.layout.onSizeChanged
+import androidx.compose.animation.core.animateFloatAsState
+import androidx.compose.ui.draw.drawBehind
+import androidx.compose.ui.geometry.Rect
+import androidx.compose.ui.graphics.Brush
+import androidx.compose.ui.layout.boundsInWindow
+import androidx.compose.ui.layout.onGloballyPositioned
 import androidx.compose.ui.res.painterResource
 import androidx.compose.ui.res.stringResource
 import androidx.compose.ui.unit.dp
@@ -122,12 +129,6 @@ class MainActivity : ComponentActivity() {
         // (Window.setStatusBarColor 等) を呼び Play Console で警告されるため、バーの色・カットアウトは
         // テーマ (res/values*/themes.xml) で指定し、ここではレイアウトとアイコンの明暗だけを設定する
         WindowCompat.setDecorFitsSystemWindows(window, false)
-        val isNight = (resources.configuration.uiMode and android.content.res.Configuration.UI_MODE_NIGHT_MASK) ==
-            android.content.res.Configuration.UI_MODE_NIGHT_YES
-        WindowCompat.getInsetsController(window, window.decorView).apply {
-            isAppearanceLightStatusBars = !isNight
-            isAppearanceLightNavigationBars = !isNight
-        }
 
         val prefs = getSharedPreferences("kifu_prefs", MODE_PRIVATE)
         // 既定エンジンを suisho5 から tsuyou11mini に変えたので、エンジンを選ばずに使っていた
@@ -167,6 +168,14 @@ class MainActivity : ComponentActivity() {
 
         setContent {
             ShogiGUITheme {
+                // uiMode は configChanges で受けるので、ダークモードを切り替えても onCreate は呼ばれない
+                val darkTheme = isSystemInDarkTheme()
+                LaunchedEffect(darkTheme) {
+                    WindowCompat.getInsetsController(window, window.decorView).apply {
+                        isAppearanceLightStatusBars = !darkTheme
+                        isAppearanceLightNavigationBars = !darkTheme
+                    }
+                }
                 val initialNode by remember { mutableStateOf(rootNode!!) }
                 var currentNode by remember { mutableStateOf(initialNode) }
 
@@ -881,20 +890,29 @@ class MainActivity : ComponentActivity() {
                         }
                     }
                     else {
-                        Column(modifier = Modifier.fillMaxSize().padding(top = innerPadding.calculateTopPadding()).verticalScroll(boardAreaScrollState), horizontalAlignment = Alignment.CenterHorizontally) {
-                            Box(modifier = Modifier.fillMaxWidth()) {
+                        var boardBounds by remember { mutableStateOf(Rect.Zero) }
+                        var menuBounds by remember { mutableStateOf(Rect.Zero) }
+                        Box(modifier = Modifier.fillMaxSize().padding(top = innerPadding.calculateTopPadding())) {
+                            Column(modifier = Modifier.fillMaxSize().verticalScroll(boardAreaScrollState), horizontalAlignment = Alignment.CenterHorizontally) {
                                 playerSection(topP, false)
-                                MenuButton(Modifier.align(Alignment.TopStart).padding(start = 8.dp, top = 4.dp)) { showMenu = true }
+                                // 盤を少しでも大きくするため、画面の端との余白は狭くする
+                                board(Modifier.padding(horizontal = 6.dp, vertical = 8.dp).onGloballyPositioned { boardBounds = it.boundsInWindow() })
+                                Box(modifier = Modifier.fillMaxWidth()) {
+                                    playerSection(botP, true)
+                                    FlipButton(Modifier.align(Alignment.TopStart).padding(start = 8.dp, top = 4.dp)) { isBoardFlipped = !isBoardFlipped }
+                                }
+                                Column(modifier = Modifier.padding(8.dp)) { pvCards() }
+                                // bottomBar に隠れる分をスクロールで見られるようにする
+                                Spacer(modifier = Modifier.height(innerPadding.calculateBottomPadding()))
                             }
-                            // 盤を少しでも大きくするため、画面の端との余白は狭くする
-                            board(Modifier.padding(horizontal = 6.dp, vertical = 8.dp))
-                            Box(modifier = Modifier.fillMaxWidth()) {
-                                playerSection(botP, true)
-                                FlipButton(Modifier.align(Alignment.TopStart).padding(start = 8.dp, top = 4.dp)) { isBoardFlipped = !isBoardFlipped }
-                            }
-                            Column(modifier = Modifier.padding(8.dp)) { pvCards() }
-                            // bottomBar に隠れる分をスクロールで見られるようにする
-                            Spacer(modifier = Modifier.height(innerPadding.calculateBottomPadding()))
+                            // スクロールしても動かないよう、スクロールする列の外に重ねる。盤より上に描くので、重なった所のタップはボタンが受ける
+                            MenuButton(
+                                Modifier
+                                    .align(Alignment.TopStart)
+                                    .padding(start = 8.dp, top = 4.dp)
+                                    .onGloballyPositioned { menuBounds = it.boundsInWindow() }
+                                    .then(floatingHalo(boardBounds.overlaps(menuBounds)))
+                            ) { showMenu = true }
                         }
                     }
                 }
@@ -1749,6 +1767,27 @@ private fun NavButton(icon: androidx.compose.ui.graphics.vector.ImageVector, des
     }
 }
 
+// 盤の上に重ねるボタンの周りをぼかしたように白くして、重なっている間はそれが分かるようにする
+@Composable
+private fun floatingHalo(overContent: Boolean): Modifier {
+    val haloAlpha by animateFloatAsState(if (overContent) 1f else 0f, label = "buttonHalo")
+    val haloColor = MaterialTheme.colorScheme.surface
+    return Modifier.drawBehind {
+        if (haloAlpha > 0f) {
+            val button = size.minDimension / 2
+            val halo = button + 16.dp.toPx()
+            drawCircle(
+                Brush.radialGradient(
+                    button / halo to haloColor.copy(alpha = 0.85f),
+                    1f to haloColor.copy(alpha = 0f),
+                    center = center, radius = halo,
+                ),
+                radius = halo, alpha = haloAlpha,
+            )
+        }
+    }
+}
+
 // 盤の左下に置く反転ボタン。メニューボタンと同じ形
 @Composable
 private fun FlipButton(modifier: Modifier = Modifier, onClick: () -> Unit) {
@@ -1791,6 +1830,7 @@ private fun FullScreenMenu(onClose: () -> Unit, content: @Composable ColumnScope
     Surface(
         // うっすら半透明にして、後ろの盤面が透けて見えるようにする
         color = MaterialTheme.colorScheme.surface.copy(alpha = 0.9f),
+        contentColor = MaterialTheme.colorScheme.onSurface,
         modifier = Modifier
             .fillMaxSize()
             .onSizeChanged { widthPx = it.width }
