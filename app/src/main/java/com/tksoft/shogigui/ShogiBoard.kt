@@ -260,7 +260,7 @@ private fun DrawScope.drawRankLabels(
                 // 回転表示時は並び順も左右反転して、画面上で左から順に並ぶようにする
                 val shift = (label.slot - (label.total - 1) / 2f) * step * (if (upsideDown) -1 else 1)
                 val c = Offset(center.x + shift, center.y)
-                drawRankBadge(c, cell, arrow.rankLabel!!, arrow.fillColor!!, backdropColor, measurer, alpha, upsideDown, arrow.rankRingColor)
+                drawRankBadge(c, cell, arrow.rankLabel!!, arrow.edgeColor, backdropColor, measurer, alpha, upsideDown, arrow.rankRingColor)
             }
         }
 }
@@ -402,7 +402,7 @@ fun BoardMoveArrows(
     val shown = lastArrows
     if (shown.isEmpty() || growProgress <= 0f) return
     val haloColor = MaterialTheme.colorScheme.surface
-    val labelBackdropColor = MaterialTheme.colorScheme.inverseSurface
+    val labelBackdropColor = MaterialTheme.colorScheme.surface
     val measurer = rememberTextMeasurer()
 
     Canvas(modifier = modifier) {
@@ -514,7 +514,7 @@ fun DropMoveArrowOverlay(
     )
 
     val haloColor = MaterialTheme.colorScheme.surface
-    val labelBackdropColor = MaterialTheme.colorScheme.inverseSurface
+    val labelBackdropColor = MaterialTheme.colorScheme.surface
     val measurer = rememberTextMeasurer()
 
     Canvas(modifier = modifier.onGloballyPositioned { ownCoordinates = it }) {

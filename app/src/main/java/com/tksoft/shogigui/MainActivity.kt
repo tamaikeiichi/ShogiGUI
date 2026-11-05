@@ -635,8 +635,7 @@ class MainActivity : ComponentActivity() {
                 //   移動先のマスにはカードの並び順（1, 2, 3, ...）を表示する
                 // - 本譜の次の手: 本譜上で解析しているとき、塗りつぶしなしの矢印を一番上に描く
                 val pvFillColors = listOf(getPvColor(1), getPvColor(2), getPvColor(3), getPvColor(4))
-                val pvEdgeColors = listOf(MaterialTheme.colorScheme.primary, MaterialTheme.colorScheme.secondary,
-                    MaterialTheme.colorScheme.tertiary, MaterialTheme.colorScheme.outline)
+                val pvEdgeColors = listOf(getPvAccentColor(1), getPvAccentColor(2), getPvAccentColor(3), getPvAccentColor(4))
                 val nextMoveEdgeColor = MaterialTheme.colorScheme.onSurface
                 val moveArrows: List<MoveArrow> = if (!(isAnalysisMode || isAutoAnalysis)) emptyList() else buildList {
                     val actualNext = actualNextNode(currentNode)

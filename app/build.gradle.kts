@@ -15,28 +15,40 @@ android {
         applicationId = "com.tksoft.shogigui"
         minSdk = 24
         targetSdk = 36
-        versionCode = 46
-        versionName = "1.11.1"
+        versionCode = 47
+        versionName = "1.12.0"
 
         testInstrumentationRunner = "androidx.test.runner.AndroidJUnitRunner"
     }
 
-    // 署名鍵の場所とパスワードはリポジトリに入れず、~/.gradle/gradle.properties から読む。
-    // 設定が無ければ署名なしでリリース版を作る。
-    val releaseStoreFile = providers.gradleProperty("SHOGIGUI_STORE_FILE").orNull
+    // 署名鍵の場所とパスワードはリポジトリに入れず、各PCの ~/.gradle/gradle.properties に書く:
+    //   SHOGIGUI_STORE_FILE=C:/Users/<ユーザー>/Documents/android_build_key/shogiGui.jks
+    //   SHOGIGUI_STORE_PASSWORD=...
+    //   SHOGIGUI_KEY_ALIAS=...
+    //   SHOGIGUI_KEY_PASSWORD=...
+    // 新しいPCでは shogiGui.jks をコピーし、上の4行を書けば署名付きでビルドできる。
+    // 設定が欠けていれば警告を出し、署名なしでリリース版を作る。
+    fun signingValue(key: String): String? = providers.gradleProperty(key).orNull?.trim()?.takeIf { it.isNotEmpty() }
+    val releaseStoreFile = signingValue("SHOGIGUI_STORE_FILE")
+    val releaseStorePassword = signingValue("SHOGIGUI_STORE_PASSWORD")
+    val releaseKeyAlias = signingValue("SHOGIGUI_KEY_ALIAS")
+    val releaseKeyPassword = signingValue("SHOGIGUI_KEY_PASSWORD")
+    val canSignRelease = releaseStoreFile != null && releaseStorePassword != null &&
+        releaseKeyAlias != null && releaseKeyPassword != null
+    if (!canSignRelease) logger.warn("ShogiGUI: 署名鍵の設定が見つからないため、リリース版は署名なしで作られます")
     signingConfigs {
-        if (releaseStoreFile != null) {
+        if (canSignRelease) {
             create("release") {
-                storeFile = file(releaseStoreFile)
-                storePassword = providers.gradleProperty("SHOGIGUI_STORE_PASSWORD").get()
-                keyAlias = providers.gradleProperty("SHOGIGUI_KEY_ALIAS").get()
-                keyPassword = providers.gradleProperty("SHOGIGUI_KEY_PASSWORD").get()
+                storeFile = file(releaseStoreFile!!)
+                storePassword = releaseStorePassword
+                keyAlias = releaseKeyAlias
+                keyPassword = releaseKeyPassword
             }
         }
     }
     buildTypes {
         release {
-            if (releaseStoreFile != null) {
+            if (canSignRelease) {
                 signingConfig = signingConfigs.getByName("release")
             }
             isMinifyEnabled = true

@@ -52,6 +52,19 @@ fun getPvColor(rank: Int): Color {
     }
 }
 
+// 読み筋のランクに応じた番号の字の色（盤上の矢印の縁の色も同じ）。
+// surface（番号の背後のぼかし）や getPvColor の container 色の上で読めるテーマ定義の色を使うので、
+// ライト・ダークどちらのテーマでも読みやすい
+@Composable
+fun getPvAccentColor(rank: Int): Color {
+    return when (rank) {
+        1 -> MaterialTheme.colorScheme.primary
+        2 -> MaterialTheme.colorScheme.secondary
+        3 -> MaterialTheme.colorScheme.tertiary
+        else -> MaterialTheme.colorScheme.outline
+    }
+}
+
 // order はカードの並び順で、盤上の候補手の数字と対応する。
 // ringColor は候補手が実際の手と一致するときに番号を囲う色
 @Composable
@@ -71,7 +84,7 @@ fun PvInfoCard(rank: Int, order: Int, pvText: String, currentMoveLabel: String, 
             val firstLine = pvText.lines().first()
             val rest = pvText.substring(firstLine.length).trimStart()
             Row(verticalAlignment = Alignment.CenterVertically) {
-                PvOrderBadge(order, cardColor, ringColor)
+                PvOrderBadge(order, getPvAccentColor(rank), ringColor)
                 Spacer(modifier = Modifier.width(4.dp))
                 Text(
                     text = boldMoveLabel(firstLine, currentMoveLabel),
@@ -92,7 +105,7 @@ fun PvInfoCard(rank: Int, order: Int, pvText: String, currentMoveLabel: String, 
 // 盤上の候補番号と同じグラフィック。盤上と違い、解析が終わっても薄くしない
 @Composable
 private fun PvOrderBadge(order: Int, color: Color, ringColor: Color?) {
-    val backdropColor = MaterialTheme.colorScheme.inverseSurface
+    val backdropColor = MaterialTheme.colorScheme.surface
     val measurer = rememberTextMeasurer()
     Canvas(modifier = Modifier.size(28.dp)) {
         drawRankBadge(center, size.width / rankBadgeDiameter, order.toString(), color, backdropColor, measurer, ringColor = ringColor)
