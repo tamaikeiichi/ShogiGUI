@@ -63,7 +63,9 @@ import androidx.compose.ui.text.buildAnnotatedString
 import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.text.style.TextOverflow
 import androidx.compose.ui.text.withStyle
+import androidx.compose.ui.unit.Dp
 import androidx.compose.ui.unit.DpOffset
+import androidx.compose.runtime.SideEffect
 import androidx.compose.ui.tooling.preview.Preview
 import androidx.compose.ui.unit.sp
 import kotlin.math.roundToInt
@@ -701,9 +703,13 @@ class MainActivity : ComponentActivity() {
                 val topP = if (isBoardFlipped) Player.SENTE else Player.GOTE
                 val botP = if (isBoardFlipped) Player.GOTE else Player.SENTE
                 val isHumanTurn = humanPlayer == null || currentPlayer == humanPlayer
+                // 縦向きの画面で、持ち駒を盤のマスと同じ大きさにするときの1マスの幅 (それ以外は Unspecified)
+                var handCellWidth by remember { mutableStateOf(Dp.Unspecified) }
+                // 上下の対局者の名前の行の高さ (px)
+                val nameHeights = remember { mutableStateMapOf<Player, Int>() }
                 val playerSection: @Composable (Player, Boolean) -> Unit = { p, handOnTop ->
                     val isSente = p == Player.SENTE
-                    PlayerStatusSection(if (isSente) senteName else goteName, if (isSente) "▲" else "△", currentPlayer == p, if (isSente) senteHand else goteHand, selectedHandPiece, currentPlayer, isBoardFlipped, handOnTop = handOnTop, gameResult = gameResult, remainingMs = if (isSente) currentNode.senteRemainingMs else currentNode.goteRemainingMs, onNameClick = { editingPlayerMark = if (isSente) "▲" else "△" }, onPiecePositioned = onHandPiecePositioned) { if (isHumanTurn) { selectedHandPiece = it; selectedSquare = null } }
+                    PlayerStatusSection(if (isSente) senteName else goteName, if (isSente) "▲" else "△", currentPlayer == p, if (isSente) senteHand else goteHand, selectedHandPiece, currentPlayer, isBoardFlipped, handOnTop = handOnTop, gameResult = gameResult, remainingMs = if (isSente) currentNode.senteRemainingMs else currentNode.goteRemainingMs, onNameClick = { editingPlayerMark = if (isSente) "▲" else "△" }, onPiecePositioned = onHandPiecePositioned, handCellWidth = handCellWidth, onNameHeight = { nameHeights[p] = it }) { if (isHumanTurn) { selectedHandPiece = it; selectedSquare = null } }
                 }
                 val board: @Composable (Modifier) -> Unit = { boardModifier ->
                     ShogiBoard(boardState, selectedSquare, { r, c ->
@@ -823,6 +829,7 @@ class MainActivity : ComponentActivity() {
                     }
                 ) { innerPadding ->
                     if (showMaximized) {
+                        SideEffect { handCellWidth = Dp.Unspecified }
                         // 最大化: 1行目にメニュー・両対局者 (名前と持ち駒)・元に戻すボタン、その下に盤を残りの高さいっぱいに置く
                         BoxWithConstraints(modifier = Modifier.fillMaxSize().padding(innerPadding).padding(8.dp)) {
                             val headerHeight = 120.dp
@@ -859,6 +866,7 @@ class MainActivity : ComponentActivity() {
                             FlipButton(Modifier.align(Alignment.BottomStart)) { isBoardFlipped = !isBoardFlipped }
                         }
                     } else if (isWide) {
+                        SideEffect { handCellWidth = Dp.Unspecified }
                         // 盤をなるべく大きくするため、左からメニューボタン・盤・(対局者・読み筋カード・対局者) の3列にする
                         BoxWithConstraints(modifier = Modifier.fillMaxSize().padding(innerPadding).padding(8.dp)) {
                             val gap = 8.dp
@@ -891,11 +899,29 @@ class MainActivity : ComponentActivity() {
                     else {
                         var boardBounds by remember { mutableStateOf(Rect.Zero) }
                         var menuBounds by remember { mutableStateOf(Rect.Zero) }
-                        Box(modifier = Modifier.fillMaxSize().padding(top = innerPadding.calculateTopPadding())) {
+                        val isTablet = androidx.compose.ui.platform.LocalConfiguration.current.smallestScreenWidthDp >= 600
+                        BoxWithConstraints(modifier = Modifier.fillMaxSize().padding(top = innerPadding.calculateTopPadding())) {
+                            // 盤の幅のうちマス以外 (段の数字の列と枠の余白) と、盤の高さのうちマス以外 (上下の余白・筋の数字の行)
+                            val boardExtraWidth = 22.dp
+                            val boardExtraHeight = 40.dp
+                            val fullBoardWidth = maxWidth - 12.dp
+                            val boardWidth = run {
+                                val names = with(density) { ((nameHeights[Player.SENTE] ?: 0) + (nameHeights[Player.GOTE] ?: 0)).toDp() }
+                                if (!isTablet || nameHeights.size < 2) return@run fullBoardWidth
+                                // タブレットの縦向きは幅に対して高さが足りず、幅いっぱいの盤だと下の持ち駒と反転ボタンが
+                                // bottomBar に隠れて押せない。また持ち駒は盤の駒と同じ大きさにして押しやすくする。
+                                // 盤 (9マス) と上下の持ち駒 (1マスずつ、上下の余白 8dp) と名前が bottomBar の上に収まるマスの大きさにする
+                                val free = maxHeight - innerPadding.calculateBottomPadding() - names - boardExtraHeight - 16.dp - 12.dp
+                                val cell = free * boardCellAspect / 11f
+                                // 極端に低い画面では、小さくしすぎずスクロールで見てもらう
+                                (cell * 9 + boardExtraWidth).coerceIn(fullBoardWidth * 0.6f, fullBoardWidth)
+                            }
+                            val cell = if (isTablet) (boardWidth - boardExtraWidth) / 9 else Dp.Unspecified
+                            SideEffect { handCellWidth = cell }
                             Column(modifier = Modifier.fillMaxSize().verticalScroll(boardAreaScrollState), horizontalAlignment = Alignment.CenterHorizontally) {
                                 playerSection(topP, false)
                                 // 盤を少しでも大きくするため、画面の端との余白は狭くする
-                                board(Modifier.padding(horizontal = 6.dp, vertical = 8.dp).onGloballyPositioned { boardBounds = it.boundsInWindow() })
+                                board(Modifier.padding(horizontal = 6.dp, vertical = 8.dp).width(boardWidth).onGloballyPositioned { boardBounds = it.boundsInWindow() })
                                 Box(modifier = Modifier.fillMaxWidth()) {
                                     playerSection(botP, true)
                                     FlipButton(Modifier.align(Alignment.TopStart).padding(start = 8.dp, top = 4.dp)) { isBoardFlipped = !isBoardFlipped }
@@ -1028,6 +1054,10 @@ class MainActivity : ComponentActivity() {
                                     Toast.makeText(this@MainActivity, R.string.exported_to_clipboard_toast, Toast.LENGTH_SHORT).show()
                                     showMenu = false
                                 })
+                            // 盤の左下の反転ボタンに気づかない人もいるので、メニューからも反転できるようにする
+                            MenuItem({ Icon(painterResource(R.drawable.rotate_right_24px), contentDescription = null) },
+                                text = { Text(stringResource(R.string.menu_flip_board)) },
+                                onClick = { isBoardFlipped = !isBoardFlipped; showMenu = false })
                             MenuItem({ MarkIcon("▲") },
                                 text = { Text(stringResource(R.string.menu_play_as_sente)) },
                                 onClick = {

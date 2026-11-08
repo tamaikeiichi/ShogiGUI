@@ -27,6 +27,8 @@ import androidx.compose.ui.platform.LocalContext
 import androidx.compose.ui.unit.IntSize
 import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.input.pointer.pointerInput
+import androidx.compose.foundation.gestures.scrollable
+import androidx.compose.ui.graphics.drawscope.withTransform
 import androidx.compose.ui.res.stringResource
 import androidx.compose.ui.text.AnnotatedString
 import androidx.compose.ui.text.SpanStyle
@@ -141,6 +143,10 @@ fun PlayerStatusSection(
     remainingMs: Long? = null,
     onNameClick: () -> Unit = {},
     onPiecePositioned: (Player, PieceType, androidx.compose.ui.layout.LayoutCoordinates) -> Unit = { _, _, _ -> },
+    // 持ち駒を盤のマスと同じ大きさにするときの1マスの幅
+    handCellWidth: androidx.compose.ui.unit.Dp = androidx.compose.ui.unit.Dp.Unspecified,
+    // 名前の行 (持ち駒を除く) の高さを通知する。盤の大きさを決めるのに使う
+    onNameHeight: (Int) -> Unit = {},
     onSelected: (Pair<Player, PieceType>?) -> Unit
 ) {
     val player = if (mark == "▲") Player.SENTE else Player.GOTE
@@ -151,12 +157,15 @@ fun PlayerStatusSection(
             selectedPieceType = selectedHandPiece?.takeIf { it.first == player }?.second,
             onPieceClick = { type -> if (isActive) onSelected(Pair(player, type)) },
             isFlipped = isFlipped,
-            onPiecePositioned = { type, coords -> onPiecePositioned(player, type, coords) }
+            onPiecePositioned = { type, coords -> onPiecePositioned(player, type, coords) },
+            cellWidth = handCellWidth
         )
     }
     val nameColor = playerNameColor(mark == "▲")
     val nameView: @Composable () -> Unit = {
-        PlayerInfoContent(name = playerName, mark = mark, isFlipped = isFlipped, gameResult = gameResult, nameColor = nameColor, remainingMs = remainingMs, onNameClick = onNameClick)
+        Box(modifier = Modifier.onSizeChanged { onNameHeight(it.height) }) {
+            PlayerInfoContent(name = playerName, mark = mark, isFlipped = isFlipped, gameResult = gameResult, nameColor = nameColor, remainingMs = remainingMs, onNameClick = onNameClick)
+        }
     }
     Column(modifier = Modifier.fillMaxWidth()) {
         if (handOnTop) { handView(); nameView() } else { nameView(); handView() }
@@ -320,6 +329,9 @@ private fun KifuTreeView(
     var initialized by remember(root) { mutableStateOf(false) }
     var offsetY by remember(root) { mutableFloatStateOf(0f) }
     var scaleY by remember(root) { mutableFloatStateOf(1f) } // 縦方向の倍率（行間）
+    // 引っ張った量に対する伸びの割合と、伸びの上限 (グラフの高さに対する割合)
+    val stretchPerPull = 0.5f
+    val maxStretch = 0.3f
     fun rowPx() = baseRowPx * scaleY
     // 棒グラフの半分の高さ (±2000 で振り切れ)。隣の行の棒と重ならないよう行間の半分弱にする
     fun barHalfPx() = rowPx() * 0.46f
@@ -374,6 +386,36 @@ private fun KifuTreeView(
         }
     }
 
+    // 上端・下端を越えて引っ張った量 (下へ引くと正)。グラフを端から伸ばして、それ以上スクロールできないことを示す。
+    // Android 標準の伸びる表示 (overscroll) はこの低いグラフでは目立たないので、自前で強めに伸ばす
+    var pullPx by remember(root) { mutableFloatStateOf(0f) }
+    val scrollState = androidx.compose.foundation.gestures.rememberScrollableState { delta ->
+        if (!initialized) return@rememberScrollableState 0f
+        var d = delta
+        // 伸びている間に逆へ動かしたら、先に伸びを戻す
+        if (pullPx != 0f && pullPx * d < 0f) {
+            val next = pullPx + d
+            if (next * pullPx > 0f) { pullPx = next; return@rememberScrollableState delta }
+            pullPx = 0f; d = next
+        }
+        val before = offsetY
+        offsetY += d
+        clampOffsets()
+        val rest = d - (offsetY - before)
+        val maxPull = viewSize.height * maxStretch / stretchPerPull
+        pullPx = (pullPx + rest).coerceIn(-maxPull, maxPull)
+        delta
+    }
+    // 指を離して (はじいた場合は止まって) スクロールが終わったら、伸びを滑らかに戻す
+    LaunchedEffect(scrollState.isScrollInProgress) {
+        if (!scrollState.isScrollInProgress && pullPx != 0f) {
+            androidx.compose.animation.core.animate(
+                pullPx, 0f,
+                animationSpec = androidx.compose.animation.core.spring(stiffness = androidx.compose.animation.core.Spring.StiffnessMediumLow)
+            ) { value, _ -> pullPx = value }
+        }
+    }
+
     // M3 Slider のデフォルト配色 (SliderDefaults.colors)
     val activeTrackColor = MaterialTheme.colorScheme.primary
     val inactiveTrackColor = MaterialTheme.colorScheme.secondaryContainer
@@ -394,15 +436,8 @@ private fun KifuTreeView(
             .clip(MaterialTheme.shapes.large)
             .background(containerColor)
             .onSizeChanged { viewSize = it }
-            .pointerInput(root) {
-                // 1本指のドラッグで上下スクロール（2本指はセクション側のピンチが消費するので来ない）
-                detectDragGestures { change, drag ->
-                    if (!initialized) return@detectDragGestures
-                    offsetY += drag.y
-                    clampOffsets()
-                    change.consume()
-                }
-            }
+            // 1本指のドラッグで上下スクロール（2本指はセクション側のピンチが消費するので来ない）
+            .scrollable(scrollState, androidx.compose.foundation.gestures.Orientation.Vertical, overscrollEffect = null)
             .pointerInput(root) {
                 detectTapGestures { pos ->
                     if (!initialized) return@detectTapGestures
@@ -422,6 +457,11 @@ private fun KifuTreeView(
             }
     ) {
         if (!initialized) return@Canvas
+        // 端を越えて引っ張っている間は、引いている側と反対の端を支点にして縦に伸ばす
+        val stretch = (pullPx * stretchPerPull / size.height).coerceIn(-maxStretch, maxStretch)
+        withTransform({
+            scale(1f, 1f + kotlin.math.abs(stretch), pivot = Offset(size.width / 2, if (stretch > 0f) 0f else size.height))
+        }) {
         val colPx = colPx()
         val rowPx = rowPx()
         // Slider の寸法 (SliderTokens) を基に、トラックは細め (6dp)。つまみ 4x24dp・つまみとトラックの隙間 6dp・目盛り径 3dp。
@@ -513,6 +553,7 @@ private fun KifuTreeView(
                 size = androidx.compose.ui.geometry.Size(thumbW, thumbH),
                 cornerRadius = androidx.compose.ui.geometry.CornerRadius(thumbW / 2)
             )
+        }
         }
     }
 }

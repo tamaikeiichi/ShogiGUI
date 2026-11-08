@@ -9,6 +9,10 @@ import androidx.compose.material3.dynamicLightColorScheme
 import androidx.compose.material3.lightColorScheme
 import androidx.compose.runtime.Composable
 import androidx.compose.ui.platform.LocalContext
+import androidx.compose.runtime.CompositionLocalProvider
+import androidx.compose.ui.platform.LocalConfiguration
+import androidx.compose.ui.platform.LocalDensity
+import androidx.compose.ui.unit.Density
 
 private val lightScheme = lightColorScheme(
     primary = primaryLight,
@@ -255,9 +259,15 @@ fun ShogiGUITheme(
         else -> lightScheme
     }
 
-    MaterialTheme(
-        colorScheme = colorScheme,
-        typography = Typography,
-        content = content
-    )
+    // タブレット (短い辺が 600dp 以上) では画面に対して文字が小さく見えるので、文字だけ大きくする。
+    // 盤の駒の字はマスの幅から決めているので変わらない
+    val density = LocalDensity.current
+    val textScale = if (LocalConfiguration.current.smallestScreenWidthDp >= 600) 1.2f else 1f
+    CompositionLocalProvider(LocalDensity provides Density(density.density, density.fontScale * textScale)) {
+        MaterialTheme(
+            colorScheme = colorScheme,
+            typography = Typography,
+            content = content
+        )
+    }
 }

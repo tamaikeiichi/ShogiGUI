@@ -41,7 +41,9 @@ import androidx.compose.ui.text.font.FontFamily
 import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.tooling.preview.Preview
 import androidx.compose.ui.platform.LocalDensity
+import androidx.compose.ui.unit.Dp
 import androidx.compose.ui.unit.TextUnit
+import androidx.compose.ui.unit.isSpecified
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
 import com.tksoft.shogigui.ui.theme.ShogiGUITheme
@@ -573,9 +575,14 @@ fun HandView(
     isFlipped: Boolean = false,
     modifier: Modifier = Modifier,
     // 持ち駒の各駒種の画面上の位置を通知する（打つ手の矢印を持ち駒から引くために使用）
-    onPiecePositioned: (PieceType, LayoutCoordinates) -> Unit = { _, _ -> }
+    onPiecePositioned: (PieceType, LayoutCoordinates) -> Unit = { _, _ -> },
+    // 盤の1マスの幅。指定すると持ち駒を盤の駒と同じ大きさ (タップする範囲もマスと同じ) にする
+    cellWidth: Dp = Dp.Unspecified,
 ) {
     val rotation = if ((player == Player.GOTE) != isFlipped) 180f else 0f
+    val cellSized = cellWidth.isSpecified
+    val pieceFontSize = if (cellSized) with(LocalDensity.current) { (cellWidth * pieceFontToCellRatio).toSp() } else 20.sp
+    val countFontSize = if (cellSized) with(LocalDensity.current) { (cellWidth * 0.28f).toSp() } else 12.sp
     
     Row(
         modifier = modifier
@@ -586,7 +593,8 @@ fun HandView(
         horizontalArrangement = if (rotation == 0f) Arrangement.End else Arrangement.Start
     ) {
         // 持ち駒が無いときも行の高さを変えない（高さが変わると盤の位置がずれる）
-        Text(text = " ", fontSize = 20.sp, fontWeight = FontWeight.Bold, fontFamily = shogiFont, modifier = Modifier.width(0.dp))
+        if (cellSized) Spacer(Modifier.height(cellWidth / boardCellAspect))
+        else Text(text = " ", fontSize = 20.sp, fontWeight = FontWeight.Bold, fontFamily = shogiFont, modifier = Modifier.width(0.dp))
         // 持ち駒を種類ごとに表示
         PieceType.entries.reversed().forEach { type ->
             val count = hand[type] ?: 0
@@ -595,26 +603,25 @@ fun HandView(
                 Box(
                     contentAlignment = Alignment.TopEnd,
                     modifier = Modifier
-                        .padding(horizontal = 6.dp)
+                        .padding(horizontal = if (cellSized) 2.dp else 6.dp)
                         .background(if (isSelected) pieceSelectionColor() else Color.Transparent)
                         .clickable { onPieceClick(type) }
                         .onGloballyPositioned { onPiecePositioned(type, it) }
+                        .then(if (cellSized) Modifier.size(cellWidth, cellWidth / boardCellAspect) else Modifier)
                 ) {
-                    Log.d("HandView", type.label)
                     Text(
                         text = type.label,
-                        fontSize = 20.sp,
+                        fontSize = pieceFontSize,
                         fontWeight = FontWeight.Bold,
-                        fontFamily = shogiFont
-                        //letterSpacing = 10.sp
-
+                        fontFamily = shogiFont,
+                        modifier = if (cellSized) Modifier.align(Alignment.Center) else Modifier
                     )
                     if (count > 1) {
                         Text(
                             text = count.toString(),
-                            fontSize = 12.sp,
+                            fontSize = countFontSize,
                             fontWeight = FontWeight.Bold,
-                            modifier = Modifier.offset(x = 8.dp, y = (-4).dp),
+                            modifier = if (cellSized) Modifier else Modifier.offset(x = 8.dp, y = (-4).dp),
                         )
                     }
                 }
@@ -682,7 +689,7 @@ fun PieceView(piece: Piece, isFlipped: Boolean = false, fontSize: TextUnit = 20.
 }
 
 // 駒の字の大きさとマスの幅の比率。縦型レイアウト（幅411dpの端末で1マス約42dp）で 20sp だったのを基準にする
-private const val pieceFontToCellRatio = 0.48f
+internal const val pieceFontToCellRatio = 0.48f
 
 @Composable
 fun ShogiSquare(piece: Piece?,
