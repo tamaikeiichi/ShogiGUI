@@ -705,7 +705,7 @@ class MainActivity : ComponentActivity() {
                 val topP = if (isBoardFlipped) Player.SENTE else Player.GOTE
                 val botP = if (isBoardFlipped) Player.GOTE else Player.SENTE
                 val isHumanTurn = humanPlayer == null || currentPlayer == humanPlayer
-                // 縦向きの画面で、持ち駒を盤のマスと同じ大きさにするときの1マスの幅 (それ以外は Unspecified)
+                // 持ち駒を盤の駒と同じ大きさにするための、盤の1マスの幅 (どのレイアウトでも盤と同じ)
                 var handCellWidth by remember { mutableStateOf(Dp.Unspecified) }
                 // 上下の対局者の名前の行の高さ (px)
                 val nameHeights = remember { mutableStateMapOf<Player, Int>() }
@@ -853,13 +853,30 @@ class MainActivity : ComponentActivity() {
                     }
                 ) { innerPadding ->
                     if (showMaximized) {
-                        SideEffect { handCellWidth = Dp.Unspecified }
                         // 最大化: 1行目にメニュー・両対局者 (名前と持ち駒)・元に戻すボタン、その下に盤を残りの高さいっぱいに置く
                         BoxWithConstraints(modifier = Modifier.fillMaxSize().padding(innerPadding).padding(8.dp)) {
-                            val headerHeight = 120.dp
                             val gap = 8.dp
-                            // 盤は縦長 (boardCellAspect) なので、高さから決めるときは幅を縮める
-                            val boardWidth = minOf(maxWidth, boardWidthForHeight(maxHeight - headerHeight - gap, boardExtraHeight())).coerceAtLeast(0.dp)
+                            val extraHeight = boardExtraHeight()
+                            // 持ち駒は盤のマスと同じ大きさにするので、1行目の高さは名前と持ち駒の行数で決まる。
+                            // 持ち駒の行 (7種類が並ぶ行数) が少なくて済む一番大きいマスを探す。
+                            // 1行目の高さ = 名前 + 持ち駒の余白 8dp + rows × マスの高さ なので、
+                            // 盤の高さ (9マス) と合わせると マス幅 × (9 + rows) / aspect = 残りの高さ
+                            // 名前の行の高さは測った値を使うが、1行目が低すぎて名前が縮んだ値に引きずられないよう、
+                            // 名前の字 (20sp) と上下の余白 (4dp ずつ) の高さを下限にする
+                            val nameMeasurer = androidx.compose.ui.text.rememberTextMeasurer()
+                            val nameLineHeight = remember(nameMeasurer) { nameMeasurer.measure("▲", androidx.compose.ui.text.TextStyle(fontSize = 20.sp)).size.height }
+                            val nameHeight = with(density) { maxOf((nameHeights.values.maxOrNull() ?: 0).toDp(), nameLineHeight.toDp() + 8.dp) }
+                            val playerWidth = (maxWidth - 48.dp * 4 - 16.dp * 5) / 2
+                            val rest = maxHeight - gap - nameHeight - 8.dp - extraHeight
+                            var cell = 0.dp
+                            for (rows in 1..7) {
+                                cell = minOf(rest * boardCellAspect / (9 + rows), (maxWidth - boardExtraWidth) / 9).coerceAtLeast(0.dp)
+                                val perRow = ((playerWidth - 8.dp) / (cell + 4.dp)).toInt()
+                                if (perRow * rows >= 7) break
+                            }
+                            SideEffect { handCellWidth = cell }
+                            val boardWidth = cell * 9 + boardExtraWidth
+                            val headerHeight = maxOf(48.dp, maxHeight - gap - boardHeightForWidth(boardWidth, extraHeight))
                             Column(
                                 modifier = Modifier.fillMaxSize(),
                                 horizontalAlignment = Alignment.CenterHorizontally,
@@ -890,7 +907,6 @@ class MainActivity : ComponentActivity() {
                             FlipButton(Modifier.align(Alignment.BottomStart)) { isBoardFlipped = !isBoardFlipped }
                         }
                     } else if (isWide) {
-                        SideEffect { handCellWidth = Dp.Unspecified }
                         // 盤をなるべく大きくするため、左からメニューボタン・盤・(対局者・読み筋カード・対局者) の3列にする
                         BoxWithConstraints(modifier = Modifier.fillMaxSize().padding(innerPadding).padding(8.dp)) {
                             val gap = 8.dp
@@ -900,6 +916,8 @@ class MainActivity : ComponentActivity() {
                             // 盤の高さには筋の数字の行も含めて、画面の高さに収める (文字を大きくする設定だと数字の行が高くなる)
                             val extraHeight = boardExtraHeight()
                             val boardWidth = minOf(maxWidth - menuWidth - minSideWidth - gap * 2, boardWidthForHeight(maxHeight, extraHeight)).coerceAtLeast(0.dp)
+                            // 持ち駒は盤の駒と同じ大きさ。右の列に収まらないときは折り返す
+                            SideEffect { handCellWidth = (boardWidth - boardExtraWidth) / 9 }
                             Row(horizontalArrangement = Arrangement.spacedBy(gap)) {
                                 Column(modifier = Modifier.height(boardHeightForWidth(boardWidth, extraHeight)), verticalArrangement = Arrangement.SpaceBetween) {
                                     MenuButton(Modifier.padding(top = 4.dp)) { showMenu = true }
@@ -949,7 +967,8 @@ class MainActivity : ComponentActivity() {
                                 // 極端に低い画面では、小さくしすぎずスクロールで見てもらう
                                 (cell * 9 + boardExtraWidth).coerceIn(fullBoardWidth * 0.6f, fullBoardWidth)
                             }
-                            val cell = if (isTablet) (boardWidth - boardExtraWidth) / 9 else Dp.Unspecified
+                            // 持ち駒は盤の駒と同じ大きさにする
+                            val cell = (boardWidth - boardExtraWidth) / 9
                             SideEffect { handCellWidth = cell }
                             Column(modifier = Modifier.fillMaxSize().verticalScroll(boardAreaScrollState), horizontalAlignment = Alignment.CenterHorizontally) {
                                 playerSection(topP, false)

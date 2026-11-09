@@ -608,17 +608,19 @@ fun HandView(
     val pieceFontSize = if (cellSized) with(LocalDensity.current) { (cellWidth * pieceFontToCellRatio).toSp() } else 20.sp
     val countFontSize = if (cellSized) with(LocalDensity.current) { (cellWidth * 0.28f).toSp() } else 12.sp
     
-    Row(
+    // 幅が足りないとき (横に並べるレイアウトの右の列など) は折り返して2行にする
+    @OptIn(ExperimentalLayoutApi::class)
+    FlowRow(
         modifier = modifier
             .fillMaxWidth()
             .padding(4.dp)
-            .rotate(rotation),
+            .rotate(rotation)
+            // 持ち駒が無いときも行の高さを変えない（高さが変わると盤の位置がずれる）
+            .then(if (cellSized) Modifier.heightIn(min = cellWidth / boardCellAspect) else Modifier),
         // 180度回すと左右が入れ替わるので、回した側は Start にして画面上で右寄せにする（左上はメニューボタン）
         horizontalArrangement = if (rotation == 0f) Arrangement.End else Arrangement.Start
     ) {
-        // 持ち駒が無いときも行の高さを変えない（高さが変わると盤の位置がずれる）
-        if (cellSized) Spacer(Modifier.height(cellWidth / boardCellAspect))
-        else Text(text = " ", fontSize = 20.sp, fontWeight = FontWeight.Bold, fontFamily = shogiFont, modifier = Modifier.width(0.dp))
+        if (!cellSized) Text(text = " ", fontSize = 20.sp, fontWeight = FontWeight.Bold, fontFamily = shogiFont, modifier = Modifier.width(0.dp))
         // 持ち駒を種類ごとに表示
         PieceType.entries.reversed().forEach { type ->
             val count = hand[type] ?: 0

@@ -90,13 +90,13 @@ fun PvInfoCard(rank: Int, order: Int, pvText: String, currentMoveLabel: String, 
                 Spacer(modifier = Modifier.width(4.dp))
                 Text(
                     text = boldMoveLabel(firstLine, currentMoveLabel),
-                    style = MaterialTheme.typography.bodyMedium
+                    style = MaterialTheme.typography.bodyLarge
                 )
             }
             if (rest.isNotEmpty()) {
                 Text(
                     text = boldMoveLabel(rest, currentMoveLabel),
-                    style = MaterialTheme.typography.bodyMedium,
+                    style = MaterialTheme.typography.bodyLarge,
                     modifier = Modifier.padding(top = 2.dp)
                 )
             }
@@ -560,7 +560,7 @@ private fun KifuTreeView(
 
 @Composable
 fun PlayerInfoContent(name: String, mark: String, isFlipped: Boolean = false, gameResult: String = "", nameColor: androidx.compose.ui.graphics.Color = androidx.compose.ui.graphics.Color.Unspecified, remainingMs: Long? = null, onNameClick: () -> Unit = {}) {
-    val defaultFontSize = MaterialTheme.typography.titleMedium.fontSize
+    val defaultFontSize = 20.sp
     var fontSize by remember(name) { mutableStateOf(defaultFontSize) }
     val isRight = ((mark == "▲") && !isFlipped) || ((mark == "△") && isFlipped)
     Column(
@@ -573,7 +573,7 @@ fun PlayerInfoContent(name: String, mark: String, isFlipped: Boolean = false, ga
             verticalAlignment = Alignment.CenterVertically,
             horizontalArrangement = Arrangement.spacedBy(8.dp)
         ) {
-            Text(text = "$mark ", style = MaterialTheme.typography.titleMedium.copy(fontSize = 14.sp), fontWeight = FontWeight.Bold, color = nameColor, maxLines = 1)
+            Text(text = "$mark ", style = MaterialTheme.typography.titleMedium.copy(fontSize = 16.sp), fontWeight = FontWeight.Bold, color = nameColor, maxLines = 1)
             Text(text = name, style = MaterialTheme.typography.titleMedium.copy(fontSize = fontSize), color = nameColor, maxLines = 1, softWrap = false, onTextLayout = { if (it.hasVisualOverflow && fontSize > 8.sp) fontSize *= 0.9f })
         }
         if (remainingMs != null) {
