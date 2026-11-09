@@ -90,13 +90,13 @@ fun PvInfoCard(rank: Int, order: Int, pvText: String, currentMoveLabel: String, 
                 Spacer(modifier = Modifier.width(4.dp))
                 Text(
                     text = boldMoveLabel(firstLine, currentMoveLabel),
-                    style = MaterialTheme.typography.bodySmall
+                    style = MaterialTheme.typography.bodyMedium
                 )
             }
             if (rest.isNotEmpty()) {
                 Text(
                     text = boldMoveLabel(rest, currentMoveLabel),
-                    style = MaterialTheme.typography.bodySmall,
+                    style = MaterialTheme.typography.bodyMedium,
                     modifier = Modifier.padding(top = 2.dp)
                 )
             }
