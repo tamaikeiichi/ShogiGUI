@@ -10,7 +10,7 @@
     <string name="menu_flip_board">盤面を反転</string>
     <string name="menu_play_as_sente">先手番を持って対局</string>
     <string name="menu_play_as_gote">後手番を持って対局</string>
-    <string name="menu_settings">エンジン設定</string>
+    <string name="menu_settings">設定</string>
     <string name="menu_history">過去の棋譜</string>
     <string name="menu_export_all_history">過去の棋譜をすべてエクスポート</string>
     <string name="menu_import_history_zip">ZIP圧縮した複数のCSAファイルを過去の棋譜としてインポート</string>
@@ -36,6 +36,11 @@
     <string name="settings_multipv_label">候補手 (MultiPV)</string>
     <string name="settings_threads_label">スレッド数</string>
     <string name="settings_save">保存</string>
+    <string name="settings_layout_label">レイアウト</string>
+    <string name="settings_layout_auto">自動</string>
+    <string name="settings_layout_portrait">縦長</string>
+    <string name="settings_layout_square">正方形</string>
+    <string name="settings_layout_landscape">横長</string>
 
     <!-- 過去の棋譜ダイアログ -->
     <string name="history_search_placeholder">対局者名・日付で検索</string>

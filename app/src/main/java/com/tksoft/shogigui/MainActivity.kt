@@ -250,6 +250,8 @@ class MainActivity : ComponentActivity() {
                         prefs.getInt("thread_count", (maxThreads - 1).coerceAtLeast(1)).coerceIn(1, maxThreads)
                     )
                 }
+                // 画面のレイアウト。auto は画面の大きさと縦横比から選ぶ (portrait / square / landscape)
+                var layoutMode by remember { mutableStateOf(prefs.getString("layout_mode", LAYOUT_AUTO) ?: LAYOUT_AUTO) }
                 var showSettingsDialog by remember { mutableStateOf(false) }
                 var showHistoryDialog by remember { mutableStateOf(false) }
                 var selectedPvRank by remember { mutableStateOf<Int?>(null) }
@@ -723,25 +725,33 @@ class MainActivity : ComponentActivity() {
 
                 // 横長レイアウトで盤を最大化しているか (bottomBar と読み筋カードを隠し、盤の上に1行だけ置く)
                 var maximized by rememberSaveable { mutableStateOf(false) }
-                val isWide = androidx.compose.ui.platform.LocalConfiguration.current.screenWidthDp >= 840
+                // レイアウトは3種類:
+                //  portrait  … 縦長。上から対局者・盤・対局者・読み筋カード、形勢グラフとボタンは下部バー (スマホ、タブレットの縦向き)
+                //  square    … ほぼ正方形。盤の右の列に対局者と読み筋カード、形勢グラフとボタンは下部バー (Fold を開いたとき)
+                //  landscape … 横長。左に盤だけを画面の高さいっぱいに置き、右の列に対局者・読み筋カード・形勢グラフ・ボタン (タブレットの横向き)
+                // 自動では、幅 840dp 以上で横に並べる列を使い、そのうち幅が高さの 1.4 倍以上なら landscape にする
+                // (正方形に近い画面で landscape にすると右の列が狭くなりすぎる)
+                val effectiveLayout = run {
+                    val conf = androidx.compose.ui.platform.LocalConfiguration.current
+                    when {
+                        layoutMode != LAYOUT_AUTO -> layoutMode
+                        conf.screenWidthDp < 840 -> LAYOUT_PORTRAIT
+                        conf.screenWidthDp >= conf.screenHeightDp * 1.4f -> LAYOUT_LANDSCAPE
+                        else -> LAYOUT_SQUARE
+                    }
+                }
+                val isWide = effectiveLayout != LAYOUT_PORTRAIT
                 val showMaximized = maximized && isWide
                 androidx.activity.compose.BackHandler(enabled = showMaximized) { maximized = false }
+                // landscape では形勢グラフとボタンを下部バーではなく右の列の下に置き、盤を画面の高さいっぱいに大きくする
+                val sidePanel = effectiveLayout == LAYOUT_LANDSCAPE && !showMaximized
+                if (sidePanel) SideEffect { bottomBarHeightPx = 0 }
 
-                Box(modifier = Modifier.fillMaxSize()) {
-                Scaffold(
-                    modifier = Modifier.fillMaxSize(),
-                    containerColor = MaterialTheme.colorScheme.surfaceContainerLowest,
-                    bottomBar = {
-                        if (!showMaximized) Surface(
-                            color = MaterialTheme.colorScheme.surfaceContainer.copy(alpha = 0.85f),
-                            modifier = Modifier
-                                .fillMaxWidth()
-                                .onSizeChanged { bottomBarHeightPx = it.height }
-                        ) {
+                // 形勢グラフ (樹形図) とボタンの行。下部バーか、横長の画面では右の列の下に置く
+                val controls: @Composable () -> Unit = {
                             Column(
                                 modifier = Modifier
                                     .fillMaxWidth()
-                                    .navigationBarsPadding()
                                     .padding(horizontal = 8.dp, vertical = 4.dp)
                             ) {
                                 KifuTreeSection(currentNode, currentPath) { node ->
@@ -825,6 +835,20 @@ class MainActivity : ComponentActivity() {
                                     }
                                 }
                             }
+                }
+
+                Box(modifier = Modifier.fillMaxSize()) {
+                Scaffold(
+                    modifier = Modifier.fillMaxSize(),
+                    containerColor = MaterialTheme.colorScheme.surfaceContainerLowest,
+                    bottomBar = {
+                        if (!showMaximized && !sidePanel) Surface(
+                            color = MaterialTheme.colorScheme.surfaceContainer.copy(alpha = 0.85f),
+                            modifier = Modifier
+                                .fillMaxWidth()
+                                .onSizeChanged { bottomBarHeightPx = it.height }
+                        ) {
+                            Box(modifier = Modifier.navigationBarsPadding()) { controls() }
                         }
                     }
                 ) { innerPadding ->
@@ -835,7 +859,7 @@ class MainActivity : ComponentActivity() {
                             val headerHeight = 120.dp
                             val gap = 8.dp
                             // 盤は縦長 (boardCellAspect) なので、高さから決めるときは幅を縮める
-                            val boardWidth = minOf(maxWidth, (maxHeight - headerHeight - gap) * boardCellAspect).coerceAtLeast(0.dp)
+                            val boardWidth = minOf(maxWidth, boardWidthForHeight(maxHeight - headerHeight - gap, boardExtraHeight())).coerceAtLeast(0.dp)
                             Column(
                                 modifier = Modifier.fillMaxSize(),
                                 horizontalAlignment = Alignment.CenterHorizontally,
@@ -871,11 +895,13 @@ class MainActivity : ComponentActivity() {
                         BoxWithConstraints(modifier = Modifier.fillMaxSize().padding(innerPadding).padding(8.dp)) {
                             val gap = 8.dp
                             val menuWidth = 48.dp
-                            // 右の列の幅は持ち駒が全種類並ぶだけ取り、残りを盤にする
-                            val minSideWidth = 260.dp
-                            val boardWidth = minOf(maxWidth - menuWidth - minSideWidth - gap * 2, maxHeight * boardCellAspect).coerceAtLeast(0.dp)
+                            // 右の列の幅は持ち駒が全種類並ぶだけ (形勢グラフとボタンも置くときはそれらが使える幅) 取り、残りを盤にする
+                            val minSideWidth = if (sidePanel) 400.dp else 260.dp
+                            // 盤の高さには筋の数字の行も含めて、画面の高さに収める (文字を大きくする設定だと数字の行が高くなる)
+                            val extraHeight = boardExtraHeight()
+                            val boardWidth = minOf(maxWidth - menuWidth - minSideWidth - gap * 2, boardWidthForHeight(maxHeight, extraHeight)).coerceAtLeast(0.dp)
                             Row(horizontalArrangement = Arrangement.spacedBy(gap)) {
-                                Column(modifier = Modifier.height(boardWidth / boardCellAspect), verticalArrangement = Arrangement.SpaceBetween) {
+                                Column(modifier = Modifier.height(boardHeightForWidth(boardWidth, extraHeight)), verticalArrangement = Arrangement.SpaceBetween) {
                                     MenuButton(Modifier.padding(top = 4.dp)) { showMenu = true }
                                     FlipButton { isBoardFlipped = !isBoardFlipped }
                                 }
@@ -892,6 +918,13 @@ class MainActivity : ComponentActivity() {
                                         pvCards()
                                     }
                                     playerSection(botP, true)
+                                    if (sidePanel) {
+                                        Spacer(modifier = Modifier.height(8.dp))
+                                        Surface(
+                                            color = MaterialTheme.colorScheme.surfaceContainer,
+                                            shape = MaterialTheme.shapes.extraLarge
+                                        ) { controls() }
+                                    }
                                 }
                             }
                         }
@@ -902,8 +935,8 @@ class MainActivity : ComponentActivity() {
                         val isTablet = androidx.compose.ui.platform.LocalConfiguration.current.smallestScreenWidthDp >= 600
                         BoxWithConstraints(modifier = Modifier.fillMaxSize().padding(top = innerPadding.calculateTopPadding())) {
                             // 盤の幅のうちマス以外 (段の数字の列と枠の余白) と、盤の高さのうちマス以外 (上下の余白・筋の数字の行)
-                            val boardExtraWidth = 22.dp
-                            val boardExtraHeight = 40.dp
+                            // (上下の余白 8dp ずつと、文字の大きさの設定で高さが変わる筋の数字の行を含む)
+                            val boardExtraHeight = boardExtraHeight() + 16.dp
                             val fullBoardWidth = maxWidth - 12.dp
                             val boardWidth = run {
                                 val names = with(density) { ((nameHeights[Player.SENTE] ?: 0) + (nameHeights[Player.GOTE] ?: 0)).toDp() }
@@ -965,6 +998,8 @@ class MainActivity : ComponentActivity() {
                     exit = androidx.compose.animation.fadeOut(),
                     modifier = Modifier
                         .align(Alignment.BottomCenter)
+                        // 下部バーがない横長レイアウトでは、ナビゲーションバーの上に出す
+                        .then(if (sidePanel) Modifier.navigationBarsPadding() else Modifier)
                         .padding(bottom = with(density) { bottomBarHeightPx.toDp() } + 8.dp)
                 ) {
                     var shownName by remember { mutableStateOf("") }
@@ -1104,6 +1139,7 @@ class MainActivity : ComponentActivity() {
                     var pendingTimeMs by remember { mutableLongStateOf(analysisTimeMs) }
                     var pendingMultiPv by remember { mutableIntStateOf(multiPvCount) }
                     var pendingThreads by remember { mutableIntStateOf(threadCount) }
+                    var pendingLayout by remember { mutableStateOf(layoutMode) }
                     AlertDialog(onDismissRequest = { showSettingsDialog = false }, title = { Text(
                         text = buildAnnotatedString {
                             append(stringResource(R.string.settings_title_prefix))
@@ -1119,7 +1155,8 @@ class MainActivity : ComponentActivity() {
                         style = MaterialTheme.typography.bodyMedium
                     ) },
                         text = {
-                            Column(verticalArrangement = Arrangement.spacedBy(16.dp)) {
+                            // 項目が増えて低い画面では収まらないので、スクロールできるようにする
+                            Column(verticalArrangement = Arrangement.spacedBy(16.dp), modifier = Modifier.verticalScroll(rememberScrollState())) {
                                 // エンジン選択
                                 Column {
                                     Text(stringResource(R.string.settings_engine_label), style = MaterialTheme.typography.labelMedium)
@@ -1199,6 +1236,29 @@ class MainActivity : ComponentActivity() {
                                         )
                                     }
                                 }
+
+                                // レイアウト
+                                Column {
+                                    Text(stringResource(R.string.settings_layout_label), style = MaterialTheme.typography.labelMedium)
+                                    listOf(
+                                        LAYOUT_AUTO to R.string.settings_layout_auto,
+                                        LAYOUT_PORTRAIT to R.string.settings_layout_portrait,
+                                        LAYOUT_SQUARE to R.string.settings_layout_square,
+                                        LAYOUT_LANDSCAPE to R.string.settings_layout_landscape,
+                                    ).forEach { (id, label) ->
+                                        Row(
+                                            verticalAlignment = Alignment.CenterVertically,
+                                            modifier = Modifier.fillMaxWidth().heightIn(min = 48.dp).selectable(
+                                                selected = pendingLayout == id,
+                                                onClick = { pendingLayout = id },
+                                                role = androidx.compose.ui.semantics.Role.RadioButton,
+                                            ),
+                                        ) {
+                                            RadioButton(selected = pendingLayout == id, onClick = null)
+                                            Text(stringResource(label), modifier = Modifier.weight(1f))
+                                        }
+                                    }
+                                }
                             }
                         },
                         confirmButton = {
@@ -1206,7 +1266,9 @@ class MainActivity : ComponentActivity() {
                                 analysisTimeMs = pendingTimeMs
                                 multiPvCount = pendingMultiPv
                                 threadCount = pendingThreads
+                                layoutMode = pendingLayout
                                 prefs.edit().putLong("analysis_time", analysisTimeMs)
+                                    .putString("layout_mode", layoutMode)
                                     .putInt("multi_pv", multiPvCount)
                                     .putInt("thread_count", threadCount)
                                     .putString("selected_engine", pendingEngine)
@@ -1623,6 +1685,8 @@ fun EngineReadyToast(engineName: String, bannerRes: Int? = null) {
     Box(
         modifier = Modifier
             .padding(horizontal = 32.dp)
+            // 横長の画面で画面いっぱいに広げると、バナーの絵の上下が大きく切れて何の絵か分からなくなるので、幅を抑える
+            .widthIn(max = 480.dp)
             .clip(shape)
             .background(MaterialTheme.colorScheme.inverseSurface.copy(alpha = 0.4f))
             .then(if (bannerRes != null) Modifier.fillMaxWidth().heightIn(min = 72.dp) else Modifier),
@@ -1780,6 +1844,12 @@ private fun RowScope.BarButton(
         }
     }
 }
+
+// 設定のレイアウトの値 (SharedPreferences の layout_mode)
+private const val LAYOUT_AUTO = "auto"
+private const val LAYOUT_PORTRAIT = "portrait"
+private const val LAYOUT_SQUARE = "square"
+private const val LAYOUT_LANDSCAPE = "landscape"
 
 // 最大化したときの前の手・次の手のボタン（長押しで連続）
 @Composable

@@ -260,10 +260,12 @@ fun ShogiGUITheme(
     }
 
     // タブレット (短い辺が 600dp 以上) では画面に対して文字が小さく見えるので、文字だけ大きくする。
-    // 盤の駒の字はマスの幅から決めているので変わらない
+    // 盤の駒の字はマスの幅から決めているので変わらない。
+    // 端末の文字の大きさの設定 (fontScale) は使わず、どの設定でも同じ文字の大きさにする。
+    // 設定によって文字だけが大きくなり、盤・ボタンなどの配置が崩れたりはみ出したりするのを防ぐため
     val density = LocalDensity.current
     val textScale = if (LocalConfiguration.current.smallestScreenWidthDp >= 600) 1.2f else 1f
-    CompositionLocalProvider(LocalDensity provides Density(density.density, density.fontScale * textScale)) {
+    CompositionLocalProvider(LocalDensity provides Density(density.density, textScale)) {
         MaterialTheme(
             colorScheme = colorScheme,
             typography = Typography,

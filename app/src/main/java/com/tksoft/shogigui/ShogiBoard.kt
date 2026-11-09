@@ -11,6 +11,7 @@ import androidx.compose.foundation.border
 import androidx.compose.foundation.clickable
 import androidx.compose.foundation.interaction.MutableInteractionSource
 import androidx.compose.foundation.layout.*
+import androidx.compose.material3.LocalTextStyle
 import androidx.compose.material3.MaterialTheme
 import androidx.compose.material3.Text
 import androidx.compose.runtime.Composable
@@ -108,7 +109,7 @@ fun ShogiBoard(
         Row(modifier = Modifier.fillMaxWidth().padding(end = 18.dp)) {
             for (col in 0 until 9) {
                 Box(modifier = Modifier.weight(1f), contentAlignment = Alignment.Center) {
-                    Text(text = (9 - col).toString(), fontSize = 10.sp, color = labelColor)
+                    Text(text = (9 - col).toString(), fontSize = boardLabelFontSize, color = labelColor)
                 }
             }
         }
@@ -197,7 +198,7 @@ fun ShogiBoard(
                     ) {
                         Text(
                             text = kanjiNumbers[row],
-                            fontSize = 10.sp,
+                            fontSize = boardLabelFontSize,
                             color = labelColor,
                             //fontFamily = shogiFont,
                             )
@@ -447,6 +448,29 @@ private const val restingArrowAlpha = 0.35f
 private const val restingLabelFadeMillis = 2000
 // 盤の1マスの縦横比（横 / 縦）。実物の将棋盤は縦が少し長い
 internal const val boardCellAspect = 11f / 12f
+
+// 盤のうちマス以外の幅 (段の数字の列 18dp と左右の余白 2dp ずつ)
+internal val boardExtraWidth = 22.dp
+
+// 盤のうちマス以外の高さ (筋の数字の行・その下の隙間 2dp・上下の余白 2dp ずつ)。
+// 筋の数字の行の高さは端末の文字の大きさの設定で変わるので、実際の文字で測る
+@Composable
+internal fun boardExtraHeight(): Dp {
+    val measurer = rememberTextMeasurer()
+    val style = LocalTextStyle.current.merge(TextStyle(fontSize = boardLabelFontSize))
+    val labelHeight = remember(measurer, style) { measurer.measure("9", style).size.height }
+    return with(LocalDensity.current) { labelHeight.toDp() } + 6.dp
+}
+
+// 盤の幅から盤全体 (数字の行・列と余白を含む) の高さを求める
+internal fun boardHeightForWidth(width: Dp, extraHeight: Dp): Dp =
+    (width - boardExtraWidth) / boardCellAspect + extraHeight
+
+// 盤全体が maxHeight の高さに収まる最大の幅
+internal fun boardWidthForHeight(maxHeight: Dp, extraHeight: Dp): Dp =
+    (maxHeight - extraHeight) * boardCellAspect + boardExtraWidth
+
+private val boardLabelFontSize = 10.sp
 
 // 駒打ちの矢印: 持ち駒 (別コンポーネント) から盤面のマスへ引く。ShogiBoard の外側、画面全体を覆う
 // オーバーレイとして使い、LayoutCoordinates.localPositionOf で座標系をまたいで位置を合わせる
