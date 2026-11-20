@@ -1,0 +1,2 @@
+- The screen now stays on during kifu analysis
+- Added a setting to show or hide the arrow for the actual next move during analysis
