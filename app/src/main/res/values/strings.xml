@@ -37,6 +37,7 @@
     <string name="settings_threads_label">Thread count</string>
     <string name="settings_save">Save</string>
     <string name="settings_layout_label">Layout</string>
+    <string name="settings_next_move_arrow">Show the actual next move as an arrow</string>
     <string name="settings_layout_auto">Auto</string>
     <string name="settings_layout_portrait">Portrait</string>
     <string name="settings_layout_square">Square</string>

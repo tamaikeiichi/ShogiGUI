@@ -3,6 +3,7 @@ package com.tksoft.shogigui
 import android.content.Intent
 import android.net.Uri
 import android.os.Bundle
+import android.view.WindowManager
 import androidx.activity.ComponentActivity
 import androidx.activity.compose.rememberLauncherForActivityResult
 import androidx.activity.compose.setContent
@@ -21,6 +22,7 @@ import androidx.compose.foundation.lazy.items
 import androidx.compose.foundation.isSystemInDarkTheme
 import androidx.compose.foundation.rememberScrollState
 import androidx.compose.foundation.selection.selectable
+import androidx.compose.foundation.selection.toggleable
 import androidx.compose.foundation.verticalScroll
 import androidx.compose.foundation.gestures.draggable
 import androidx.compose.material.icons.outlined.*
@@ -241,6 +243,12 @@ class MainActivity : ComponentActivity() {
                 var isAnalysisMode by remember { mutableStateOf(false) }
                 var isEngineReady by remember { mutableStateOf(false) }
 
+                // 棋譜解析中は画面を消さない（放置して解析させることが多いため）
+                DisposableEffect(isAutoAnalysis) {
+                    if (isAutoAnalysis) window.addFlags(WindowManager.LayoutParams.FLAG_KEEP_SCREEN_ON)
+                    onDispose { window.clearFlags(WindowManager.LayoutParams.FLAG_KEEP_SCREEN_ON) }
+                }
+
                 var analysisTimeMs by remember { mutableLongStateOf(prefs.getLong("analysis_time", 1000L)) }
                 var multiPvCount by remember { mutableIntStateOf(prefs.getInt("multi_pv", 3)) }
                 // 端末のコア数に合わせる（デフォルトは最大コア数 - 1）
@@ -252,6 +260,8 @@ class MainActivity : ComponentActivity() {
                 }
                 // 画面のレイアウト。auto は画面の大きさと縦横比から選ぶ (portrait / square / landscape)
                 var layoutMode by remember { mutableStateOf(prefs.getString("layout_mode", LAYOUT_AUTO) ?: LAYOUT_AUTO) }
+                // 解析中に実戦の次の手（本譜で実際に指した手）を矢印で表示するか
+                var showNextMoveArrow by remember { mutableStateOf(prefs.getBoolean("show_next_move_arrow", true)) }
                 var showSettingsDialog by remember { mutableStateOf(false) }
                 var showHistoryDialog by remember { mutableStateOf(false) }
                 var selectedPvRank by remember { mutableStateOf<Int?>(null) }
@@ -654,7 +664,7 @@ class MainActivity : ComponentActivity() {
                         val ringColor = if (actualNext != null && isSameMove(usi, currentNode, actualNext)) actualMoveRingColor(currentPlayer) else null
                         moveArrowFromUsi(usi, pvFillColors[i], pvEdgeColors[i], order.toString(), ringColor)?.let { add(it) }
                     }
-                    actualNext?.let { next ->
+                    actualNext?.takeIf { showNextMoveArrow }?.let { next ->
                         val to = next.lastTo ?: return@let
                         val dropType = if (next.lastFrom == null) next.board[to]?.type else null
                         add(MoveArrow(next.lastFrom, to, dropType, fillColor = null, edgeColor = nextMoveEdgeColor))
@@ -1159,6 +1169,7 @@ class MainActivity : ComponentActivity() {
                     var pendingMultiPv by remember { mutableIntStateOf(multiPvCount) }
                     var pendingThreads by remember { mutableIntStateOf(threadCount) }
                     var pendingLayout by remember { mutableStateOf(layoutMode) }
+                    var pendingShowNextMoveArrow by remember { mutableStateOf(showNextMoveArrow) }
                     AlertDialog(onDismissRequest = { showSettingsDialog = false }, title = { Text(
                         text = buildAnnotatedString {
                             append(stringResource(R.string.settings_title_prefix))
@@ -1278,6 +1289,19 @@ class MainActivity : ComponentActivity() {
                                         }
                                     }
                                 }
+
+                                // 実戦の次の手の矢印。文字の部分をタップしても切り替わるよう、行全体を対象にする
+                                Row(
+                                    verticalAlignment = Alignment.CenterVertically,
+                                    modifier = Modifier.fillMaxWidth().heightIn(min = 48.dp).toggleable(
+                                        value = pendingShowNextMoveArrow,
+                                        onValueChange = { pendingShowNextMoveArrow = it },
+                                        role = androidx.compose.ui.semantics.Role.Checkbox,
+                                    ),
+                                ) {
+                                    Checkbox(checked = pendingShowNextMoveArrow, onCheckedChange = null)
+                                    Text(stringResource(R.string.settings_next_move_arrow), modifier = Modifier.weight(1f))
+                                }
                             }
                         },
                         confirmButton = {
@@ -1286,8 +1310,10 @@ class MainActivity : ComponentActivity() {
                                 multiPvCount = pendingMultiPv
                                 threadCount = pendingThreads
                                 layoutMode = pendingLayout
+                                showNextMoveArrow = pendingShowNextMoveArrow
                                 prefs.edit().putLong("analysis_time", analysisTimeMs)
                                     .putString("layout_mode", layoutMode)
+                                    .putBoolean("show_next_move_arrow", showNextMoveArrow)
                                     .putInt("multi_pv", multiPvCount)
                                     .putInt("thread_count", threadCount)
                                     .putString("selected_engine", pendingEngine)

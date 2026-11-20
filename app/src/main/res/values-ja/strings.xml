@@ -37,6 +37,7 @@
     <string name="settings_threads_label">スレッド数</string>
     <string name="settings_save">保存</string>
     <string name="settings_layout_label">レイアウト</string>
+    <string name="settings_next_move_arrow">実戦の次の手を矢印で表示</string>
     <string name="settings_layout_auto">自動</string>
     <string name="settings_layout_portrait">縦長</string>
     <string name="settings_layout_square">正方形</string>
