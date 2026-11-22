@@ -30,6 +30,8 @@ import androidx.compose.foundation.shape.CircleShape
 import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.automirrored.filled.ArrowBack
 import androidx.compose.material.icons.automirrored.filled.ArrowForward
+import androidx.compose.material.icons.automirrored.outlined.Undo
+import androidx.compose.material.icons.automirrored.outlined.Backspace
 import androidx.compose.runtime.saveable.rememberSaveable
 import androidx.compose.material.icons.filled.ContentPaste
 import androidx.compose.material.icons.filled.Menu
@@ -231,6 +233,16 @@ class MainActivity : ComponentActivity() {
                 // 解析結果は局面（ノード）ごとに保持する。手数で持つと別の手順の同じ手数の結果が表示されてしまう
                 val analysisHistory = remember { mutableStateMapOf<KifuNode, Map<Int, String>>() }
                 val analysisUsiHistory = remember { mutableStateMapOf<KifuNode, Map<Int, List<String>>>() }
+
+                // 「最終手を削除」「分岐を削除」を元に戻すための履歴（新しいものが末尾）。アプリを閉じると消える
+                val deletedLastMoves = remember { mutableStateListOf<DeletedNode>() }
+                val deletedBranches = remember { mutableStateListOf<DeletedBranches>() }
+                // 別の棋譜を開いたら、前の棋譜の削除履歴は捨てる
+                val treeRoot = getRootNode(currentNode)
+                LaunchedEffect(treeRoot) {
+                    deletedLastMoves.removeAll { getRootNode(it.parent) !== treeRoot }
+                    deletedBranches.removeAll { b -> b.nodes.any { getRootNode(it.parent) !== treeRoot } }
+                }
 
                 var bestmoveReceived by remember { mutableStateOf(false) }
                 var humanPlayer by remember { mutableStateOf<Player?>(null) }
@@ -1071,6 +1083,7 @@ class MainActivity : ComponentActivity() {
                                     analysisHistory.clear(); analysisUsiHistory.clear()
                                     selectedSquare = null; selectedHandPiece = null
                                     resetKey++
+                                    deletedLastMoves.clear(); deletedBranches.clear()
                                     prefs.edit()
                                         .remove("current_tree")
                                         .remove("sente_name")
@@ -1081,19 +1094,77 @@ class MainActivity : ComponentActivity() {
                                         .apply()
                                     showMenu = false
                                 })
+                            MenuItem(Icons.AutoMirrored.Outlined.Backspace,
+                                text = { Text(stringResource(R.string.menu_delete_last_move)) },
+                                // 本譜・分岐の最後の手（次の手がない局面）を表示しているときだけ使える
+                                enabled = currentNode.parent != null && currentNode.children.isEmpty(),
+                                onClick = {
+                                    val node = currentNode
+                                    val parent = node.parent
+                                    val index = parent?.children?.indexOf(node) ?: -1
+                                    if (parent != null && index >= 0) {
+                                        deletedLastMoves.add(DeletedNode(parent, node, index, analysisHistory[node], analysisUsiHistory[node]))
+                                        parent.children.removeAt(index)
+                                        analysisHistory.remove(node); analysisUsiHistory.remove(node)
+                                        pvBranchPath?.let { path ->
+                                            val rest = path.filter { it !== node }
+                                            if (rest.isEmpty()) { pvBranchPath = null; pinnedPvList = emptyMap(); pinnedPvUsiList = emptyMap() }
+                                            else pvBranchPath = rest
+                                        }
+                                        currentNode = parent
+                                        selectedSquare = null; selectedHandPiece = null
+                                        resetKey++
+                                        saveKifu(parent)
+                                    }
+                                    showMenu = false
+                                })
+                            MenuItem(androidx.compose.material.icons.Icons.AutoMirrored.Outlined.Undo,
+                                text = { Text(stringResource(R.string.menu_undo_delete_last_move)) },
+                                enabled = deletedLastMoves.isNotEmpty(),
+                                onClick = {
+                                    val d = deletedLastMoves.removeAt(deletedLastMoves.lastIndex)
+                                    // 削除のあとで同じ手を指し直していたら、その手へ移るだけにする
+                                    val same = d.parent.children.firstOrNull {
+                                        it.moveLabel == d.node.moveLabel && it.isPvBranch == d.node.isPvBranch && it.pvColorIndex == d.node.pvColorIndex
+                                    }
+                                    if (same != null) {
+                                        currentNode = same
+                                    } else {
+                                        d.parent.children.add(d.index.coerceAtMost(d.parent.children.size), d.node)
+                                        d.pv?.let { analysisHistory[d.node] = it }
+                                        d.usi?.let { analysisUsiHistory[d.node] = it }
+                                        currentNode = d.node
+                                    }
+                                    if (pvBranchPath != null) { pvBranchPath = null; pinnedPvList = emptyMap(); pinnedPvUsiList = emptyMap() }
+                                    selectedSquare = null; selectedHandPiece = null
+                                    resetKey++
+                                    saveKifu(d.parent)
+                                    showMenu = false
+                                })
                             MenuItem(Icons.Outlined.ContentCut,
                                 text = { Text(stringResource(R.string.menu_delete_branches)) },
+                                // 分岐（読み筋を含む）上の局面を表示しているときだけ使える
+                                enabled = !isOnMainLine,
                                 onClick = {
                                     // 本譜（最初の非PV子の列）だけを残し、それ以外の子（分岐・読み筋）を削除する。
                                     // 本譜の各手の評価値はノードに残るので形勢グラフもそのまま
                                     val root = getRootNode(currentNode)
                                     val mainLine = HashSet<KifuNode>()
+                                    val removed = mutableListOf<DeletedNode>()
                                     var n: KifuNode? = root
                                     while (n != null) {
-                                        mainLine.add(n)
-                                        val next = n.children.firstOrNull { !it.isPvBranch }
-                                        n.children.removeAll { it !== next }
+                                        val cur: KifuNode = n
+                                        mainLine.add(cur)
+                                        val next = cur.children.firstOrNull { !it.isPvBranch }
+                                        cur.children.forEachIndexed { i, c -> if (c !== next) removed.add(DeletedNode(cur, c, i, null, null)) }
+                                        cur.children.removeAll { it !== next }
                                         n = next
+                                    }
+                                    // 元に戻せるよう、消した分岐と、その上の局面の解析結果を覚えておく
+                                    if (removed.isNotEmpty()) {
+                                        deletedBranches.add(DeletedBranches(removed,
+                                            analysisHistory.filterKeys { it !in mainLine },
+                                            analysisUsiHistory.filterKeys { it !in mainLine }))
                                     }
                                     // 削除した分岐上にいたら、本譜上の分岐点へ戻る
                                     var p: KifuNode? = currentNode
@@ -1103,6 +1174,25 @@ class MainActivity : ComponentActivity() {
                                     analysisHistory.keys.retainAll(mainLine); analysisUsiHistory.keys.retainAll(mainLine)
                                     selectedSquare = null; selectedHandPiece = null
                                     saveKifu(root)
+                                    showMenu = false
+                                })
+                            MenuItem(Icons.Outlined.SettingsBackupRestore,
+                                text = { Text(stringResource(R.string.menu_undo_delete_branches)) },
+                                enabled = deletedBranches.isNotEmpty(),
+                                onClick = {
+                                    val d = deletedBranches.removeAt(deletedBranches.lastIndex)
+                                    // 元の並び順に戻す（同じ親の中では小さい位置から順に差し込む）。
+                                    // 削除のあとで同じ手を指し直していたら、そちらを残す
+                                    for (r in d.nodes) {
+                                        val dup = r.parent.children.any {
+                                            it.moveLabel == r.node.moveLabel && it.isPvBranch == r.node.isPvBranch && it.pvColorIndex == r.node.pvColorIndex
+                                        }
+                                        if (!dup) r.parent.children.add(r.index.coerceAtMost(r.parent.children.size), r.node)
+                                    }
+                                    d.pv.forEach { (k, v) -> if (k !in analysisHistory) analysisHistory[k] = v }
+                                    d.usi.forEach { (k, v) -> if (k !in analysisUsiHistory) analysisUsiHistory[k] = v }
+                                    resetKey++
+                                    saveKifu(currentNode)
                                     showMenu = false
                                 })
                             MenuItem(Icons.Outlined.FastForward,
@@ -2003,12 +2093,15 @@ private fun FullScreenMenu(onClose: () -> Unit, content: @Composable ColumnScope
 
 // メニューの1項目
 @Composable
-private fun MenuItem(icon: androidx.compose.ui.graphics.vector.ImageVector, text: @Composable () -> Unit, onClick: () -> Unit) =
-    MenuItem({ Icon(icon, contentDescription = null) }, text, onClick)
+private fun MenuItem(icon: androidx.compose.ui.graphics.vector.ImageVector, text: @Composable () -> Unit, enabled: Boolean = true, onClick: () -> Unit) =
+    MenuItem({ Icon(icon, contentDescription = null) }, text, enabled, onClick)
 
 @Composable
-private fun MenuItem(icon: @Composable () -> Unit, text: @Composable () -> Unit, onClick: () -> Unit) {
-    Surface(onClick = onClick, shape = androidx.compose.foundation.shape.CircleShape, color = Color.Transparent, modifier = Modifier.fillMaxWidth()) {
+private fun MenuItem(icon: @Composable () -> Unit, text: @Composable () -> Unit, enabled: Boolean = true, onClick: () -> Unit) {
+    Surface(onClick = onClick, enabled = enabled, shape = androidx.compose.foundation.shape.CircleShape, color = Color.Transparent, modifier = Modifier.fillMaxWidth()) {
+        // 使えないときはグレーアウトする
+        val contentColor = LocalContentColor.current.let { if (enabled) it else it.copy(alpha = 0.38f) }
+        CompositionLocalProvider(LocalContentColor provides contentColor) {
         Row(
             modifier = Modifier.heightIn(min = 56.dp).padding(horizontal = 16.dp, vertical = 12.dp),
             verticalAlignment = Alignment.CenterVertically,
@@ -2016,6 +2109,7 @@ private fun MenuItem(icon: @Composable () -> Unit, text: @Composable () -> Unit,
         ) {
             icon()
             ProvideTextStyle(MaterialTheme.typography.titleLarge.copy(fontSize = 19.sp)) { text() }
+        }
         }
     }
 }
@@ -2028,3 +2122,19 @@ private fun MarkIcon(mark: String) {
         Text(mark, fontSize = 16.sp, fontWeight = FontWeight.Bold, maxLines = 1, softWrap = false)
     }
 }
+
+// 削除した1手（とその先）。削除前は parent.children の index の位置にあった
+class DeletedNode(
+    val parent: KifuNode,
+    val node: KifuNode,
+    val index: Int,
+    val pv: Map<Int, String>?,
+    val usi: Map<Int, List<String>>?
+)
+
+// 「分岐を削除」1回分で消したものすべて
+class DeletedBranches(
+    val nodes: List<DeletedNode>,
+    val pv: Map<KifuNode, Map<Int, String>>,
+    val usi: Map<KifuNode, Map<Int, List<String>>>
+)
