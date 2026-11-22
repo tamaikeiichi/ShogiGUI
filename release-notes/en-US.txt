@@ -1,2 +1,4 @@
-- The screen now stays on during kifu analysis
-- Added a setting to show or hide the arrow for the actual next move during analysis
+- Added "Delete last move" to the menu (available when the last move of the main line or a branch is shown)
+- Added "Undo delete last move": deleted moves can be restored one at a time
+- Added "Restore deleted branches"
+- "Delete branches" is now available only when a branch is shown
