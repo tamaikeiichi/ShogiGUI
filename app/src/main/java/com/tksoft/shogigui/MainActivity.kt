@@ -234,14 +234,13 @@ class MainActivity : ComponentActivity() {
                 val analysisHistory = remember { mutableStateMapOf<KifuNode, Map<Int, String>>() }
                 val analysisUsiHistory = remember { mutableStateMapOf<KifuNode, Map<Int, List<String>>>() }
 
-                // 「最終手を削除」「分岐を削除」を元に戻すための履歴（新しいものが末尾）。アプリを閉じると消える
-                val deletedLastMoves = remember { mutableStateListOf<DeletedNode>() }
-                val deletedBranches = remember { mutableStateListOf<DeletedBranches>() }
+                // 「最終手を削除」「分岐を削除」を元に戻すための履歴（両方を削除した順に1本で持ち、新しいものが末尾）。
+                // アプリを閉じると消える
+                val deletions = remember { mutableStateListOf<Deletion>() }
                 // 別の棋譜を開いたら、前の棋譜の削除履歴は捨てる
                 val treeRoot = getRootNode(currentNode)
                 LaunchedEffect(treeRoot) {
-                    deletedLastMoves.removeAll { getRootNode(it.parent) !== treeRoot }
-                    deletedBranches.removeAll { b -> b.nodes.any { getRootNode(it.parent) !== treeRoot } }
+                    deletions.removeAll { d -> d.nodes.any { getRootNode(it.parent) !== treeRoot } }
                 }
 
                 var bestmoveReceived by remember { mutableStateOf(false) }
@@ -1083,7 +1082,7 @@ class MainActivity : ComponentActivity() {
                                     analysisHistory.clear(); analysisUsiHistory.clear()
                                     selectedSquare = null; selectedHandPiece = null
                                     resetKey++
-                                    deletedLastMoves.clear(); deletedBranches.clear()
+                                    deletions.clear()
                                     prefs.edit()
                                         .remove("current_tree")
                                         .remove("sente_name")
@@ -1103,7 +1102,10 @@ class MainActivity : ComponentActivity() {
                                     val parent = node.parent
                                     val index = parent?.children?.indexOf(node) ?: -1
                                     if (parent != null && index >= 0) {
-                                        deletedLastMoves.add(DeletedNode(parent, node, index, analysisHistory[node], analysisUsiHistory[node]))
+                                        deletions.add(Deletion(listOf(DeletedNode(parent, node, index)),
+                                            analysisHistory[node]?.let { mapOf(node to it) } ?: emptyMap(),
+                                            analysisUsiHistory[node]?.let { mapOf(node to it) } ?: emptyMap(),
+                                            isLastMove = true))
                                         parent.children.removeAt(index)
                                         analysisHistory.remove(node); analysisUsiHistory.remove(node)
                                         pvBranchPath?.let { path ->
@@ -1116,29 +1118,6 @@ class MainActivity : ComponentActivity() {
                                         resetKey++
                                         saveKifu(parent)
                                     }
-                                    showMenu = false
-                                })
-                            MenuItem(androidx.compose.material.icons.Icons.AutoMirrored.Outlined.Undo,
-                                text = { Text(stringResource(R.string.menu_undo_delete_last_move)) },
-                                enabled = deletedLastMoves.isNotEmpty(),
-                                onClick = {
-                                    val d = deletedLastMoves.removeAt(deletedLastMoves.lastIndex)
-                                    // 削除のあとで同じ手を指し直していたら、その手へ移るだけにする
-                                    val same = d.parent.children.firstOrNull {
-                                        it.moveLabel == d.node.moveLabel && it.isPvBranch == d.node.isPvBranch && it.pvColorIndex == d.node.pvColorIndex
-                                    }
-                                    if (same != null) {
-                                        currentNode = same
-                                    } else {
-                                        d.parent.children.add(d.index.coerceAtMost(d.parent.children.size), d.node)
-                                        d.pv?.let { analysisHistory[d.node] = it }
-                                        d.usi?.let { analysisUsiHistory[d.node] = it }
-                                        currentNode = d.node
-                                    }
-                                    if (pvBranchPath != null) { pvBranchPath = null; pinnedPvList = emptyMap(); pinnedPvUsiList = emptyMap() }
-                                    selectedSquare = null; selectedHandPiece = null
-                                    resetKey++
-                                    saveKifu(d.parent)
                                     showMenu = false
                                 })
                             MenuItem(Icons.Outlined.ContentCut,
@@ -1156,15 +1135,16 @@ class MainActivity : ComponentActivity() {
                                         val cur: KifuNode = n
                                         mainLine.add(cur)
                                         val next = cur.children.firstOrNull { !it.isPvBranch }
-                                        cur.children.forEachIndexed { i, c -> if (c !== next) removed.add(DeletedNode(cur, c, i, null, null)) }
+                                        cur.children.forEachIndexed { i, c -> if (c !== next) removed.add(DeletedNode(cur, c, i)) }
                                         cur.children.removeAll { it !== next }
                                         n = next
                                     }
                                     // 元に戻せるよう、消した分岐と、その上の局面の解析結果を覚えておく
                                     if (removed.isNotEmpty()) {
-                                        deletedBranches.add(DeletedBranches(removed,
+                                        deletions.add(Deletion(removed,
                                             analysisHistory.filterKeys { it !in mainLine },
-                                            analysisUsiHistory.filterKeys { it !in mainLine }))
+                                            analysisUsiHistory.filterKeys { it !in mainLine },
+                                            isLastMove = false))
                                     }
                                     // 削除した分岐上にいたら、本譜上の分岐点へ戻る
                                     var p: KifuNode? = currentNode
@@ -1176,21 +1156,30 @@ class MainActivity : ComponentActivity() {
                                     saveKifu(root)
                                     showMenu = false
                                 })
-                            MenuItem(Icons.Outlined.SettingsBackupRestore,
-                                text = { Text(stringResource(R.string.menu_undo_delete_branches)) },
-                                enabled = deletedBranches.isNotEmpty(),
+                            MenuItem(Icons.AutoMirrored.Outlined.Undo,
+                                text = { Text(stringResource(R.string.menu_undo_delete)) },
+                                enabled = deletions.isNotEmpty(),
                                 onClick = {
-                                    val d = deletedBranches.removeAt(deletedBranches.lastIndex)
+                                    // 最終手の削除も分岐の削除も、新しいものから1回分ずつ元に戻す
+                                    val d = deletions.removeAt(deletions.lastIndex)
                                     // 元の並び順に戻す（同じ親の中では小さい位置から順に差し込む）。
                                     // 削除のあとで同じ手を指し直していたら、そちらを残す
+                                    var shown: KifuNode? = null
                                     for (r in d.nodes) {
-                                        val dup = r.parent.children.any {
+                                        val same = r.parent.children.firstOrNull {
                                             it.moveLabel == r.node.moveLabel && it.isPvBranch == r.node.isPvBranch && it.pvColorIndex == r.node.pvColorIndex
                                         }
-                                        if (!dup) r.parent.children.add(r.index.coerceAtMost(r.parent.children.size), r.node)
+                                        if (same == null) r.parent.children.add(r.index.coerceAtMost(r.parent.children.size), r.node)
+                                        if (shown == null) shown = same ?: r.node
                                     }
                                     d.pv.forEach { (k, v) -> if (k !in analysisHistory) analysisHistory[k] = v }
                                     d.usi.forEach { (k, v) -> if (k !in analysisUsiHistory) analysisUsiHistory[k] = v }
+                                    // 最終手の削除を戻したときは、戻した手を表示する
+                                    if (d.isLastMove && shown != null) {
+                                        currentNode = shown
+                                        if (pvBranchPath != null) { pvBranchPath = null; pinnedPvList = emptyMap(); pinnedPvUsiList = emptyMap() }
+                                    }
+                                    selectedSquare = null; selectedHandPiece = null
                                     resetKey++
                                     saveKifu(currentNode)
                                     showMenu = false
@@ -2124,17 +2113,12 @@ private fun MarkIcon(mark: String) {
 }
 
 // 削除した1手（とその先）。削除前は parent.children の index の位置にあった
-class DeletedNode(
-    val parent: KifuNode,
-    val node: KifuNode,
-    val index: Int,
-    val pv: Map<Int, String>?,
-    val usi: Map<Int, List<String>>?
-)
+class DeletedNode(val parent: KifuNode, val node: KifuNode, val index: Int)
 
-// 「分岐を削除」1回分で消したものすべて
-class DeletedBranches(
+// 「最終手を削除」または「分岐を削除」1回分で消したものすべてと、その局面の解析結果
+class Deletion(
     val nodes: List<DeletedNode>,
     val pv: Map<KifuNode, Map<Int, String>>,
-    val usi: Map<KifuNode, Map<Int, List<String>>>
+    val usi: Map<KifuNode, Map<Int, List<String>>>,
+    val isLastMove: Boolean
 )
